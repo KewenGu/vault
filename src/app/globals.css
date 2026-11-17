@@ -1,0 +1,110 @@
+@import "tailwindcss";
+
+/* 设计 token：纸面 + 墨字 + 一种强调色（保险柜的墨绿）。暗色跟随系统，只换变量。 */
+@theme {
+  --color-canvas: #f4f2ed;
+  --color-surface: #fdfcfa;
+  --color-sunken: #ebe8e1;
+  --color-edge: #dcd8ce;
+  --color-edge-strong: #bdb8ab;
+
+  --color-ink: #1c1d1a;
+  --color-ink-secondary: #45473f;
+  --color-ink-muted: #6b6d63;
+  --color-ink-faint: #8f9186;
+
+  --color-accent: #1f5f4a;
+  --color-accent-deep: #174838;
+  --color-accent-soft: #e1ede7;
+  --color-on-accent: #ffffff;
+
+  --color-danger: #b23a2b;
+  --color-danger-soft: #f6e4e0;
+  --color-warning: #8a5d14;
+  --color-warning-soft: #f5ead2;
+
+  --font-sans: "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-canvas: #131513;
+    --color-surface: #1b1e1b;
+    --color-sunken: #0e100e;
+    --color-edge: #2c302b;
+    --color-edge-strong: #454a43;
+
+    --color-ink: #ecece6;
+    --color-ink-secondary: #c9cac1;
+    --color-ink-muted: #9a9c91;
+    --color-ink-faint: #74766c;
+
+    --color-accent: #7fcaa9;
+    --color-accent-deep: #9bd9bd;
+    --color-accent-soft: #1d2f27;
+    --color-on-accent: #0f1a15;
+
+    --color-danger: #e58a7c;
+    --color-danger-soft: #3a1f1b;
+    --color-warning: #dcb264;
+    --color-warning-soft: #33290f;
+  }
+}
+
+html {
+  color-scheme: light dark;
+}
+
+body {
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* 键盘焦点统一成强调色的外框 */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex h-9 shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-md border whitespace-nowrap border-edge-strong bg-surface px-3 text-sm text-ink transition-colors hover:bg-sunken disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply border-accent bg-accent text-on-accent hover:border-accent-deep hover:bg-accent-deep;
+  }
+  .btn-danger {
+    @apply border-transparent bg-transparent text-danger hover:bg-danger-soft;
+  }
+  .btn-quiet {
+    @apply border-transparent bg-transparent text-ink-muted hover:bg-sunken hover:text-ink;
+  }
+  .field {
+    @apply w-full rounded-md border border-edge-strong bg-surface px-3 py-2 text-sm text-ink placeholder:text-ink-faint;
+  }
+  .chip {
+    @apply inline-flex h-7 items-center gap-1 rounded-full border border-edge bg-surface px-2.5 text-xs whitespace-nowrap text-ink-secondary transition-colors hover:border-edge-strong hover:text-ink;
+  }
+  .chip-on {
+    @apply border-accent bg-accent-soft text-accent hover:border-accent hover:text-accent;
+  }
+  .panel {
+    @apply rounded-lg border border-edge bg-surface;
+  }
+  /* 手机上筛选项排成一行横向滑动（不然标签一多把内容挤到好几屏以下）；宽屏照常换行 */
+  .chip-row {
+    @apply -mx-4 flex gap-1.5 overflow-x-auto px-4 sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0;
+    scrollbar-width: none;
+  }
+  .label {
+    @apply text-xs font-medium tracking-wide text-ink-muted;
+  }
+}

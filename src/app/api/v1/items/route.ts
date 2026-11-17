@@ -1,0 +1,36 @@
+import { NextResponse } from "next/server";
+import { searchItems } from "@/lib/vault/search";
+import { saveInput } from "@/lib/vault/service";
+import { jsonBody, str, withSession } from "../respond";
+import { hitSummary } from "./serialize";
+
+/** 存一条：`{ input: "链接、分享文案或一段文字", note?: "为什么存" }` → `{ id, existing }`。处理在后台跑，用 GET 这条看进度。 */
+export async function POST(request: Request) {
+  return withSession(request, async (session) => {
+    const body = await jsonBody(request);
+    const saved = await saveInput(session, str(body.input), str(body.note));
+    return NextResponse.json(saved, { status: saved.existing ? 200 : 201 });
+  });
+}
+
+/** 列出 / 搜索：`?q=` 关键词 + 语义；`kind` `type` `category` `tag` `platform` `source` `entity` 筛选；`limit` 最多 200。 */
+export async function GET(request: Request) {
+  return withSession(request, async (session) => {
+    const p = new URL(request.url).searchParams;
+    const limit = Number(p.get("limit"));
+    const result = await searchItems(session.db, session.user.id, {
+      q: p.get("q") ?? "",
+      filters: {
+        kind: p.get("kind") ?? undefined,
+        contentType: p.get("type") ?? undefined,
+        category: p.get("category") ?? undefined,
+        tag: p.get("tag") ?? undefined,
+        platform: p.get("platform") ?? undefined,
+        source: p.get("source") ?? undefined,
+        entityId: p.get("entity") ?? undefined,
+      },
+      limit: Number.isFinite(limit) && limit > 0 ? limit : undefined,
+    });
+    return NextResponse.json({ items: result.hits.map(hitSummary), terms: result.terms, semantic: result.semantic });
+  });
+}

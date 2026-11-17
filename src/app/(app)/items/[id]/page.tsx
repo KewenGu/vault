@@ -1,0 +1,267 @@
+import type { Metadata } from "next";
+import Link from "next/link";
+import { notFound } from "next/navigation";
+import { AutoRefresh } from "@/components/auto-refresh";
+import { PLAYER_ID, SeekTime } from "@/components/seek-time";
+import { requireSession } from "@/lib/auth/user";
+import { entitiesOfItem } from "@/lib/graph/data";
+import { clock, parseTranscript } from "@/lib/media/transcript";
+import { POST_STAT_KEYS, formatCount, postNotes, statLabel } from "@/lib/sources/types";
+import { audioOf, displayTitle, getItem, imagesOf, inProgress, isStuck, itemFileUrl, sheetsOf, sourceLabel, videoOf } from "@/lib/vault/store";
+import { CATEGORY_LABEL, CONTENT_TYPE_INFO, ENTITY_TYPE_INFO } from "@/lib/vault/taxonomy";
+import { DeleteButton, MetaForm, PasteTextForm, ReprocessButton } from "./item-actions";
+
+type Props = { params: Promise<{ id: string }> };
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+async function loadItem(id: string) {
+  const { user, db } = await requireSession();
+  const item = UUID.test(id) ? await getItem(db, user.id, id) : null;
+  return { user, db, item };
+}
+
+export async function generateMetadata({ params }: Props): Promise<Metadata> {
+  const { item } = await loadItem((await params).id);
+  return { title: item ? displayTitle(item) : "不在了" };
+}
+
+const STATUS_TEXT = { uploading: "等文件传上来…", fetching: "正在读取内容、转存文件…", analyzing: "正在看画面、转写、理解内容…" } as const;
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section className="flex flex-col gap-2.5">
+      <h2 className="label">{title}</h2>
+      {children}
+    </section>
+  );
+}
+
+export default async function ItemPage({ params }: Props) {
+  const { id } = await params;
+  const { user, db, item } = await loadItem(id);
+  if (!item) notFound();
+  const entities = await entitiesOfItem(db, user.id, id);
+  const u = item.understanding;
+  const video = videoOf(item);
+  const audio = audioOf(item);
+  const images = imagesOf(item);
+  const sheets = sheetsOf(item);
+  const busy = inProgress(item);
+  const stuck = isStuck(item);
+  const failed = item.status === "failed" || stuck;
+  const canSeek = !!(video || audio);
+  const transcript = item.transcript ? parseTranscript(item.transcript) : [];
+  const body = item.userText || item.post.text;
+  const stats = item.platform ? POST_STAT_KEYS.filter((k) => item.post.stats[k] !== null) : [];
+  const notes = [...postNotes(item.post), ...(u?.gaps ?? [])].filter((n, i, all) => all.indexOf(n) === i);
+
+  // 左栏放原内容；什么都没有（链接没读到、还在读）时不留一栏空白
+  const hasOriginal = !!(video || audio || images.length > 0 || body);
+
+  return (
+    <div className={hasOriginal ? "grid gap-8 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]" : "mx-auto max-w-2xl"}>
+      <AutoRefresh active={busy} />
+
+      {/* 左栏：原内容 */}
+      <div className={hasOriginal ? "flex flex-col gap-4 lg:sticky lg:top-6 lg:self-start" : "hidden"}>
+        {video && (
+          <video id={PLAYER_ID} controls playsInline preload="metadata" poster={images[0] ? itemFileUrl(item, images[0]) : undefined} className="max-h-[70dvh] w-full rounded-lg bg-black">
+            <source src={itemFileUrl(item, video)} type={video.mime} />
+          </video>
+        )}
+        {audio && (
+          <audio id={PLAYER_ID} controls preload="metadata" className="w-full">
+            <source src={itemFileUrl(item, audio)} type={audio.mime} />
+          </audio>
+        )}
+        {!video &&
+          images.map((m, i) => (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img key={m.path} src={itemFileUrl(item, m)} alt={`第 ${i + 1} 张图`} loading={i === 0 ? "eager" : "lazy"} width={m.width ?? undefined} height={m.height ?? undefined} className="w-full rounded-lg border border-edge" />
+          ))}
+        {video && sheets.length > 0 && (
+          <details>
+            <summary className="cursor-pointer text-sm text-ink-muted hover:text-ink">全片画面一览（{sheets.length} 张）</summary>
+            <div className="mt-3 flex flex-col gap-3">
+              {sheets.map((m) => (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img key={m.path} src={itemFileUrl(item, m)} alt="帧格" loading="lazy" className="w-full rounded-md border border-edge" />
+              ))}
+            </div>
+          </details>
+        )}
+        {!video && !audio && images.length === 0 && body && <p className="panel max-h-[60dvh] overflow-y-auto p-4 text-sm leading-relaxed whitespace-pre-wrap text-ink-secondary">{body}</p>}
+      </div>
+
+      {/* 右栏：读懂之后的样子 */}
+      <div className="flex min-w-0 flex-col gap-7">
+        <header className="flex flex-col gap-2.5">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-muted">
+            <Link href="/" className="hover:text-ink">
+              ← 收藏库
+            </Link>
+            <span>{sourceLabel(item)}</span>
+            {item.author && <span>{item.author}</span>}
+            {item.post.publishedAt && <span>发布于 {item.post.publishedAt.slice(0, 10)}</span>}
+            <span>存于 {item.createdAt.slice(0, 10)}</span>
+            {item.post.durationS ? <span>{clock(item.post.durationS)}</span> : null}
+          </div>
+          <h1 className="text-2xl leading-tight font-semibold tracking-tight text-balance">{displayTitle(item)}</h1>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {item.contentType && (
+              <Link href={`/?type=${item.contentType}`} className="chip chip-on">
+                {CONTENT_TYPE_INFO[item.contentType].label}
+              </Link>
+            )}
+            {item.category && (
+              <Link href={`/?category=${item.category}`} className="chip">
+                {CATEGORY_LABEL[item.category]}
+              </Link>
+            )}
+            {item.tags.map((t) => (
+              <Link key={t} href={`/?tag=${encodeURIComponent(t)}`} className="chip">
+                #{t}
+              </Link>
+            ))}
+          </div>
+          {item.url && (
+            <a href={item.url} target="_blank" rel="noreferrer noopener" className="truncate text-sm text-accent hover:underline">
+              {item.url}
+            </a>
+          )}
+          {stats.length > 0 && item.platform && <p className="text-xs text-ink-faint">{stats.map((k) => `${statLabel(item.platform!, k)} ${formatCount(item.post.stats[k])}`).join(" · ")}</p>}
+        </header>
+
+        {busy && (
+          <p role="status" className="rounded-md bg-accent-soft px-3.5 py-3 text-sm text-accent">
+            {STATUS_TEXT[item.status as keyof typeof STATUS_TEXT]}
+            视频一般要一两分钟，页面会自己刷新。
+          </p>
+        )}
+        {failed && (
+          <div className="flex flex-col gap-3 rounded-md bg-danger-soft px-3.5 py-3">
+            <p role="alert" className="text-sm text-danger">
+              {stuck ? "处理中断了（后台任务没跑完）。" : (item.error ?? "没处理成。")}
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {item.status !== "uploading" && <ReprocessButton id={item.id} from={item.source === "link" ? "fetch" : "analyze"} label="重试" primary />}
+              <DeleteButton id={item.id} />
+            </div>
+            {item.source === "link" && <PasteTextForm id={item.id} />}
+          </div>
+        )}
+        {!failed && item.error && (
+          <p role="status" className="rounded-md bg-warning-soft px-3.5 py-3 text-sm text-warning">
+            {item.error}
+          </p>
+        )}
+
+        {u && (
+          <>
+            <p className="text-[15px] leading-relaxed text-ink-secondary">{u.summary}</p>
+
+            {u.card.length > 0 && (
+              <Section title={CONTENT_TYPE_INFO[u.contentType].label}>
+                <dl className="panel divide-y divide-edge">
+                  {u.card.map((f) => (
+                    <div key={f.label} className="grid grid-cols-[6.5rem_minmax(0,1fr)] gap-3 px-3.5 py-2.5 text-sm">
+                      <dt className="text-ink-muted">{f.label}</dt>
+                      <dd className="leading-relaxed whitespace-pre-wrap">{f.value}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </Section>
+            )}
+
+            {u.points.length > 0 && (
+              <Section title="内容要点">
+                <ol className="flex flex-col gap-2.5">
+                  {u.points.map((p, i) => (
+                    <li key={i} className="grid grid-cols-[3rem_minmax(0,1fr)] gap-2 text-sm leading-relaxed">
+                      <span className="pt-px font-mono text-xs text-ink-faint">{p.at !== null ? <SeekTime at={p.at} label={clock(p.at)} enabled={canSeek} /> : String(i + 1).padStart(2, "0")}</span>
+                      <span>{p.text}</span>
+                    </li>
+                  ))}
+                </ol>
+              </Section>
+            )}
+
+            {u.quotes.length > 0 && (
+              <Section title="原话">
+                <ul className="flex flex-col gap-2">
+                  {u.quotes.map((q, i) => (
+                    <li key={i} className="border-l-2 border-edge-strong pl-3 text-sm leading-relaxed text-ink-secondary">
+                      {q}
+                    </li>
+                  ))}
+                </ul>
+              </Section>
+            )}
+          </>
+        )}
+
+        {entities.length > 0 && (
+          <Section title="提到的">
+            <ul className="flex flex-wrap gap-1.5">
+              {entities.map((e) => (
+                <li key={e.id}>
+                  <Link href={`/?entity=${e.id}`} title={e.about || undefined} className="chip">
+                    <span className="text-ink-faint">{ENTITY_TYPE_INFO[e.type].label}</span>
+                    {e.name}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </Section>
+        )}
+
+        <MetaForm id={item.id} note={item.note} tags={item.tags} />
+
+        {transcript.length > 0 && (
+          <details>
+            <summary className="label cursor-pointer hover:text-ink">说的话（{item.post.transcriptFrom === "captions" ? "平台字幕" : "语音识别，可能有错字"}）</summary>
+            <div className="mt-3 flex flex-col gap-2 text-sm leading-relaxed text-ink-secondary">
+              {transcript.map((line, i) => (
+                <p key={i} className="grid grid-cols-[3rem_minmax(0,1fr)] gap-2">
+                  <span className="pt-px font-mono text-xs text-ink-faint">{line.at !== null ? <SeekTime at={line.at} label={clock(line.at)} enabled={canSeek} /> : ""}</span>
+                  <span>{line.text}</span>
+                </p>
+              ))}
+            </div>
+          </details>
+        )}
+        {u?.ocr && (
+          <details>
+            <summary className="label cursor-pointer hover:text-ink">图上的文字</summary>
+            <p className="mt-3 text-sm leading-relaxed whitespace-pre-wrap text-ink-secondary">{u.ocr}</p>
+          </details>
+        )}
+        {body && (video || audio || images.length > 0) && (
+          <details>
+            <summary className="label cursor-pointer hover:text-ink">原文</summary>
+            <p className="mt-3 text-sm leading-relaxed whitespace-pre-wrap text-ink-secondary">{body}</p>
+          </details>
+        )}
+        {notes.length > 0 && (
+          <details>
+            <summary className="label cursor-pointer hover:text-ink">这次没看到的（{notes.length}）</summary>
+            <ul className="mt-3 flex list-disc flex-col gap-1 pl-5 text-sm text-ink-muted">
+              {notes.map((n) => (
+                <li key={n}>{n}</li>
+              ))}
+            </ul>
+          </details>
+        )}
+
+        {!busy && !failed && (
+          <footer className="flex flex-wrap items-center gap-2 border-t border-edge pt-5">
+            <ReprocessButton id={item.id} from="analyze" label="重新分析" />
+            {item.source === "link" && <ReprocessButton id={item.id} from="fetch" label="重新读取链接" />}
+            <DeleteButton id={item.id} />
+            {item.costUsd > 0 && <span className="ml-auto text-xs text-ink-faint">处理花费约 ${item.costUsd.toFixed(3)}</span>}
+          </footer>
+        )}
+      </div>
+    </div>
+  );
+}
