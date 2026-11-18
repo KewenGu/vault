@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { AutoRefresh } from "@/components/auto-refresh";
+import { LocalDate } from "@/components/local-date";
 import { PLAYER_ID, SeekTime } from "@/components/seek-time";
 import { requireSession } from "@/lib/auth/user";
 import { entitiesOfItem } from "@/lib/graph/data";
@@ -102,8 +103,14 @@ export default async function ItemPage({ params }: Props) {
             </Link>
             <span>{sourceLabel(item)}</span>
             {item.author && <span>{item.author}</span>}
-            {item.post.publishedAt && <span>发布于 {item.post.publishedAt.slice(0, 10)}</span>}
-            <span>存于 {item.createdAt.slice(0, 10)}</span>
+            {item.post.publishedAt && (
+              <span>
+                发布于 <LocalDate iso={item.post.publishedAt} />
+              </span>
+            )}
+            <span>
+              存于 <LocalDate iso={item.createdAt} />
+            </span>
             {item.post.durationS ? <span>{clock(item.post.durationS)}</span> : null}
           </div>
           <h1 className="text-2xl leading-tight font-semibold tracking-tight text-balance">{displayTitle(item)}</h1>
