@@ -2,9 +2,9 @@ import "server-only";
 import { asrConfig } from "@/lib/asr/volc";
 import { openaiAsrConfig } from "@/lib/asr/openai";
 import { localWhisper, whisperSetupHint } from "@/lib/asr/whisper-local";
-import { assertFfmpegBinary, ffmpegPath } from "@/lib/media/ffmpeg";
+import { assertFfmpegBinary, FfmpegError, ffmpegPath } from "@/lib/media/ffmpeg";
 import { ytdlpPath } from "@/lib/sources/ytdlp";
-import type { SetupFacts } from "./setup";
+import { describeFfmpegProblem, type SetupFacts } from "./setup";
 
 /** 实际去看这台机器：环境变量配了没有、命令在不在、ffmpeg 版本够不够。只回答有没有，不带任何密钥的值。 */
 export async function gatherSetupFacts(): Promise<SetupFacts> {
@@ -15,7 +15,8 @@ export async function gatherSetupFacts(): Promise<SetupFacts> {
     try {
       await assertFfmpegBinary(bin);
     } catch (e) {
-      ffmpegError = e instanceof Error ? e.message : String(e);
+      // 版本不够时，报错里带着 `ffmpeg -version` 的输出：把找到的是哪一个、是什么版本说出来，不然不知道该升级哪个
+      ffmpegError = describeFfmpegProblem(bin, e instanceof Error ? e.message : String(e), e instanceof FfmpegError ? e.stderrTail : "");
     }
   }
   const whisper = localWhisper();

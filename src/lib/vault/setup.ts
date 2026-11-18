@@ -15,6 +15,15 @@ export type SetupFacts = {
   ytdlp: string | null;
 };
 
+/**
+ * ffmpeg 找到了但不能用时，状态页上写什么（纯函数）。versionOutput 是 `ffmpeg -version` 的输出（拿到了的话）：
+ * 一台机器上常常不止一个 ffmpeg（系统自带的、Homebrew 的、自己下的），光说「版本过旧」不知道说的是哪一个。
+ */
+export function describeFfmpegProblem(bin: string, message: string, versionOutput: string): string {
+  const version = /^ffmpeg version (\S+)/m.exec(versionOutput)?.[1];
+  return version ? `用的是 ${bin}，版本 ${version}，不够新：要 8.1.3 或更新（9.x 要 9.0.2 或更新）` : `用的是 ${bin}：${message}`;
+}
+
 export type SetupState = "ok" | "missing" | "optional";
 export type SetupCheck = { key: string; label: string; state: SetupState; detail: string; effect: string; fix: string };
 
@@ -36,7 +45,7 @@ export function setupChecks(f: SetupFacts): SetupCheck[] {
       state: ffmpegOk ? "ok" : "missing",
       detail: ffmpegOk ? f.ffmpeg.path! : (f.ffmpeg.error ?? "这台机器上没找到 ffmpeg"),
       effect: "没有它，视频只看封面和文案：画面抽不出来，声音也导不出来（下面的语音转写跟着做不了）。上传的视频和音频完全读不了。",
-      fix: "macOS：brew install ffmpeg（已经装过的 brew upgrade ffmpeg）。要 8.1.3 或更新；装在别处的用 FFMPEG_PATH 指过去。",
+      fix: "在 .env.local 里用 FFMPEG_PATH 指到一个够新的 ffmpeg（SM-Intelligence 的 .env.local 里配过的话，把那一行抄过来），或者 brew upgrade ffmpeg。改完重启。",
     },
     {
       key: "asr",

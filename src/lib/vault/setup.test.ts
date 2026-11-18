@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { setupChecks, type SetupFacts } from "./setup";
+import { describeFfmpegProblem, setupChecks, type SetupFacts } from "./setup";
 
 const all: SetupFacts = {
   anthropic: true,
@@ -37,5 +37,16 @@ describe("setupChecks", () => {
   it("treats yt-dlp and a Jina key as optional", () => {
     expect(state({ ...all, ytdlp: null, jina: false })).toMatchObject({ ytdlp: "optional", jina: "optional" });
     expect(state({ ...all, apify: false, voyage: false, anthropic: false })).toMatchObject({ apify: "missing", voyage: "missing", claude: "missing" });
+  });
+});
+
+describe("describeFfmpegProblem", () => {
+  it("names the binary and the version it found", () => {
+    const out = "ffmpeg version 7.1.1 Copyright (c) 2000-2025 the FFmpeg developers\nbuilt with Apple clang";
+    expect(describeFfmpegProblem("/opt/homebrew/bin/ffmpeg", "FFmpeg 版本过旧或无法核对", out)).toBe("用的是 /opt/homebrew/bin/ffmpeg，版本 7.1.1，不够新：要 8.1.3 或更新（9.x 要 9.0.2 或更新）");
+  });
+
+  it("falls back to the raw problem when there is no version output", () => {
+    expect(describeFfmpegProblem("/usr/bin/ffmpeg", "ffmpeg 启动失败：EACCES", "")).toBe("用的是 /usr/bin/ffmpeg：ffmpeg 启动失败：EACCES");
   });
 });
