@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { extractShareUrl, platformOfHost } from "@/lib/sources/link";
 import type { ItemMedia, PostKind } from "@/lib/sources/types";
+import { storeMaxBytes } from "./limits";
 
 /**
  * 「存进来的是什么」的判断（纯函数）：一段粘贴的文字是链接还是文字；一个要上传的文件收不收、算哪一类。
@@ -56,8 +57,8 @@ export function textDedupeKey(text: string): string {
 
 export const fileDedupeKey = (sha256: string) => `file:${sha256.toLowerCase()}`;
 
-/** 单个上传文件的上限：和链接里的视频存档上限一样（同一个存储桶；处理时整个文件读进内存） */
-export const UPLOAD_MAX_BYTES = 200 * 1024 * 1024;
+/** 单个上传文件的上限：和链接里的视频存档上限是同一个数（同一个存储桶），见 limits.ts */
+export const UPLOAD_MAX_BYTES = storeMaxBytes();
 
 export type UploadPlan = { kind: PostKind; ext: string; mime: string };
 

@@ -54,18 +54,26 @@ describe("describeFfmpegProblem", () => {
 
 describe("the archive limit check", () => {
   const MB = 1024 * 1024;
-  it("names the bucket when its limit is the smaller one, with the statement to run", () => {
-    const f = { ...all, storage: { bucketLimit: 50 * MB, wanted: 200 * MB } };
-    expect(state(f).storage).toBe("missing");
-    expect(detail(f, "storage")).toBe("存储桶的单文件上限是 50 MB，比这里的 200 MB 小");
-    expect(setupChecks(f).find((c) => c.key === "storage")!.fix).toContain("update storage.buckets set file_size_limit = 209715200 where id = 'vault';");
+  const storage = (f: SetupFacts) => setupChecks(f).find((c) => c.key === "storage")!;
+
+  it("is fine at the default 50 MB, and says what it takes to store more", () => {
+    const f = { ...all, storage: { bucketLimit: 200 * MB, wanted: 50 * MB } };
+    expect(storage(f).state).toBe("ok");
+    expect(storage(f).detail).toContain("单个最多 50 MB。想存更大的");
+    expect(storage(f).detail).toContain("VAULT_STORE_MAX_MB");
+    expect(storage(f).effect).toContain("最多存 50 MB");
   });
 
-  it("points at the project-wide limit once the bucket is fine, and flags an unreadable bucket", () => {
-    expect(state(all).storage).toBe("ok");
-    expect(detail(all, "storage")).toContain("存储桶的上限够了（200 MB）");
-    expect(detail(all, "storage")).toContain("Upload file size limit");
-    expect(detail({ ...all, storage: { bucketLimit: null, wanted: 200 * MB } }, "storage")).toContain("没设上限");
-    expect(state({ ...all, storage: { bucketLimit: undefined, wanted: 200 * MB } }).storage).toBe("missing");
+  it("warns that a raised limit needs a paid plan", () => {
+    expect(storage({ ...all, storage: { bucketLimit: 200 * MB, wanted: 200 * MB } }).detail).toContain("超过 50 MB 的要付费套餐才存得进去");
+  });
+
+  it("names the bucket when its limit is below the setting, and flags an unreadable bucket", () => {
+    const f = { ...all, storage: { bucketLimit: 50 * MB, wanted: 200 * MB } };
+    expect(storage(f).state).toBe("missing");
+    expect(storage(f).detail).toBe("存储桶的单文件上限是 50 MB，比这里设的 200 MB 小");
+    expect(storage(f).fix).toContain("20261118000001_bucket_limit.sql");
+    expect(storage({ ...all, storage: { bucketLimit: undefined, wanted: 50 * MB } }).state).toBe("missing");
+    expect(storage({ ...all, storage: { bucketLimit: null, wanted: 50 * MB } }).state).toBe("ok");
   });
 });

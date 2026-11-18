@@ -112,7 +112,7 @@ async function storageLimitHint(db: Db, bytes: number): Promise<string> {
   if (typeof limit === "number" && limit < bytes) {
     return `存储桶的单文件上限是 ${megabytes(limit)} MB：在 Supabase 的 SQL Editor 里运行迁移 20261118000001_bucket_limit.sql`;
   }
-  return "Supabase 项目的全局上传上限不够：控制台 Storage → Settings → Upload file size limit（免费套餐封顶 50 MB）";
+  return "Supabase 项目的全局上传上限不够（免费套餐封顶 50 MB）：把 .env.local 里的 VAULT_STORE_MAX_MB 去掉或调回 50";
 }
 
 /** 把读到的帖子的图片 / 视频下载下来转存；下不了的记进 notes（不算失败——文字还在，照样能理解）。 */

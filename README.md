@@ -29,7 +29,7 @@
 | YouTube | App 的播放接口（字幕 + 360p 视频） | 免费 |
 | X | FxTwitter 公开接口 → 官方嵌入接口 | 免费 |
 | 其他网页（博客、新闻、商品页、Reddit…） | Jina Reader → 自己抓；本机有 yt-dlp 时认别的视频站 | Jina 带密钥时 $0.0005 |
-| 上传 | 图片 / 截图、视频、音频、`.txt` / `.md`，单个最多 200 MB | — |
+| 上传 | 图片 / 截图、视频、音频、`.txt` / `.md`，单个最多 50 MB（可调，见「存档上限」） | — |
 | 文字 | 直接贴，最多 20 万字 | — |
 
 链接读不到时（被删、要登录、风控），可以在那条内容的页面上手动贴正文，按贴的文字理解。
@@ -98,15 +98,19 @@ ffmpeg 的版本门槛是从 SM-Intelligence 带过来的安全基线（处理�
 
 ### 存档上限
 
-视频原片和上传的文件单个最多存 200 MB。这个数要三处对得上，小的那个说了算：
+视频原片和上传的文件，单个默认最多存 50 MB。这是 Supabase 免费套餐的硬上限（项目的全局上传上限封顶 50 MB）。
+
+更大的视频不算失败：照样下载下来读画面和声音（最多 600 MB），只是不留原片，详情页上不能播放，要看去原链接。
+
+想存更大的原片，三处都要放开，小的那个说了算：
 
 | 哪里 | 怎么改 |
 |---|---|
-| 代码 | `src/lib/media/files.ts` 的 `VIDEO_MAX_BYTES`、`src/lib/vault/capture.ts` 的 `UPLOAD_MAX_BYTES` |
-| 存储桶 `vault` | 迁移 `20261118000001_bucket_limit.sql`（`storage.buckets.file_size_limit`） |
-| Supabase 项目的全局上传上限 | 控制台 **Storage → Settings → Upload file size limit**。免费套餐封顶 50 MB，Pro 以上可以调高 |
+| Supabase 项目的全局上传上限 | 要付费套餐。控制台 **Storage → Settings → Upload file size limit** |
+| 存储桶 `vault` | 迁移 `20261118000001_bucket_limit.sql` 已经设成 200 MB |
+| 这个应用 | `.env.local` 里设 `VAULT_STORE_MAX_MB`（最多 200） |
 
-存储那边不收的视频不算失败：画面和声音照常读，只是不留原片，详情页上会写明。另外留意总容量：免费套餐的存储一共 1 GB。
+「状态」页的「存档原片」一项会显示当前的上限和存储桶的上限对不对得上。另外留意总容量：免费套餐的存储一共 1 GB。
 
 ### 手机上用
 

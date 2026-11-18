@@ -218,7 +218,8 @@ describe("a video that fails to download", () => {
 
 describe("a video the storage service refuses", () => {
   it("is still read; the page says the original was not kept and why", async () => {
-    const data = new Uint8Array(120 * MB);
+    // 存档上限设得比存储服务肯收的大时（VAULT_STORE_MAX_MB 调高了、套餐没跟上）：这里用一个上限以内的文件
+    const data = new Uint8Array(40 * MB);
     vi.mocked(downloadRemote).mockImplementation(async (file) => (file.url.endsWith(".mp4") ? data : jpeg));
     // 存储桶 / 项目的单文件上限还是 50 MB 的项目：封面这种小文件收，视频不收
     const from = fake.db.storage.from.bind(fake.db.storage);
@@ -228,13 +229,13 @@ describe("a video the storage service refuses", () => {
       const refused = { data: null, error: { message: "The object exceeded the maximum allowed size" } };
       return { ...api, upload: (path: string, body: Blob, opts: unknown) => (path.endsWith("video.mp4") ? Promise.resolve(refused) : upload(path, body, opts)) };
     }) as never);
-    const getBucket = vi.fn(async () => ({ data: { file_size_limit: 50 * MB } as { file_size_limit: number | null }, error: null }));
+    const getBucket = vi.fn(async () => ({ data: { file_size_limit: 20 * MB } as { file_size_limit: number | null }, error: null }));
     Object.assign(fake.db.storage, { getBucket });
     await processItem(ID);
     expect(vi.mocked(digestVideo).mock.calls[0][0]).toBe(data);
     expect(roles()).toEqual(["image", "frame", "frame", "sheet"]);
     // 存储桶的上限比文件小：点名是桶，给出要跑的迁移
-    expect(item().post.notes[1]).toBe("原片没存进去（120 MB，存储桶的单文件上限是 50 MB：在 Supabase 的 SQL Editor 里运行迁移 20261118000001_bucket_limit.sql）：画面和声音照常读，但这里不能播放，要看去原链接");
+    expect(item().post.notes[1]).toBe("原片没存进去（40 MB，存储桶的单文件上限是 20 MB：在 Supabase 的 SQL Editor 里运行迁移 20261118000001_bucket_limit.sql）：画面和声音照常读，但这里不能播放，要看去原链接");
     expect(item().transcript).toContain("别人的评价只是信息");
     expect(item().status).toBe("ready");
 
@@ -242,7 +243,7 @@ describe("a video the storage service refuses", () => {
     getBucket.mockResolvedValue({ data: { file_size_limit: 200 * MB }, error: null });
     Object.assign(item(), { status: "fetching" });
     await processItem(ID);
-    expect(item().post.notes[1]).toBe("原片没存进去（120 MB，Supabase 项目的全局上传上限不够：控制台 Storage → Settings → Upload file size limit（免费套餐封顶 50 MB））：画面和声音照常读，但这里不能播放，要看去原链接");
+    expect(item().post.notes[1]).toBe("原片没存进去（40 MB，Supabase 项目的全局上传上限不够（免费套餐封顶 50 MB）：把 .env.local 里的 VAULT_STORE_MAX_MB 去掉或调回 50）：画面和声音照常读，但这里不能播放，要看去原链接");
   });
 });
 

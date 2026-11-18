@@ -31,24 +31,27 @@ export type SetupCheck = { key: string; label: string; state: SetupState; detail
 
 const mb = (bytes: number) => Math.round(bytes / 1024 / 1024);
 
-/** 存档上限这一项：桶的上限接口读得到；项目全局的读不到，只能提醒去哪看。 */
+/**
+ * 存档上限这一项。有两道上限：存储桶自己的（接口读得到）和 Supabase 项目全局的（读不到；免费套餐封顶 50 MB）。
+ * 默认的 50 MB 在哪种套餐上都存得进去；想存更大的要付费套餐 + 调 VAULT_STORE_MAX_MB。
+ */
 function storageCheck({ bucketLimit, wanted }: SetupFacts["storage"]): SetupCheck {
   const base = {
     key: "storage",
     label: "存档原片（存储上限）",
-    effect: `视频原片和上传的文件单个最多存 ${mb(wanted)} MB。存储那边的上限不够时，大视频照样读画面和声音，只是不留原片、不能在这里播放。`,
+    effect: `视频原片和上传的文件单个最多存 ${mb(wanted)} MB。更大的视频照样读画面和声音，只是不留原片、不能在这里播放。`,
   };
-  const globalHint = "项目的全局上传上限这里读不到：控制台 Storage → Settings → Upload file size limit（免费套餐封顶 50 MB）";
+  const raise = "想存更大的：Supabase 要付费套餐（免费套餐的全局上传上限封顶 50 MB），在控制台 Storage → Settings 调高之后，在 .env.local 里设 VAULT_STORE_MAX_MB（最多 200）";
   if (bucketLimit === undefined) return { ...base, state: "missing", detail: "没读到存储桶 vault（迁移没跑，或者密钥不对）", fix: "在 Supabase 的 SQL Editor 里运行 supabase/migrations 下的迁移。" };
   if (bucketLimit !== null && bucketLimit < wanted) {
     return {
       ...base,
       state: "missing",
-      detail: `存储桶的单文件上限是 ${mb(bucketLimit)} MB，比这里的 ${mb(wanted)} MB 小`,
-      fix: `在 Supabase 的 SQL Editor 里运行：update storage.buckets set file_size_limit = ${wanted} where id = 'vault'; 然后确认${globalHint}。`,
+      detail: `存储桶的单文件上限是 ${mb(bucketLimit)} MB，比这里设的 ${mb(wanted)} MB 小`,
+      fix: `在 Supabase 的 SQL Editor 里运行迁移 20261118000001_bucket_limit.sql，或者把 VAULT_STORE_MAX_MB 调回 ${mb(bucketLimit)} 以内。`,
     };
   }
-  return { ...base, state: "ok", detail: `存储桶的上限够了（${bucketLimit === null ? "没设上限" : `${mb(bucketLimit)} MB`}）。${globalHint}——大文件还是存不进去的话，就是它`, fix: "" };
+  return { ...base, state: "ok", detail: `单个最多 ${mb(wanted)} MB${wanted > 50 * 1024 * 1024 ? "（超过 50 MB 的要付费套餐才存得进去）" : ""}。${raise}`, fix: "" };
 }
 
 export function setupChecks(f: SetupFacts): SetupCheck[] {
