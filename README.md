@@ -74,7 +74,7 @@ npx supabase status
 cp .env.example .env.local
 ```
 
-把 `API_URL`、`ANON_KEY`、`SERVICE_ROLE_KEY` 填进 `.env.local` 的三个 Supabase 变量，再填 `ANTHROPIC_API_KEY`（必填）和 `VOYAGE_API_KEY`（建议）。然后：
+把 `API_URL`、`ANON_KEY`、`SERVICE_ROLE_KEY` 填进 `.env.local` 的三个 Supabase 变量，再填 `ANTHROPIC_API_KEY`（必填）和 `VOYAGE_API_KEY`（建议）。新式的 `PUBLISHABLE_KEY`（`sb_publishable_…`）和 `SECRET_KEY`（`sb_secret_…`）也能用，分别对应 anon 和 service role。然后：
 
 ```bash
 npm run dev
@@ -82,7 +82,7 @@ npm run dev
 
 打开 <http://localhost:3000>，用邮箱和密码注册（本地的 Supabase 不要求确认邮件）。
 
-用云端的 Supabase 项目：建好项目后把迁移推上去（`npx supabase link` 再 `npx supabase db push`），三个变量换成项目的。部署到公网时配上 `VAULT_ALLOWED_EMAILS`，或者在 Supabase 的 Auth 设置里关掉注册。
+用云端的 Supabase 项目：建好项目后把迁移推上去（`npx supabase link` 再 `npx supabase db push`，或者把迁移文件的内容贴进控制台的 SQL Editor 运行），三个变量换成项目的（控制台 **Settings → API Keys**）。账号可以在 **Authentication → Users → Add user** 里直接建，勾上 Auto Confirm User 就不用等确认邮件。部署到公网时配上 `VAULT_ALLOWED_EMAILS`，或者在 Supabase 的 Auth 设置里关掉注册。
 
 ### 本机工具
 
