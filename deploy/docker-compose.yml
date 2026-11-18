@@ -1,0 +1,44 @@
+# 一台服务器上跑 Vault：应用本身 + Caddy（自动申请和续期 HTTPS 证书）。用法见 deploy/README.md。
+services:
+  vault:
+    build:
+      context: ..
+      args:
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:?在 deploy/.env 里填 NEXT_PUBLIC_SUPABASE_URL}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY:?在 deploy/.env 里填 NEXT_PUBLIC_SUPABASE_ANON_KEY}
+    image: vault:local
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - vault-data:/data
+    # 只在本机和 Caddy 之间通，不直接对外
+    expose:
+      - "3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    # 一条长视频会把整个文件读进内存再转码：给个上限，超了只重启这个容器，不拖垮整台机器
+    mem_limit: ${VAULT_MEM_LIMIT:-1700m}
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - vault
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      VAULT_DOMAIN: ${VAULT_DOMAIN:?在 deploy/.env 里填 VAULT_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  vault-data:
+  caddy-data:
+  caddy-config:

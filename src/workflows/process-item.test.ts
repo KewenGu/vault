@@ -148,6 +148,8 @@ describe("a video too large to archive", () => {
     // 画面和声音只读一遍，读的是刚下载的原片（不是压缩后的副本）
     expect(vi.mocked(digestVideo).mock.calls).toHaveLength(1);
     expect(vi.mocked(digestVideo).mock.calls[0][0]).toBe(big);
+    // 大文件不测切点（省一遍整片解码）
+    expect(vi.mocked(digestVideo).mock.calls[0][2]).toMatchObject({ detectCuts: false });
     // 压的也是原片，目标是存档上限
     expect(vi.mocked(compressVideo).mock.calls[0][0]).toBe(big);
     expect(vi.mocked(compressVideo).mock.calls[0][2]).toBe(VIDEO_MAX_BYTES);
@@ -285,6 +287,7 @@ describe("a video small enough to archive", () => {
     expect(roles()).toEqual(["image", "video", "frame", "frame", "sheet"]);
     expect(vi.mocked(digestVideo).mock.calls).toHaveLength(1);
     expect(vi.mocked(digestVideo).mock.calls[0][0].byteLength).toBe(3 * MB);
+    expect(vi.mocked(digestVideo).mock.calls[0][2]).toMatchObject({ detectCuts: true });
     expect(item().media.find((m) => m.role === "video")?.durationS).toBe(2318);
     expect(item().post.notes).toEqual(["这条路读不到评论内容，只有评论数"]);
     expect(item().transcript).toContain("别人的评价只是信息");

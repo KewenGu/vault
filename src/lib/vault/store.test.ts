@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { countFacets } from "./facets";
-import { STUCK_MS, coverOf, displayTitle, inProgress, isStuck, itemFileUrl, linkDedupeKey, sourceLabel, toItem } from "./store";
+import { STUCK_MS, stuckMs, coverOf, displayTitle, inProgress, isStuck, itemFileUrl, linkDedupeKey, sourceLabel, toItem } from "./store";
 import { cleanTags, parseTagInput } from "./taxonomy";
 
 const row = (patch: Record<string, unknown> = {}) =>
@@ -77,6 +77,15 @@ describe("display helpers", () => {
     expect(isStuck(item, started + 60_000)).toBe(false);
     expect(isStuck(item, started + STUCK_MS + 1)).toBe(true);
     expect(isStuck(row({ status: "ready" }), started + STUCK_MS * 10)).toBe(false);
+  });
+});
+
+describe("stuckMs", () => {
+  it("is 20 minutes unless a sensible number of minutes is set", () => {
+    expect(stuckMs({})).toBe(20 * 60_000);
+    expect(stuckMs({ VAULT_STUCK_MINUTES: "60" })).toBe(60 * 60_000);
+    expect(stuckMs({ VAULT_STUCK_MINUTES: "1" })).toBe(20 * 60_000);
+    expect(stuckMs({ VAULT_STUCK_MINUTES: "abc" })).toBe(20 * 60_000);
   });
 });
 

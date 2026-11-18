@@ -24,8 +24,15 @@ export const BUCKET = "vault";
 export const NOTE_MAX = 1000;
 /** 贴进来的文字最多这么长（再长的请存成文件上传） */
 export const TEXT_MAX = 200_000;
-/** 处理超过这么久还没结束，按卡住处理（页面显示成失败、可以重试） */
-export const STUCK_MS = 20 * 60_000;
+/**
+ * 处理超过这么久还没结束，按卡住处理（页面显示成失败、可以重试）。默认 20 分钟；
+ * 慢机器（1 核的小服务器）转码一条半小时的视频要更久，用 `VAULT_STUCK_MINUTES` 调大。
+ */
+export function stuckMs(env: Record<string, string | undefined> = process.env): number {
+  const minutes = Number(env.VAULT_STUCK_MINUTES);
+  return (Number.isFinite(minutes) && minutes >= 5 ? Math.min(minutes, 24 * 60) : 20) * 60_000;
+}
+export const STUCK_MS = stuckMs();
 /** 等浏览器上传超过这么久没来，按没传成处理 */
 export const UPLOAD_STUCK_MS = 30 * 60_000;
 

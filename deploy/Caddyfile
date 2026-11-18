@@ -1,0 +1,11 @@
+# 对外只有这一个站点。证书由 Caddy 自动向 Let's Encrypt 申请（域名要先解析到这台服务器，80 和 443 端口要通）。
+{$VAULT_DOMAIN} {
+	encode zstd gzip
+
+	# 后台任务的内部接口：应用自己从容器里面调（不经过这里）。从外面来的一律当不存在——
+	# 本机模式下这些接口没有鉴权，放出去等于谁都能触发处理步骤。
+	@workflow path /.well-known/workflow/*
+	respond @workflow 404
+
+	reverse_proxy vault:3000
+}

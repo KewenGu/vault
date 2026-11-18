@@ -1,0 +1,13 @@
+node_modules
+.next
+.git
+.env*
+!.env.example
+.local
+.swc
+.workflow-data
+src/app/.well-known
+supabase/.temp
+supabase/.branches
+deploy/.env
+*.tsbuildinfo

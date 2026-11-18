@@ -46,3 +46,6 @@ next-env.d.ts
 
 # local scratch
 /.local/
+
+# 部署用的真实配置
+/deploy/.env

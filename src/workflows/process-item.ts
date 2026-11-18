@@ -57,6 +57,8 @@ const videoReadMaxBytes = () => {
   return (Number.isFinite(mb) && mb >= 50 ? Math.min(mb, 2000) : 600) * 1024 * 1024;
 };
 const megabytes = (bytes: number) => Math.round(bytes / 1024 / 1024);
+/** 超过这么大的视频不测切点（见 digestVideoBytes） */
+const CUT_DETECT_MAX_BYTES = 50 * 1024 * 1024;
 /** 网页配图短边不到这么多像素的不存（图标、头像、分隔线） */
 const WEB_IMAGE_MIN_EDGE = 200;
 
@@ -406,7 +408,8 @@ async function digestVideoBytes(
     return { frames: [], sheets: [], transcript: captions, notes, cuts: [], durationS: null, width: null, height: null };
   }
   let transcript: string | null = captions;
-  const digest = await digestVideo(data, ext, { overview: true, audioMaxSeconds: SPEECH_MAX_SECONDS });
+  // 测切点要把整条视频解码一遍。大文件（长视频）不测：帧按时间均匀取，省下的那一遍在小机器上是好几分钟。
+  const digest = await digestVideo(data, ext, { overview: true, audioMaxSeconds: SPEECH_MAX_SECONDS, detectCuts: data.byteLength <= CUT_DETECT_MAX_BYTES });
   const cuts = (digest.cuts ?? []).map((c) => c.at);
   let cues: Cue[] = captions ? parseTranscript(captions).flatMap((t) => (t.at === null ? [] : [{ at: t.at, text: t.text }])) : [];
   if (captions) {

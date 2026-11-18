@@ -50,7 +50,7 @@
 - 小红书、TikTok、Instagram、X 的真实读取。抖音只试过上面那一条。
 - 上传的视频和音频文件（链接里的视频试过，上传的没试）。
 - YouTube：从云端机房 IP 读会被要求验证（「Sign in to confirm you're not a bot」），失败提示和贴文字的补救流程验证过；在家用网络下应当能读，没测。
-- 部署到 Vercel 等云端：没试过。
+- 部署到服务器：Docker 镜像在本地构建并跑通过（见 deploy/README.md），真实服务器上还没跑过。
 
 处理一条内容的花费（Claude Opus 5.5 + Voyage）：实测一段短文字约 $0.04，一张截图约 $0.05，一篇短文约 $0.06。带十几帧画面的视频会更高。每条的花费记在 `items.cost_usd`，详情页底部显示。想省钱可以把 `VAULT_MODEL` 换成 `claude-sonnet-5-5`。
 
@@ -85,6 +85,10 @@ npm run dev
 打开 <http://localhost:3000>，用邮箱和密码注册（本地的 Supabase 不要求确认邮件）。
 
 用云端的 Supabase 项目：建好项目后把迁移推上去（`npx supabase link` 再 `npx supabase db push`，或者把迁移文件的内容贴进控制台的 SQL Editor 运行），三个变量换成项目的（控制台 **Settings → API Keys**）。账号可以在 **Authentication → Users → Add user** 里直接建，勾上 Auto Confirm User 就不用等确认邮件。部署到公网时配上 `VAULT_ALLOWED_EMAILS`，或者在 Supabase 的 Auth 设置里关掉注册。
+
+### 部署到服务器
+
+想让它常开、手机上也能用：见 [deploy/README.md](deploy/README.md)（一台小的 Linux 服务器 + Docker + 自动 HTTPS）。Vercel 这类无服务器平台不合适：没有 ffmpeg，函数有时长和内存上限，读不了视频。
 
 ### 本机工具
 
