@@ -17,6 +17,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           <Link href="/graph" className="hover:text-ink">
             图谱
           </Link>
+          <Link href="/status" className="hover:text-ink">
+            状态
+          </Link>
         </nav>
         <form action={signOut} className="ml-auto flex items-center gap-3">
           <span className="hidden max-w-48 truncate text-xs text-ink-faint sm:inline">{user.email}</span>

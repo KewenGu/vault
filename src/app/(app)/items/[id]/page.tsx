@@ -163,6 +163,24 @@ export default async function ItemPage({ params }: Props) {
           </p>
         )}
 
+        {!busy && !failed && notes.length > 0 && (
+          // 没读到的部分摆在结果前面：下面的概括和要点只基于读到的东西，读者得先知道这一点
+          <div role="note" className="flex flex-col gap-2 rounded-md bg-warning-soft px-3.5 py-3 text-sm text-warning">
+            <p className="font-medium">这条内容有一部分没读到，下面的结果只基于读到的部分：</p>
+            <ul className="flex list-disc flex-col gap-1 pl-5">
+              {notes.map((n) => (
+                <li key={n}>{n}</li>
+              ))}
+            </ul>
+            <p>
+              <Link href="/status" className="underline">
+                看看这台机器缺什么
+              </Link>
+              ，补上之后点页面底部的「重新分析」。
+            </p>
+          </div>
+        )}
+
         {u && (
           <>
             <p className="text-[15px] leading-relaxed text-ink-secondary">{u.summary}</p>
@@ -249,17 +267,6 @@ export default async function ItemPage({ params }: Props) {
             <p className="mt-3 text-sm leading-relaxed whitespace-pre-wrap text-ink-secondary">{body}</p>
           </details>
         )}
-        {notes.length > 0 && (
-          <details>
-            <summary className="label cursor-pointer hover:text-ink">这次没看到的（{notes.length}）</summary>
-            <ul className="mt-3 flex list-disc flex-col gap-1 pl-5 text-sm text-ink-muted">
-              {notes.map((n) => (
-                <li key={n}>{n}</li>
-              ))}
-            </ul>
-          </details>
-        )}
-
         {!busy && !failed && (
           <footer className="flex flex-wrap items-center gap-2 border-t border-edge pt-5">
             <ReprocessButton id={item.id} from="analyze" label="重新分析" />
