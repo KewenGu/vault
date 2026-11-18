@@ -7,6 +7,8 @@ import { localWhisper, transcribeLocally, whisperSetupHint } from "@/lib/asr/whi
 import { embedTexts } from "@/lib/embeddings";
 import { defaultGraphDeps, linkItemEntities } from "@/lib/graph/merge";
 import { extractSpeechAudio } from "@/lib/media/audio";
+import { compressVideo } from "@/lib/media/compress";
+import { pictureLabel } from "@/lib/media/compress-plan";
 import { IMAGE_MAX_BYTES, MAX_IMAGES, VIDEO_MAX_BYTES, TooLargeError, downloadRemote, normalizeImage, visionImage } from "@/lib/media/files";
 import { canDigestVideo, contactSheets, digestVideo, sheetLayout } from "@/lib/media/frames";
 import { clockTenths, cuesToText, frameNote, likelyChinese, parseTranscript, speechAt, speechLabel, type Cue } from "@/lib/media/transcript";
@@ -158,8 +160,27 @@ async function storeMedia(db: Db, dir: string, post: FetchedPost): Promise<{ med
           console.error(`视频存档失败 ${dir}: ${messageOf(e)}`);
         }
       } else {
+        // 原片存不下：内容还是从原片读（画面清楚、字看得清），另外压一份放得下的副本，供页面播放、点时间跳转
         unstored = { data, ext: "mp4" };
-        notes.push(`原片没有存档（${megabytes(data.byteLength)} MB，超过 ${megabytes(VIDEO_MAX_BYTES)} MB 的上限）：${cannotPlay}`);
+        const size = `${megabytes(data.byteLength)} MB，超过 ${megabytes(VIDEO_MAX_BYTES)} MB 的上限`;
+        let why = "这台机器没有可用的 ffmpeg，压不了副本";
+        if (canDigestVideo()) {
+          try {
+            const copy = await compressVideo(data, "mp4", VIDEO_MAX_BYTES);
+            if ("skipped" in copy) why = copy.skipped;
+            else {
+              const path = `${dir}/video.mp4`;
+              await upload(db, path, copy.data, "video/mp4");
+              media.push({ role: "video", path, mime: "video/mp4", width: copy.width, height: copy.height, bytes: copy.data.byteLength, durationS: copy.durationS, compressed: true });
+              notes.push(`原片有 ${size}：这里存的是压缩过的副本（${pictureLabel(copy.plan)}，${megabytes(copy.data.byteLength)} MB），内容是从原片读的；要看原画质去原链接`);
+              why = "";
+            }
+          } catch (e) {
+            why = `副本没压成：${messageOf(e).slice(0, 100)}`;
+            console.error(`视频压缩失败 ${dir}: ${messageOf(e)}`);
+          }
+        }
+        if (why) notes.push(`原片没有存档（${size}；${why}）：${cannotPlay}`);
       }
     } catch (e) {
       const seen = post.captions ? "只看了封面、字幕和文字" : "只看了封面和文字";
@@ -177,7 +198,8 @@ async function storeMedia(db: Db, dir: string, post: FetchedPost): Promise<{ med
 }
 
 /** ① 链接：读帖子、转存文件。读不到、但用户补贴过文字的，留着上次读到的东西直接去理解。 */
-async function fetchLink(db: Db, item: Item, counts: Counts): Promise<void> {
+/** 返回值：这一步是不是已经把视频的画面和声音读过了（原片存不下、趁数据在手上直接读的）。 */
+async function fetchLink(db: Db, item: Item, counts: Counts): Promise<boolean> {
   if (!item.platform || !item.externalId || !item.url) throw new Error("这条内容没有链接");
   const ref = { platform: item.platform, externalId: item.externalId, url: item.url };
   let post: FetchedPost;
@@ -187,7 +209,7 @@ async function fetchLink(db: Db, item: Item, counts: Counts): Promise<void> {
     if (!item.userText?.trim()) throw e;
     const { error } = await db.from("items").update({ status: "analyzing" }).eq("id", item.id);
     if (error) throw new Error(`更新失败: ${error.message}`);
-    return;
+    return false;
   }
   // 重新读取：先清掉上一轮的文件（图片数量可能变了）
   await removeItemFiles(db, item.userId, item.id);
@@ -197,7 +219,9 @@ async function fetchLink(db: Db, item: Item, counts: Counts): Promise<void> {
   let durationS = post.video?.durationS ?? null;
   let digestNotes: string[] = [];
   let cuts: number[] = [];
+  let digested = false;
   if (stored.unstored) {
+    digested = true;
     // 原片存不下：趁数据还在手上，现在就把画面和声音读出来（存下来的视频是下一步从存储桶里取出来读的）
     try {
       const language = likelyChinese(post.platform, `${post.title}\n${post.text}\n${item.note}`) ? "zh" : null;
@@ -240,6 +264,7 @@ async function fetchLink(db: Db, item: Item, counts: Counts): Promise<void> {
     })
     .eq("id", item.id);
   if (error) throw new Error(`保存帖子失败: ${error.message}`);
+  return digested;
 }
 
 /**
@@ -281,25 +306,26 @@ async function fetchUpload(db: Db, item: Item): Promise<void> {
   if (error) throw new Error(`保存失败: ${error.message}`);
 }
 
-async function fetchItemStep(itemId: string): Promise<StepResult> {
+async function fetchItemStep(itemId: string): Promise<StepResult & { digested: boolean }> {
   "use step";
   const counts: Counts = {};
   const { db, item } = await load(itemId);
-  if (!item) return { ok: false, error: "这条内容不在了", counts };
-  if (item.status === "analyzing") return { ok: true, counts };
-  if (item.status !== "fetching") return { ok: false, error: `状态是 ${item.status}，不再读取`, counts };
+  if (!item) return { ok: false, error: "这条内容不在了", counts, digested: false };
+  if (item.status === "analyzing") return { ok: true, counts, digested: false };
+  if (item.status !== "fetching") return { ok: false, error: `状态是 ${item.status}，不再读取`, counts, digested: false };
   try {
-    if (item.source === "link") await fetchLink(db, item, counts);
+    let digested = false;
+    if (item.source === "link") digested = await fetchLink(db, item, counts);
     else if (item.source === "upload") await fetchUpload(db, item);
     else {
       const { error } = await db.from("items").update({ status: "analyzing", post: emptyPost(item.post) as unknown as Json }).eq("id", itemId);
       if (error) throw new Error(`更新失败: ${error.message}`);
     }
-    return { ok: true, counts };
+    return { ok: true, counts, digested };
   } catch (e) {
     const error = messageOf(e);
     await markFailed(itemId, item.understanding ? `重新读取没成，留着上次的结果：${error}` : error, item.understanding !== null);
-    return { ok: false, error, counts };
+    return { ok: false, error, counts, digested: false };
   }
 }
 
@@ -450,6 +476,8 @@ async function digestItemStep(itemId: string): Promise<{ counts: Counts }> {
   const video = videoOf(item);
   const audio = audioOf(item);
   if (!video && !audio) return { counts };
+  // 存的是压缩副本、而画面和口播已经从原片读过：留着那一份（比从副本重读的清楚），不重做
+  if (video?.compressed && framesOf(item).length > 0 && item.transcript) return { counts };
   let media = item.media;
   let transcript = item.post.transcriptFrom === "captions" ? item.transcript : null;
   let notes: string[] = [];
@@ -633,7 +661,8 @@ export async function processItem(itemId: string) {
   const fetched = await fetchItemStep(itemId);
   add(counts, fetched.counts);
   if (fetched.ok) {
-    add(counts, (await digestItemStep(itemId)).counts);
+    // 原片存不下的视频，读取那一步已经趁数据在手上把画面和声音读了
+    if (!fetched.digested) add(counts, (await digestItemStep(itemId)).counts);
     const understood = await understandItemStep(itemId);
     add(counts, understood.counts);
     if (understood.ok) add(counts, (await indexItemStep(itemId)).counts);
