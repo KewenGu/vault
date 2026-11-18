@@ -38,7 +38,9 @@ async function fetchOnce(url: string, maxBytes: number, timeoutMs: number, heade
     const extra = siteOf(current) === siteOf(url) ? headers : {};
     let res: Response;
     try {
-      res = await publicFetch(current, { maxBytes, headers: { "user-agent": MOBILE_UA, accept: "*/*", ...extra }, redirect: "manual", signal: AbortSignal.timeout(timeoutMs) });
+      // timeoutMs 一定要传：publicFetch 自己有一个默认 20 秒的总时限，只给 signal 的话它照样在 20 秒时掐断——
+      // 几十上百 MB 的视频 20 秒下不完（Vault 2026-11-18：127 MB 的抖音视频每次都「没下载下来」）。
+      res = await publicFetch(current, { maxBytes, timeoutMs, headers: { "user-agent": MOBILE_UA, accept: "*/*", ...extra }, redirect: "manual", signal: AbortSignal.timeout(timeoutMs) });
     } catch (e) {
       if (e instanceof DownloadLimitError) throw new TooLargeError(e.bytes);
       throw explainFetchError(e, `下载文件(${new URL(current).hostname})`);

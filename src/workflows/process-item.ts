@@ -146,7 +146,8 @@ async function storeMedia(db: Db, dir: string, post: FetchedPost): Promise<{ med
         const mb = e.bytes ? `（${megabytes(e.bytes)} MB）` : "";
         notes.push(`视频太大${mb}，超过 ${megabytes(readMax)} MB 没有下载，${seen}`);
       } else {
-        notes.push(`视频没下载下来，${seen}`);
+        // 原因写出来：只说「没下载下来」分不清是超时、被平台拒绝还是地址失效，下一步该怎么办也就不知道
+        notes.push(`视频没下载下来（${messageOf(e).slice(0, 100)}），${seen}`);
         console.error(`视频转存失败 ${dir}: ${messageOf(e)}`);
       }
     }

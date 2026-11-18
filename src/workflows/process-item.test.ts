@@ -204,6 +204,18 @@ describe("a video beyond the read limit", () => {
   });
 });
 
+describe("a video that fails to download", () => {
+  it("says why", async () => {
+    vi.mocked(downloadRemote).mockImplementation(async (file) => {
+      if (file.url.endsWith(".mp4")) throw new Error("下载文件(cdn.example) 失败：下载超时");
+      return jpeg;
+    });
+    await processItem(ID);
+    expect(item().post.notes[1]).toBe("视频没下载下来（下载文件(cdn.example) 失败：下载超时），只看了封面和文字");
+    expect(item().status).toBe("ready");
+  });
+});
+
 describe("a video small enough to archive", () => {
   it("is stored, then read from storage in the next step", async () => {
     const small = new Uint8Array(3 * MB);
