@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyCapture, fileDedupeKey, planUpload, textDedupeKey, titleFromFilename, UPLOAD_MAX_BYTES } from "./capture";
+import { captureFields, classifyCapture, fileDedupeKey, planUpload, textDedupeKey, titleFromFilename, UPLOAD_MAX_BYTES } from "./capture";
 
 describe("classifyCapture", () => {
   it("treats a bare link and an app share blurb as a link", () => {
@@ -14,6 +14,16 @@ describe("classifyCapture", () => {
     const two = "对比一下 https://a.example.com/x 和 https://b.example.com/y";
     expect(classifyCapture(two)).toEqual({ kind: "text", text: two });
     expect(classifyCapture("明天记得买牛奶")).toEqual({ kind: "text", text: "明天记得买牛奶" });
+  });
+
+  it("treats a platform share text as a link however long its caption is", () => {
+    const caption = "停止精神内耗的9个方法｜别再让自己这么累了 你有没有过这样的经历？明明一天没做多少事情，却觉得特别疲惫。".repeat(12);
+    const share = `2.56 01/03 Z@m.DH WmD:/ :2pm ${caption} #精神内耗 #自我成长 https://v.douyin.com/iAbCdEf/ 复制此链接，打开Dou音搜索，直接观看视频！`;
+    expect(Array.from(share).length).toBeGreaterThan(600);
+    expect(classifyCapture(share)).toEqual({ kind: "link", url: "https://v.douyin.com/iAbCdEf/" });
+    // 不认得的网站还是按 300 字的线：长文里顺带的一条链接是文字的一部分
+    const essay = `${caption} https://example.com/a`;
+    expect(classifyCapture(essay)).toEqual({ kind: "text", text: essay });
   });
 
   it("returns null for empty input", () => {
@@ -46,5 +56,13 @@ describe("planUpload", () => {
 
   it("derives a starting title from the filename", () => {
     expect(titleFromFilename("三亚攻略 最终版.png")).toBe("三亚攻略 最终版");
+  });
+});
+
+describe("captureFields", () => {
+  it("uses the note as the content when only the note was filled in", () => {
+    expect(captureFields("  ", "https://v.douyin.com/iAbCdEf/")).toEqual({ input: "https://v.douyin.com/iAbCdEf/", note: "" });
+    expect(captureFields("https://example.com", "周末看")).toEqual({ input: "https://example.com", note: "周末看" });
+    expect(captureFields("", "")).toEqual({ input: "", note: "" });
   });
 });

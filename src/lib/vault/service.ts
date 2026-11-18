@@ -4,7 +4,7 @@ import type { Session } from "@/lib/auth/user";
 import { LinkError, resolveLink } from "@/lib/sources/link";
 import { getServiceClient } from "@/lib/supabase/service";
 import { processItem } from "@/workflows/process-item";
-import { classifyCapture, fileDedupeKey, planUpload, textDedupeKey, titleFromFilename, uploadPath, uploadedMedia } from "./capture";
+import { captureFields, classifyCapture, fileDedupeKey, planUpload, textDedupeKey, titleFromFilename, uploadPath, uploadedMedia } from "./capture";
 import { BUCKET, TEXT_MAX, createItem, deleteItem, getItem, inProgress, itemDir, linkDedupeKey, restartItem } from "./store";
 
 /**
@@ -37,7 +37,8 @@ async function startProcessing(itemId: string): Promise<void> {
 export type Saved = { id: string; existing: boolean };
 
 /** 存一段粘贴的内容：链接（含 App 分享出来的那段话）或文字。已经存过同一条的回到那条，不重复处理。 */
-export async function saveInput(session: Session, input: string, note = ""): Promise<Saved> {
+export async function saveInput(session: Session, rawInput: string, rawNote = ""): Promise<Saved> {
+  const { input, note } = captureFields(rawInput, rawNote);
   const capture = classifyCapture(input);
   if (!capture) throw new VaultError("没有内容：贴一条链接，或者一段文字");
   const { user, db } = session;

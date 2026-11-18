@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { extractShareUrl } from "@/lib/sources/link";
+import { extractShareUrl, platformOfHost } from "@/lib/sources/link";
 import type { ItemMedia, PostKind } from "@/lib/sources/types";
 
 /**
@@ -8,8 +8,21 @@ import type { ItemMedia, PostKind } from "@/lib/sources/types";
 
 export type Capture = { kind: "link"; url: string } | { kind: "text"; text: string };
 
-/** 链接之外还带着这么多字以内，算「分享文案」（App 里复制链接得到的那一段话）；再多就是一篇带链接的文字 */
-const SHARE_BLURB_MAX = 300;
+/** 不认得的网站：链接之外还带着这么多字以内算「标题 + 链接」；再多就是一篇顺带提到链接的文字 */
+const WEB_BLURB_MAX = 300;
+/**
+ * 认得的平台（抖音、小红书…）：App 里「复制链接」得到的是「口令 + 整段文案 + 链接」，文案可以有上千字
+ * （抖音的文案上限是 1000 字），所以放得很宽。2026-11-18：一条带长文案的抖音分享按 300 字的线会被当成文字存。
+ */
+const PLATFORM_BLURB_MAX = 3000;
+
+const hostOf = (url: string) => {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return "";
+  }
+};
 
 /**
  * 粘贴的内容是一条链接（含 App 分享出来的「一段话 + 链接」），还是一段文字。
@@ -22,9 +35,18 @@ export function classifyCapture(input: string): Capture | null {
   if (url) {
     const rest = text.replace(/https?:\/\/[\x21-\x7e]+/gi, "").trim();
     const links = text.match(/https?:\/\/[\x21-\x7e]+/gi)?.length ?? 1;
-    if (links <= 1 && Array.from(rest).length <= SHARE_BLURB_MAX) return { kind: "link", url };
+    const max = platformOfHost(hostOf(url)) ? PLATFORM_BLURB_MAX : WEB_BLURB_MAX;
+    if (links <= 1 && Array.from(rest).length <= max) return { kind: "link", url };
   }
   return { kind: "text", text };
+}
+
+/**
+ * 存入框有「内容」和「备注」两格。只填了备注那一格的，把它当内容存（纯函数）：
+ * 2026-11-18 第一次真实使用，分享文案就被贴进了备注格，得到一句「没有内容」。
+ */
+export function captureFields(input: string, note: string): { input: string; note: string } {
+  return input.trim() ? { input, note } : { input: note, note: "" };
 }
 
 /** 文字内容的去重键：空白差异不算不同（同一段话多贴了个换行还是同一条） */

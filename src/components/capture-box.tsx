@@ -45,9 +45,14 @@ export function CaptureBox() {
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploads, setUploads] = useState<UploadState[]>([]);
   const [dragging, setDragging] = useState(false);
+  // 备注默认收着：两格都摆出来时，带边框的备注格比上面的内容格更像「输入框」，分享文案会被贴错地方
+  const [showNote, setShowNote] = useState(false);
   const [state, formAction, pending] = useActionState(async (prev: ActionState, formData: FormData) => {
     const next = await saveAction(prev, formData);
-    if (!next.error) formRef.current?.reset();
+    if (!next.error) {
+      formRef.current?.reset();
+      setShowNote(false);
+    }
     return next;
   }, { error: null });
 
@@ -79,7 +84,7 @@ export function CaptureBox() {
         setDragging(false);
         void addFiles(Array.from(e.dataTransfer.files));
       }}
-      className={`panel flex flex-col gap-2 p-3 transition-colors ${dragging ? "border-accent bg-accent-soft" : ""}`}
+      className="flex flex-col gap-2"
     >
       <label htmlFor="capture-input" className="sr-only">
         存入内容
@@ -87,11 +92,12 @@ export function CaptureBox() {
       <textarea
         id="capture-input"
         name="input"
-        rows={2}
+        rows={3}
+        autoFocus
         // 上一条还在存的时候不让改：存完表单会清空，这时候贴进来的下一条会被一起清掉
         readOnly={pending}
-        placeholder="贴一条链接、一段文字，或者把图片 / 视频 / 音频拖进来"
-        className="w-full resize-y bg-transparent px-1 py-1 text-[15px] leading-relaxed outline-none placeholder:text-ink-faint"
+        placeholder="在这里贴链接或文字，也可以把图片 / 视频 / 音频拖进来"
+        className={`field resize-y px-3.5 py-3 text-[15px] leading-relaxed transition-colors ${dragging ? "border-accent bg-accent-soft" : ""}`}
         onPaste={(e) => {
           const files = Array.from(e.clipboardData.files);
           if (files.length > 0) {
@@ -103,13 +109,16 @@ export function CaptureBox() {
           if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) formRef.current?.requestSubmit();
         }}
       />
+      {showNote && <input name="note" autoFocus placeholder="备注：为什么存、打算怎么用" aria-label="备注" className="field" maxLength={1000} />}
       <div className="flex flex-wrap items-center gap-2">
-        <input name="note" placeholder="备注：为什么存（可不填）" aria-label="备注" className="field h-9 min-w-0 flex-1 py-0" maxLength={1000} />
         <input ref={fileRef} type="file" multiple hidden accept="image/*,video/*,audio/*,.txt,.md" onChange={(e) => { void addFiles(Array.from(e.target.files ?? [])); e.target.value = ""; }} />
         <button type="button" className="btn" onClick={() => fileRef.current?.click()}>
           选文件
         </button>
-        <button className="btn btn-primary" disabled={pending}>
+        <button type="button" className="btn btn-quiet" aria-expanded={showNote} onClick={() => setShowNote((v) => !v)}>
+          {showNote ? "不写备注" : "加备注"}
+        </button>
+        <button className="btn btn-primary ml-auto min-w-20" disabled={pending}>
           {pending ? "存入中…" : "存入"}
         </button>
       </div>
