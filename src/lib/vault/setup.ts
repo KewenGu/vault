@@ -13,6 +13,8 @@ export type SetupFacts = {
   ffmpeg: { path: string | null; error: string | null };
   asr: { volc: boolean; openai: boolean; whisper: string | null; whisperHint: string | null };
   ytdlp: string | null;
+  /** 存储桶的单文件上限（字节；null = 桶没设上限，undefined = 没读到）和代码里的存档上限 */
+  storage: { bucketLimit: number | null | undefined; wanted: number };
 };
 
 /**
@@ -26,6 +28,28 @@ export function describeFfmpegProblem(bin: string, message: string, versionOutpu
 
 export type SetupState = "ok" | "missing" | "optional";
 export type SetupCheck = { key: string; label: string; state: SetupState; detail: string; effect: string; fix: string };
+
+const mb = (bytes: number) => Math.round(bytes / 1024 / 1024);
+
+/** 存档上限这一项：桶的上限接口读得到；项目全局的读不到，只能提醒去哪看。 */
+function storageCheck({ bucketLimit, wanted }: SetupFacts["storage"]): SetupCheck {
+  const base = {
+    key: "storage",
+    label: "存档原片（存储上限）",
+    effect: `视频原片和上传的文件单个最多存 ${mb(wanted)} MB。存储那边的上限不够时，大视频照样读画面和声音，只是不留原片、不能在这里播放。`,
+  };
+  const globalHint = "项目的全局上传上限这里读不到：控制台 Storage → Settings → Upload file size limit（免费套餐封顶 50 MB）";
+  if (bucketLimit === undefined) return { ...base, state: "missing", detail: "没读到存储桶 vault（迁移没跑，或者密钥不对）", fix: "在 Supabase 的 SQL Editor 里运行 supabase/migrations 下的迁移。" };
+  if (bucketLimit !== null && bucketLimit < wanted) {
+    return {
+      ...base,
+      state: "missing",
+      detail: `存储桶的单文件上限是 ${mb(bucketLimit)} MB，比这里的 ${mb(wanted)} MB 小`,
+      fix: `在 Supabase 的 SQL Editor 里运行：update storage.buckets set file_size_limit = ${wanted} where id = 'vault'; 然后确认${globalHint}。`,
+    };
+  }
+  return { ...base, state: "ok", detail: `存储桶的上限够了（${bucketLimit === null ? "没设上限" : `${mb(bucketLimit)} MB`}）。${globalHint}——大文件还是存不进去的话，就是它`, fix: "" };
+}
 
 export function setupChecks(f: SetupFacts): SetupCheck[] {
   const asrVia = [f.asr.volc ? "豆包语音识别" : "", f.asr.openai ? "OpenAI whisper-1" : "", f.asr.whisper ? `本机 whisper（${f.asr.whisper}）` : ""].filter(Boolean);
@@ -55,6 +79,7 @@ export function setupChecks(f: SetupFacts): SetupCheck[] {
       effect: "没有它，口播类的视频（讲方法、讲知识、测评）只能看到画面上的字和文案，内容要点会很笼统。YouTube 有平台字幕的不受影响。",
       fix: asrVia.length > 0 ? "转写通道已经有了，先把上面的 ffmpeg 配好。" : "任选其一填进 .env.local：OPENAI_API_KEY（最省事），或 VOLC_SPEECH_API_KEY（豆包，便宜），或在本机装 whisper（不花钱）。",
     },
+    storageCheck(f.storage),
     {
       key: "apify",
       label: "读抖音、Instagram（Apify）",

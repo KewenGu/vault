@@ -9,6 +9,7 @@ const all: SetupFacts = {
   ffmpeg: { path: "/opt/homebrew/bin/ffmpeg", error: null },
   asr: { volc: false, openai: true, whisper: null, whisperHint: null },
   ytdlp: "/opt/homebrew/bin/yt-dlp",
+  storage: { bucketLimit: 200 * 1024 * 1024, wanted: 200 * 1024 * 1024 },
 };
 const state = (f: SetupFacts) => Object.fromEntries(setupChecks(f).map((c) => [c.key, c.state]));
 const detail = (f: SetupFacts, key: string) => setupChecks(f).find((c) => c.key === key)!.detail;
@@ -48,5 +49,23 @@ describe("describeFfmpegProblem", () => {
 
   it("falls back to the raw problem when there is no version output", () => {
     expect(describeFfmpegProblem("/usr/bin/ffmpeg", "ffmpeg 启动失败：EACCES", "")).toBe("用的是 /usr/bin/ffmpeg：ffmpeg 启动失败：EACCES");
+  });
+});
+
+describe("the archive limit check", () => {
+  const MB = 1024 * 1024;
+  it("names the bucket when its limit is the smaller one, with the statement to run", () => {
+    const f = { ...all, storage: { bucketLimit: 50 * MB, wanted: 200 * MB } };
+    expect(state(f).storage).toBe("missing");
+    expect(detail(f, "storage")).toBe("存储桶的单文件上限是 50 MB，比这里的 200 MB 小");
+    expect(setupChecks(f).find((c) => c.key === "storage")!.fix).toContain("update storage.buckets set file_size_limit = 209715200 where id = 'vault';");
+  });
+
+  it("points at the project-wide limit once the bucket is fine, and flags an unreadable bucket", () => {
+    expect(state(all).storage).toBe("ok");
+    expect(detail(all, "storage")).toContain("存储桶的上限够了（200 MB）");
+    expect(detail(all, "storage")).toContain("Upload file size limit");
+    expect(detail({ ...all, storage: { bucketLimit: null, wanted: 200 * MB } }, "storage")).toContain("没设上限");
+    expect(state({ ...all, storage: { bucketLimit: undefined, wanted: 200 * MB } }).storage).toBe("missing");
   });
 });

@@ -296,3 +296,13 @@ export async function tagCounts(db: Db, userId: string): Promise<{ tag: string; 
   if (error) throw new Error(`读取标签失败: ${error.message}`);
   return data ?? [];
 }
+
+/**
+ * 存储桶自己的单文件上限（字节）；桶没设上限是 null，读不到（桶不在、没权限）是 undefined。db 要是 service_role。
+ * 项目还有一个全局的上传上限，接口读不到，只能去控制台看（Storage → Settings）。
+ */
+export async function bucketFileLimit(db: Db): Promise<number | null | undefined> {
+  const { data, error } = await db.storage.getBucket(BUCKET);
+  if (error || !data) return undefined;
+  return typeof data.file_size_limit === "number" ? data.file_size_limit : null;
+}

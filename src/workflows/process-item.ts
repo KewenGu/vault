@@ -14,7 +14,7 @@ import { fetchPost } from "@/lib/sources/fetch-post";
 import { emptyStats, type FetchedPost, type ItemMedia, type PostSnapshot } from "@/lib/sources/types";
 import { ytdlpDownload } from "@/lib/sources/ytdlp";
 import { buildEmbeddingText, buildSearchText } from "@/lib/vault/indexing";
-import { BUCKET, audioOf, framesOf, getItemById, imagesOf, itemDir, removeItemFiles, sheetsOf, tagCounts, videoOf, type Item } from "@/lib/vault/store";
+import { BUCKET, audioOf, bucketFileLimit, framesOf, getItemById, imagesOf, itemDir, removeItemFiles, sheetsOf, tagCounts, videoOf, type Item } from "@/lib/vault/store";
 import { understand, type OutputLanguage } from "@/lib/vault/understand";
 import type { Json } from "@/lib/db/types";
 
@@ -103,6 +103,18 @@ const emptyPost = (patch: Partial<PostSnapshot> = {}): PostSnapshot => ({
   ...patch,
 });
 
+/**
+ * 存储服务嫌文件太大时，说清楚是哪一道上限：存储桶自己的（接口读得到，跑一条 SQL 就能改），
+ * 还是项目全局的（读不到，在控制台改；免费套餐封顶 50 MB）。两道里小的那个说了算。
+ */
+async function storageLimitHint(db: Db, bytes: number): Promise<string> {
+  const limit = await bucketFileLimit(db).catch(() => undefined);
+  if (typeof limit === "number" && limit < bytes) {
+    return `存储桶的单文件上限是 ${megabytes(limit)} MB：在 Supabase 的 SQL Editor 里运行迁移 20261118000001_bucket_limit.sql`;
+  }
+  return "Supabase 项目的全局上传上限不够：控制台 Storage → Settings → Upload file size limit（免费套餐封顶 50 MB）";
+}
+
 /** 把读到的帖子的图片 / 视频下载下来转存；下不了的记进 notes（不算失败——文字还在，照样能理解）。 */
 async function storeMedia(db: Db, dir: string, post: FetchedPost): Promise<{ media: ItemMedia[]; notes: string[]; unstored: { data: Uint8Array; ext: string } | null }> {
   const media: ItemMedia[] = [];
@@ -142,7 +154,7 @@ async function storeMedia(db: Db, dir: string, post: FetchedPost): Promise<{ med
           // 存储那边不收（最常见：存储桶或项目的单文件上限比这里的小）。视频已经在手上了，照样读，只是不留原片
           unstored = { data, ext: "mp4" };
           const tooBig = /maximum allowed size|too large|exceeded|413/i.test(messageOf(e));
-          notes.push(`原片没存进去（${megabytes(data.byteLength)} MB，${tooBig ? "存储服务的单文件上限不够，见 README「存档上限」" : messageOf(e).slice(0, 100)}）：${cannotPlay}`);
+          notes.push(`原片没存进去（${megabytes(data.byteLength)} MB，${tooBig ? await storageLimitHint(db, data.byteLength) : messageOf(e).slice(0, 100)}）：${cannotPlay}`);
           console.error(`视频存档失败 ${dir}: ${messageOf(e)}`);
         }
       } else {

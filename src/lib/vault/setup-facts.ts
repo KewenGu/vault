@@ -3,6 +3,9 @@ import { asrConfig } from "@/lib/asr/volc";
 import { openaiAsrConfig } from "@/lib/asr/openai";
 import { localWhisper, whisperSetupHint } from "@/lib/asr/whisper-local";
 import { assertFfmpegBinary, FfmpegError, ffmpegPath } from "@/lib/media/ffmpeg";
+import { VIDEO_MAX_BYTES } from "@/lib/media/files";
+import { getServiceClient } from "@/lib/supabase/service";
+import { bucketFileLimit } from "./store";
 import { ytdlpPath } from "@/lib/sources/ytdlp";
 import { describeFfmpegProblem, type SetupFacts } from "./setup";
 
@@ -28,5 +31,6 @@ export async function gatherSetupFacts(): Promise<SetupFacts> {
     ffmpeg: { path: bin, error: ffmpegError },
     asr: { volc: asrConfig() !== null, openai: openaiAsrConfig() !== null, whisper: whisper?.model ?? null, whisperHint: whisperSetupHint() },
     ytdlp: ytdlpPath(),
+    storage: { bucketLimit: await bucketFileLimit(getServiceClient()).catch(() => undefined), wanted: VIDEO_MAX_BYTES },
   };
 }

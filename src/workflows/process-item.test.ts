@@ -228,12 +228,21 @@ describe("a video the storage service refuses", () => {
       const refused = { data: null, error: { message: "The object exceeded the maximum allowed size" } };
       return { ...api, upload: (path: string, body: Blob, opts: unknown) => (path.endsWith("video.mp4") ? Promise.resolve(refused) : upload(path, body, opts)) };
     }) as never);
+    const getBucket = vi.fn(async () => ({ data: { file_size_limit: 50 * MB } as { file_size_limit: number | null }, error: null }));
+    Object.assign(fake.db.storage, { getBucket });
     await processItem(ID);
     expect(vi.mocked(digestVideo).mock.calls[0][0]).toBe(data);
     expect(roles()).toEqual(["image", "frame", "frame", "sheet"]);
-    expect(item().post.notes[1]).toBe("原片没存进去（120 MB，存储服务的单文件上限不够，见 README「存档上限」）：画面和声音照常读，但这里不能播放，要看去原链接");
+    // 存储桶的上限比文件小：点名是桶，给出要跑的迁移
+    expect(item().post.notes[1]).toBe("原片没存进去（120 MB，存储桶的单文件上限是 50 MB：在 Supabase 的 SQL Editor 里运行迁移 20261118000001_bucket_limit.sql）：画面和声音照常读，但这里不能播放，要看去原链接");
     expect(item().transcript).toContain("别人的评价只是信息");
     expect(item().status).toBe("ready");
+
+    // 桶的上限够了还被拒：那就是项目全局的上限
+    getBucket.mockResolvedValue({ data: { file_size_limit: 200 * MB }, error: null });
+    Object.assign(item(), { status: "fetching" });
+    await processItem(ID);
+    expect(item().post.notes[1]).toBe("原片没存进去（120 MB，Supabase 项目的全局上传上限不够：控制台 Storage → Settings → Upload file size limit（免费套餐封顶 50 MB））：画面和声音照常读，但这里不能播放，要看去原链接");
   });
 });
 
