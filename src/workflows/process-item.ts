@@ -42,8 +42,19 @@ type Db = ReturnType<typeof getServiceClient>;
 
 const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-/** 口播最多转写前这么多秒（30 分钟；48 kbps 单声道约 11 MB，在各家语音识别的单文件上限以内） */
-const SPEECH_MAX_SECONDS = 1800;
+/** 口播最多转写前这么多秒（60 分钟；48 kbps 单声道约 22 MB，在各家语音识别的单文件上限以内——最紧的是 OpenAI 的 25 MB） */
+const SPEECH_MAX_SECONDS = 3600;
+/**
+ * 为了读懂内容，视频最多下载这么大（默认 600 MB，`VAULT_VIDEO_READ_MAX_MB` 可以改）。
+ * 和「存档」的上限（VIDEO_MAX_BYTES，存储桶单文件 50 MB）是两回事：超过存档上限的视频不存原片，
+ * 但照样下载到本机抽画面、转写——2026-11-18 第一条真实的抖音视频（38 分钟、127 MB）就因为把两个上限混在一起，
+ * 整条没下载，只看了封面和文案。整个文件会读进内存，所以也不能无限大。
+ */
+const videoReadMaxBytes = () => {
+  const mb = Number(process.env.VAULT_VIDEO_READ_MAX_MB);
+  return (Number.isFinite(mb) && mb >= 50 ? Math.min(mb, 2000) : 600) * 1024 * 1024;
+};
+const megabytes = (bytes: number) => Math.round(bytes / 1024 / 1024);
 /** 网页配图短边不到这么多像素的不存（图标、头像、分隔线） */
 const WEB_IMAGE_MIN_EDGE = 200;
 
@@ -93,7 +104,7 @@ const emptyPost = (patch: Partial<PostSnapshot> = {}): PostSnapshot => ({
 });
 
 /** 把读到的帖子的图片 / 视频下载下来转存；下不了的记进 notes（不算失败——文字还在，照样能理解）。 */
-async function storeMedia(db: Db, dir: string, post: FetchedPost): Promise<{ media: ItemMedia[]; notes: string[] }> {
+async function storeMedia(db: Db, dir: string, post: FetchedPost): Promise<{ media: ItemMedia[]; notes: string[]; unstored: { data: Uint8Array; ext: string } | null }> {
   const media: ItemMedia[] = [];
   const notes: string[] = [];
   const images = post.images.slice(0, MAX_IMAGES);
@@ -112,27 +123,35 @@ async function storeMedia(db: Db, dir: string, post: FetchedPost): Promise<{ med
     }
   }
   if (failed > 0) notes.push(`有 ${failed} 张图没下载下来`);
+  // 太大存不了档的视频：留着这份数据，读完画面和声音就丢（见 videoReadMaxBytes）
+  let unstored: { data: Uint8Array; ext: string } | null = null;
   if (post.video) {
+    const readMax = videoReadMaxBytes();
     try {
-      // 没有能直接下的地址的（别的视频站）交给本机的 yt-dlp
-      const data = post.video.via === "ytdlp" ? await ytdlpDownload(post.video.url, VIDEO_MAX_BYTES) : await downloadRemote(post.video, VIDEO_MAX_BYTES, 180_000);
-      const path = `${dir}/video.mp4`;
-      await upload(db, path, data, "video/mp4");
-      // yt-dlp 下的是按大小挑的那一档，宽高和视频信息里写的不一定一样：留空，抽画面时按实际的补
-      const sized = post.video.via === "ytdlp" ? { width: null, height: null } : { width: post.video.width ?? null, height: post.video.height ?? null };
-      media.push({ role: "video", path, mime: "video/mp4", ...sized, bytes: data.byteLength, durationS: post.video.durationS });
+      // 没有能直接下的地址的（别的视频站）交给本机的 yt-dlp：它按大小挑清晰度，挑的就是存得下的那一档
+      const data = post.video.via === "ytdlp" ? await ytdlpDownload(post.video.url, VIDEO_MAX_BYTES) : await downloadRemote(post.video, readMax, 600_000);
+      if (data.byteLength <= VIDEO_MAX_BYTES) {
+        const path = `${dir}/video.mp4`;
+        await upload(db, path, data, "video/mp4");
+        // yt-dlp 下的是按大小挑的那一档，宽高和视频信息里写的不一定一样：留空，抽画面时按实际的补
+        const sized = post.video.via === "ytdlp" ? { width: null, height: null } : { width: post.video.width ?? null, height: post.video.height ?? null };
+        media.push({ role: "video", path, mime: "video/mp4", ...sized, bytes: data.byteLength, durationS: post.video.durationS });
+      } else {
+        unstored = { data, ext: "mp4" };
+        notes.push(`原片没有存档（${megabytes(data.byteLength)} MB，超过 ${megabytes(VIDEO_MAX_BYTES)} MB 的上限）：画面和声音照常读，但这里不能播放，要看去原链接`);
+      }
     } catch (e) {
       const seen = post.captions ? "只看了封面、字幕和文字" : "只看了封面和文字";
       if (e instanceof TooLargeError) {
-        const mb = e.bytes ? `（${Math.round(e.bytes / 1024 / 1024)} MB）` : "";
-        notes.push(`视频太大${mb}，超过 ${VIDEO_MAX_BYTES / 1024 / 1024} MB 没有转存，${seen}`);
+        const mb = e.bytes ? `（${megabytes(e.bytes)} MB）` : "";
+        notes.push(`视频太大${mb}，超过 ${megabytes(readMax)} MB 没有下载，${seen}`);
       } else {
         notes.push(`视频没下载下来，${seen}`);
         console.error(`视频转存失败 ${dir}: ${messageOf(e)}`);
       }
     }
   }
-  return { media, notes };
+  return { media, notes, unstored };
 }
 
 /** ① 链接：读帖子、转存文件。读不到、但用户补贴过文字的，留着上次读到的东西直接去理解。 */
@@ -150,7 +169,26 @@ async function fetchLink(db: Db, item: Item, counts: Counts): Promise<void> {
   }
   // 重新读取：先清掉上一轮的文件（图片数量可能变了）
   await removeItemFiles(db, item.userId, item.id);
-  const { media, notes } = await storeMedia(db, itemDir(item.userId, item.id), post);
+  const stored = await storeMedia(db, itemDir(item.userId, item.id), post);
+  let media = stored.media;
+  let transcript: string | null = post.captions || null;
+  let durationS = post.video?.durationS ?? null;
+  let digestNotes: string[] = [];
+  let cuts: number[] = [];
+  if (stored.unstored) {
+    // 原片存不下：趁数据还在手上，现在就把画面和声音读出来（存下来的视频是下一步从存储桶里取出来读的）
+    try {
+      const language = likelyChinese(post.platform, `${post.title}\n${post.text}\n${item.note}`) ? "zh" : null;
+      const d = await digestVideoBytes(db, { id: item.id, userId: item.userId, captions: post.captions ?? null, language }, stored.unstored.data, stored.unstored.ext, counts);
+      media = [...media, ...d.frames, ...d.sheets];
+      transcript = d.transcript;
+      digestNotes = d.notes;
+      cuts = d.cuts;
+      durationS = d.durationS ?? durationS;
+    } catch (e) {
+      digestNotes = [`没有抽出视频画面（${messageOf(e).slice(0, 120)}），只看了封面和文字`];
+    }
+  }
   const snapshot = emptyPost({
     text: post.text,
     publishedAt: post.publishedAt,
@@ -158,10 +196,12 @@ async function fetchLink(db: Db, item: Item, counts: Counts): Promise<void> {
     hashtags: post.hashtags,
     topComments: post.topComments,
     music: post.music,
-    notes: [...post.notes, ...notes],
+    notes: [...post.notes, ...stored.notes],
     authorId: post.author.id,
-    durationS: post.video?.durationS ?? null,
-    transcriptFrom: post.captions ? "captions" : null,
+    durationS,
+    digestNotes,
+    transcriptFrom: post.captions ? "captions" : transcript ? "asr" : null,
+    cuts,
   });
   const { error } = await db
     .from("items")
@@ -172,7 +212,7 @@ async function fetchLink(db: Db, item: Item, counts: Counts): Promise<void> {
       author: post.author.name || null,
       post: snapshot as unknown as Json,
       media: media as unknown as Json,
-      transcript: post.captions || null,
+      transcript,
       understanding: null,
       processed_at: null,
     })
@@ -298,32 +338,42 @@ async function transcribeSpeech(counts: Counts, audio: { data: Uint8Array; secon
 const extOf = (path: string) => path.split(".").pop() ?? "bin";
 const speechLanguage = (item: Item): "zh" | null => (likelyChinese(item.platform ?? "", `${item.title}\n${item.post.text}\n${item.note}`) ? "zh" : null);
 
-/** ② 视频：测切点、抽帧、转写（平台自带字幕的只抽帧）、每帧标词、拼帧格。顺序是先转写再存帧：帧上「那一刻说的话」要等口播出来才知道。 */
-async function digestVideoItem(db: Db, item: Item, video: ItemMedia, counts: Counts): Promise<{ media: ItemMedia[]; transcript: string | null; notes: string[]; cuts: number[] }> {
+type VideoDigestResult = { frames: ItemMedia[]; sheets: ItemMedia[]; transcript: string | null; notes: string[]; cuts: number[]; durationS: number | null; width: number | null; height: number | null };
+
+/**
+ * ② 视频：测切点、抽帧、转写（平台自带字幕的只抽帧）、每帧标词、拼帧格，把帧和帧格存进存储桶。
+ * 顺序是先转写再存帧：帧上「那一刻说的话」要等口播出来才知道。视频的数据由调用方给（存下来的从存储桶取，存不下的是刚下载的那份）。
+ */
+async function digestVideoBytes(
+  db: Db,
+  ctx: { id: string; userId: string; captions: string | null; language: "zh" | null },
+  data: Uint8Array,
+  ext: string,
+  counts: Counts
+): Promise<VideoDigestResult> {
+  const { captions } = ctx;
   const notes: string[] = [];
-  let media = item.media.filter((m) => m.role !== "frame" && m.role !== "sheet");
-  const captions = item.post.transcriptFrom === "captions" ? item.transcript : null;
-  let transcript: string | null = captions;
-  let cuts: number[] = [];
   if (!canDigestVideo()) {
     notes.push(captions ? "这台机器没有 ffmpeg，没有抽视频画面，只看了封面、字幕和文字" : "这台机器没有 ffmpeg，没有抽视频画面、也没有转写口播，只看了封面和文字");
-    return { media, transcript, notes, cuts };
+    return { frames: [], sheets: [], transcript: captions, notes, cuts: [], durationS: null, width: null, height: null };
   }
-  const digest = await digestVideo(await download(db, video.path), extOf(video.path), { overview: true, audioMaxSeconds: SPEECH_MAX_SECONDS });
-  cuts = (digest.cuts ?? []).map((c) => c.at);
+  let transcript: string | null = captions;
+  const digest = await digestVideo(data, ext, { overview: true, audioMaxSeconds: SPEECH_MAX_SECONDS });
+  const cuts = (digest.cuts ?? []).map((c) => c.at);
   let cues: Cue[] = captions ? parseTranscript(captions).flatMap((t) => (t.at === null ? [] : [{ at: t.at, text: t.text }])) : [];
   if (captions) {
     // 有平台字幕：不做语音识别
   } else if (!digest.audio) {
-    notes.push("视频没有声音");
+    // 有音轨但没导出来（ffmpeg 出错 / 超时）和本来就没声音要分开说：前一种重试可能就好了
+    notes.push(digest.probe.hasAudio ? "音轨没导出来（ffmpeg 出错或超时），没有转写口播，只看了画面和文字" : "视频没有声音");
   } else {
-    const speech = await transcribeSpeech(counts, digest.audio, speechLanguage(item));
+    const speech = await transcribeSpeech(counts, digest.audio, ctx.language);
     transcript = speech.transcript;
     cues = speech.cues;
     notes.push(...speech.notes);
-    if (transcript && digest.probe.duration > digest.audio.seconds + 1) notes.push(`口播只转写了前 ${Math.round(digest.audio.seconds / 60)} 分钟`);
+    if (transcript && digest.probe.duration > digest.audio.seconds + 1) notes.push(`口播只转写了前 ${Math.round(digest.audio.seconds / 60)} 分钟（全长 ${Math.round(digest.probe.duration / 60)} 分钟）`);
   }
-  const dir = itemDir(item.userId, item.id);
+  const dir = itemDir(ctx.userId, ctx.id);
   const portrait = (digest.probe.height ?? 0) >= (digest.probe.width ?? 0);
   const { span } = sheetLayout(portrait);
   const frames: ItemMedia[] = [];
@@ -345,11 +395,19 @@ async function digestVideoItem(db: Db, item: Item, video: ItemMedia, counts: Cou
     }
   } catch (e) {
     // 帧格拼不出来（字体 / 内存）：没有帧格也能理解，每帧的说明里有同样的时间和词
-    console.warn(`视频：帧格没拼出来 item=${item.id}: ${messageOf(e)}`);
+    console.warn(`视频：帧格没拼出来 item=${ctx.id}: ${messageOf(e)}`);
   }
+  return { frames, sheets, transcript, notes, cuts, durationS: Math.round(digest.probe.duration * 100) / 100, width: digest.probe.width, height: digest.probe.height };
+}
+
+/** ②（存了原片的视频）：从存储桶取出来读。 */
+async function digestVideoItem(db: Db, item: Item, video: ItemMedia, counts: Counts): Promise<{ media: ItemMedia[]; transcript: string | null; notes: string[]; cuts: number[] }> {
+  const captions = item.post.transcriptFrom === "captions" ? item.transcript : null;
+  const kept = item.media.filter((m) => m.role !== "frame" && m.role !== "sheet");
+  const d = await digestVideoBytes(db, { id: item.id, userId: item.userId, captions, language: speechLanguage(item) }, canDigestVideo() ? await download(db, video.path) : new Uint8Array(), extOf(video.path), counts);
   // 探测到的真实时长、尺寸比平台报的准
-  media = [...media.map((m) => (m.role === "video" ? { ...m, durationS: Math.round(digest.probe.duration * 100) / 100, width: digest.probe.width ?? m.width, height: digest.probe.height ?? m.height } : m)), ...frames, ...sheets];
-  return { media, transcript, notes, cuts };
+  const media = [...kept.map((m) => (m.role === "video" && d.durationS !== null ? { ...m, durationS: d.durationS, width: d.width ?? m.width, height: d.height ?? m.height } : m)), ...d.frames, ...d.sheets];
+  return { media, transcript: d.transcript, notes: d.notes, cuts: d.cuts };
 }
 
 /** ② 音频：转成语音识别要的格式再转写。 */
@@ -463,8 +521,9 @@ async function understandItemStep(itemId: string): Promise<StepResult> {
         now: new Date(),
       })
     );
-    // 上传的文件名、空标题换成模型起的；平台给的标题留着（用户认得它）
-    const keepTitle = item.source === "link" && item.title;
+    // 平台自己有标题的（YouTube、小红书、网页）留着，用户认得它；抖音、TikTok、Instagram、X 的「标题」是文案的第一行，
+    // 常常是一整段话——换成模型起的。上传的文件名、空标题也换成模型起的。
+    const keepTitle = item.source === "link" && item.title && (item.platform === "youtube" || item.platform === "xiaohongshu" || item.platform === "web");
     const { error } = await db
       .from("items")
       .update({

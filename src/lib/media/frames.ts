@@ -318,8 +318,9 @@ export async function digestVideo(
     let audio: VideoDigest["audio"] = null;
     if (probe.hasAudio && opts.audio !== false) {
       const out = path.join(dir, "a.mp3");
+      // 等多久跟着要导多长走（Vault 2026-11-18：最长导一小时，固定的两分钟在慢机器上不够）
       try {
-        await runFfmpeg(["-hide_banner", "-loglevel", "error", "-i", input, "-t", String(audioMax), "-vn", "-ac", "1", "-ar", "16000", "-b:a", "48k", "-y", out], { timeoutMs: 120_000 });
+        await runFfmpeg(["-hide_banner", "-loglevel", "error", "-i", input, "-t", String(audioMax), "-vn", "-ac", "1", "-ar", "16000", "-b:a", "48k", "-y", out], { timeoutMs: Math.max(120_000, audioMax * 150) });
         audio = { data: new Uint8Array(await readFile(out)), seconds: Math.min(probe.duration, audioMax) };
       } catch {
         // 音轨导不出来：当没有
