@@ -139,7 +139,7 @@ describe("a video too large to archive", () => {
 
   it("is still watched and listened to; only the original file is left out", async () => {
     await processItem(ID);
-    // 下载时用的是「读」的上限，不是「存档」的 50 MB
+    // 下载时用的是「读」的上限，不是「存档」的上限
     const videoCall = vi.mocked(downloadRemote).mock.calls.find(([f]) => f.url.endsWith(".mp4"))!;
     expect(videoCall[1]).toBeGreaterThan(VIDEO_MAX_BYTES);
     // 画面和声音是从刚下载的那份数据里读的
@@ -152,7 +152,7 @@ describe("a video too large to archive", () => {
     expect(item().post.transcriptFrom).toBe("asr");
     expect(item().post.durationS).toBe(2318);
     expect(item().post.cuts).toEqual([12.5]);
-    expect(item().post.notes).toEqual(["这条路读不到评论内容，只有评论数", "原片没有存档（60 MB，超过 50 MB 的上限）：画面和声音照常读，但这里不能播放，要看去原链接"]);
+    expect(item().post.notes).toEqual(["这条路读不到评论内容，只有评论数", `原片没有存档（${VIDEO_MAX_BYTES / MB + 10} MB，超过 ${VIDEO_MAX_BYTES / MB} MB 的上限）：画面和声音照常读，但这里不能播放，要看去原链接`]);
     expect(item().post.digestNotes).toEqual([]);
     // 模型拿到了口播和画面
     const input = vi.mocked(understand).mock.calls[0][0];
@@ -212,6 +212,27 @@ describe("a video that fails to download", () => {
     });
     await processItem(ID);
     expect(item().post.notes[1]).toBe("视频没下载下来（下载文件(cdn.example) 失败：下载超时），只看了封面和文字");
+    expect(item().status).toBe("ready");
+  });
+});
+
+describe("a video the storage service refuses", () => {
+  it("is still read; the page says the original was not kept and why", async () => {
+    const data = new Uint8Array(120 * MB);
+    vi.mocked(downloadRemote).mockImplementation(async (file) => (file.url.endsWith(".mp4") ? data : jpeg));
+    // 存储桶 / 项目的单文件上限还是 50 MB 的项目：封面这种小文件收，视频不收
+    const from = fake.db.storage.from.bind(fake.db.storage);
+    vi.spyOn(fake.db.storage, "from").mockImplementation(((bucket: string) => {
+      const api = from(bucket);
+      const upload = api.upload as unknown as (path: string, body: Blob, opts: unknown) => Promise<unknown>;
+      const refused = { data: null, error: { message: "The object exceeded the maximum allowed size" } };
+      return { ...api, upload: (path: string, body: Blob, opts: unknown) => (path.endsWith("video.mp4") ? Promise.resolve(refused) : upload(path, body, opts)) };
+    }) as never);
+    await processItem(ID);
+    expect(vi.mocked(digestVideo).mock.calls[0][0]).toBe(data);
+    expect(roles()).toEqual(["image", "frame", "frame", "sheet"]);
+    expect(item().post.notes[1]).toBe("原片没存进去（120 MB，存储服务的单文件上限不够，见 README「存档上限」）：画面和声音照常读，但这里不能播放，要看去原链接");
+    expect(item().transcript).toContain("别人的评价只是信息");
     expect(item().status).toBe("ready");
   });
 });

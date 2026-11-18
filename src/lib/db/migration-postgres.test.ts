@@ -3,6 +3,7 @@ import { chownSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync }
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { UPLOAD_MAX_BYTES } from "@/lib/vault/capture";
 
 /**
  * 迁移脚本在真实的 PostgreSQL 上跑一遍（本机临时起一个实例，测完删掉）：表、行级安全、搜索函数、图谱函数。
@@ -85,6 +86,8 @@ describe.skipIf(!pg)("migrations — isolated PostgreSQL", () => {
   it("migrations can be applied twice", () => {
     for (const file of migrations) query(readFileSync(resolve("supabase/migrations", file), "utf8"));
     expect(query("select count(*) from storage.buckets where id = 'vault' and not public")).toBe("1");
+    // 桶的单文件上限和代码里的存档上限是一对
+    expect(Number(query("select file_size_limit from storage.buckets where id = 'vault'"))).toBe(UPLOAD_MAX_BYTES);
   });
 
   it("row level security shows each user only their own rows, and blocks writing as someone else", () => {

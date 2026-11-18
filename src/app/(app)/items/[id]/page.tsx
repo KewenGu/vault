@@ -56,6 +56,8 @@ export default async function ItemPage({ params }: Props) {
   const stats = item.platform ? POST_STAT_KEYS.filter((k) => item.post.stats[k] !== null) : [];
   const notes = [...postNotes(item.post), ...(u?.gaps ?? [])].filter((n, i, all) => all.indexOf(n) === i);
 
+  // 这些情况是这台机器没配齐造成的（配好就能补上）；别的只是告知（平台不给评论、原片太大没存档）
+  const fixable = notes.some((n) => /ffmpeg|没配|没有转写|没有口播|whisper|没下载|没导出/i.test(n));
   // 左栏放原内容；什么都没有（链接没读到、还在读）时不留一栏空白
   const hasOriginal = !!(video || audio || images.length > 0 || body);
 
@@ -164,20 +166,22 @@ export default async function ItemPage({ params }: Props) {
         )}
 
         {!busy && !failed && notes.length > 0 && (
-          // 没读到的部分摆在结果前面：下面的概括和要点只基于读到的东西，读者得先知道这一点
+          // 读取时的情况摆在结果前面：下面的概括和要点只基于读到的东西，读者得先知道这一点
           <div role="note" className="flex flex-col gap-2 rounded-md bg-warning-soft px-3.5 py-3 text-sm text-warning">
-            <p className="font-medium">这条内容有一部分没读到，下面的结果只基于读到的部分：</p>
+            <p className="font-medium">读这条内容时：</p>
             <ul className="flex list-disc flex-col gap-1 pl-5">
               {notes.map((n) => (
                 <li key={n}>{n}</li>
               ))}
             </ul>
-            <p>
-              <Link href="/status" className="underline">
-                看看这台机器缺什么
-              </Link>
-              ，补上之后点页面底部的「重新分析」。
-            </p>
+            {fixable && (
+              <p>
+                <Link href="/status" className="underline">
+                  看看这台机器缺什么
+                </Link>
+                ，补上之后点页面底部的「重新读取链接」或「重新分析」。
+              </p>
+            )}
           </div>
         )}
 

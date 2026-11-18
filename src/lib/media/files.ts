@@ -11,8 +11,13 @@ import type { RemoteFile } from "@/lib/sources/types";
  * 从视频里测切点、抽帧、拼帧格、抽音轨在看片模块 lib/video/digest/frames.ts（2026-10-12 搬过去，制作台每镜看片共用）。
  */
 
-/** 单个视频最多转存这么大（和制作台上传视频的上限一样，也是存储桶单文件的上限） */
-export const VIDEO_MAX_BYTES = 50 * 1024 * 1024;
+/**
+ * 单个视频最多存档这么大（200 MB）。存储那边要跟上才存得进去：存储桶 vault 的单文件上限（迁移 20261118000001 设成了 200 MB），
+ * 和 Supabase 项目的全局上传上限（控制台 Storage → Settings；免费套餐封顶 50 MB）。存不进去不算失败：
+ * 照样读画面和声音，只是不留原片（见 workflows/process-item.ts 的 storeMedia）。
+ * 这个数也是各平台读取器「挑哪一档清晰度」的上限：有多档的平台挑不超过它的最好一档。
+ */
+export const VIDEO_MAX_BYTES = 200 * 1024 * 1024;
 export const IMAGE_MAX_BYTES = 20 * 1024 * 1024;
 /** 图文最多转存 / 分析这么多张（小红书一篇最多 18 张，后面的多是补充） */
 export const MAX_IMAGES = 12;

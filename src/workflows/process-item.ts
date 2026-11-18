@@ -46,7 +46,7 @@ const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const SPEECH_MAX_SECONDS = 3600;
 /**
  * 为了读懂内容，视频最多下载这么大（默认 600 MB，`VAULT_VIDEO_READ_MAX_MB` 可以改）。
- * 和「存档」的上限（VIDEO_MAX_BYTES，存储桶单文件 50 MB）是两回事：超过存档上限的视频不存原片，
+ * 和「存档」的上限（VIDEO_MAX_BYTES）是两回事：超过存档上限的视频不存原片，
  * 但照样下载到本机抽画面、转写——2026-11-18 第一条真实的抖音视频（38 分钟、127 MB）就因为把两个上限混在一起，
  * 整条没下载，只看了封面和文案。整个文件会读进内存，所以也不能无限大。
  */
@@ -130,15 +130,24 @@ async function storeMedia(db: Db, dir: string, post: FetchedPost): Promise<{ med
     try {
       // 没有能直接下的地址的（别的视频站）交给本机的 yt-dlp：它按大小挑清晰度，挑的就是存得下的那一档
       const data = post.video.via === "ytdlp" ? await ytdlpDownload(post.video.url, VIDEO_MAX_BYTES) : await downloadRemote(post.video, readMax, 600_000);
+      const cannotPlay = "画面和声音照常读，但这里不能播放，要看去原链接";
       if (data.byteLength <= VIDEO_MAX_BYTES) {
         const path = `${dir}/video.mp4`;
-        await upload(db, path, data, "video/mp4");
-        // yt-dlp 下的是按大小挑的那一档，宽高和视频信息里写的不一定一样：留空，抽画面时按实际的补
-        const sized = post.video.via === "ytdlp" ? { width: null, height: null } : { width: post.video.width ?? null, height: post.video.height ?? null };
-        media.push({ role: "video", path, mime: "video/mp4", ...sized, bytes: data.byteLength, durationS: post.video.durationS });
+        try {
+          await upload(db, path, data, "video/mp4");
+          // yt-dlp 下的是按大小挑的那一档，宽高和视频信息里写的不一定一样：留空，抽画面时按实际的补
+          const sized = post.video.via === "ytdlp" ? { width: null, height: null } : { width: post.video.width ?? null, height: post.video.height ?? null };
+          media.push({ role: "video", path, mime: "video/mp4", ...sized, bytes: data.byteLength, durationS: post.video.durationS });
+        } catch (e) {
+          // 存储那边不收（最常见：存储桶或项目的单文件上限比这里的小）。视频已经在手上了，照样读，只是不留原片
+          unstored = { data, ext: "mp4" };
+          const tooBig = /maximum allowed size|too large|exceeded|413/i.test(messageOf(e));
+          notes.push(`原片没存进去（${megabytes(data.byteLength)} MB，${tooBig ? "存储服务的单文件上限不够，见 README「存档上限」" : messageOf(e).slice(0, 100)}）：${cannotPlay}`);
+          console.error(`视频存档失败 ${dir}: ${messageOf(e)}`);
+        }
       } else {
         unstored = { data, ext: "mp4" };
-        notes.push(`原片没有存档（${megabytes(data.byteLength)} MB，超过 ${megabytes(VIDEO_MAX_BYTES)} MB 的上限）：画面和声音照常读，但这里不能播放，要看去原链接`);
+        notes.push(`原片没有存档（${megabytes(data.byteLength)} MB，超过 ${megabytes(VIDEO_MAX_BYTES)} MB 的上限）：${cannotPlay}`);
       }
     } catch (e) {
       const seen = post.captions ? "只看了封面、字幕和文字" : "只看了封面和文字";

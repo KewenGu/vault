@@ -56,8 +56,8 @@ export function textDedupeKey(text: string): string {
 
 export const fileDedupeKey = (sha256: string) => `file:${sha256.toLowerCase()}`;
 
-/** 单个上传文件的上限（存储桶单文件上限，也是处理时读进内存的上限） */
-export const UPLOAD_MAX_BYTES = 50 * 1024 * 1024;
+/** 单个上传文件的上限：和链接里的视频存档上限一样（同一个存储桶；处理时整个文件读进内存） */
+export const UPLOAD_MAX_BYTES = 200 * 1024 * 1024;
 
 export type UploadPlan = { kind: PostKind; ext: string; mime: string };
 
