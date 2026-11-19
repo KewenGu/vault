@@ -13,19 +13,37 @@ export function shareAddress(origin: string): string {
   return `${origin.replace(/\/+$/, "")}/share?b64=`;
 }
 
+export type SharedText =
+  | { ok: true; text: string }
+  /** received = 收到的 Base64 字符数；readable = 还能读出来的那部分文字（给人看、定位用，不拿去存） */
+  | { ok: false; received: number; readable: string; reason: string };
+
 /**
- * 解开快捷指令传来的 Base64 内容。解不开（被截断、不是 UTF-8 文字、混进了别的字符）返回 null，
- * 页面上要说「收到了但解不开」，不能当成没收到。
+ * 解开快捷指令传来的 Base64 内容。解不开时不当成没收到：说出收到了多少、能读出哪一段、卡在哪，
+ * 页面上原样列出来（传到一半被截断的话，一看就知道断在哪）。
  * 查询串里的 + 到这里已经被当成空格；URL 安全写法的 - _ 也认。
  */
-export function decodeSharedText(raw: string): string | null {
+export function readSharedText(raw: string): SharedText {
   const b64 = raw.replace(/[\r\n\t]/g, "").replace(/[ -]/g, "+").replace(/_/g, "/").replace(/=+$/, "");
-  if (!b64 || !/^[A-Za-z0-9+/]+$/.test(b64) || b64.length % 4 === 1) return null;
+  const bad = b64.replace(/[A-Za-z0-9+/]/g, "");
+  const bytes = Buffer.from(b64, "base64");
+  // 宽松地读一遍：坏掉的字节变成 \uFFFD，结尾那个半截的字去掉
+  const readable = bytes.toString("utf8").replace(/\uFFFD+$/, "");
+  const fail = (reason: string): SharedText => ({ ok: false, received: raw.length, readable, reason });
+  if (!b64) return fail("内容是空的");
+  if (bad) return fail(`里面混进了不属于 Base64 的字符（${Array.from(new Set(bad)).slice(0, 5).join(" ")}）`);
+  if (b64.length % 4 === 1) return fail("长度不对，像是被截断了");
   try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(Buffer.from(b64, "base64"));
+    return { ok: true, text: new TextDecoder("utf-8", { fatal: true }).decode(bytes) };
   } catch {
-    return null;
+    return fail(readable.includes("\uFFFD") ? "解出来的不是文字" : "结尾断在一个字的中间，像是被截断了");
   }
+}
+
+/** 只要结果：解不开返回 null。 */
+export function decodeSharedText(raw: string): string | null {
+  const read = readSharedText(raw);
+  return read.ok ? read.text : null;
 }
 
 export type ShortcutInstall = { kind: "none" } | { kind: "link"; url: string } | { kind: "invalid"; reason: string };

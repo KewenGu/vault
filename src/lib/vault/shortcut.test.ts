@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decodeSharedText, shareAddress, shortcutInstall } from "./shortcut";
+import { decodeSharedText, readSharedText, shareAddress, shortcutInstall } from "./shortcut";
 
 describe("shareAddress", () => {
   it("接在站点地址后面，不重复斜杠", () => {
@@ -27,6 +27,28 @@ describe("decodeSharedText", () => {
     expect(decodeSharedText("")).toBeNull();
     expect(decodeSharedText("%E7%9C%8B")).toBeNull();
     expect(decodeSharedText(Buffer.from("看看", "utf8").subarray(0, 5).toString("base64"))).toBeNull();
+  });
+});
+
+describe("readSharedText", () => {
+  const share = "6.99 复制打开抖音，看看【🐎飒露紫】生活的苦 https://v.douyin.com/iAbCdEf/";
+  const bytes = Buffer.from(share, "utf8");
+
+  it("截在一个字中间：说出收到多少、能读出哪一段", () => {
+    const cut = bytes.subarray(0, 31).toString("base64").replace(/=+$/, "");
+    expect(readSharedText(cut)).toEqual({ ok: false, received: cut.length, readable: "6.99 复制打开抖音，看", reason: "结尾断在一个字的中间，像是被截断了" });
+  });
+
+  it("Base64 本身断了一截、混进别的字符、不是文字，原因分开说", () => {
+    const b64 = bytes.toString("base64");
+    expect(readSharedText(b64.slice(0, 41))).toMatchObject({ ok: false, reason: "长度不对，像是被截断了" });
+    expect(readSharedText("%E7%9C%8B")).toMatchObject({ ok: false, reason: "里面混进了不属于 Base64 的字符（%）" });
+    expect(readSharedText(Buffer.from([0xff, 0xfe, 0x36, 0x00, 0x2e, 0x00]).toString("base64"))).toMatchObject({ ok: false, reason: "解出来的不是文字" });
+    expect(readSharedText("")).toMatchObject({ ok: false, reason: "内容是空的" });
+  });
+
+  it("完整的照常解开", () => {
+    expect(readSharedText(bytes.toString("base64"))).toEqual({ ok: true, text: share });
   });
 });
 
