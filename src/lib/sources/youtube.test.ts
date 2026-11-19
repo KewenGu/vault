@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { captionText, fetchYouTubeVideo, mapYouTubePlayer, parseWatchPage, pickCaptionTrack, pickFormat } from "./youtube";
+import { YouTubeBlockedError, captionText, fetchYouTubeVideo, mapYouTubePlayer, parseWatchPage, pickCaptionTrack, pickFormat } from "./youtube";
 import { SourceFetchError } from "./types";
 
 /** 按 youtubei/v1/player（Android 客户端）真实返回的形状缩出来的（2026-10）。 */
@@ -124,6 +124,11 @@ describe("收藏夹：读 YouTube 视频", () => {
   it("视频不存在 → 读不到；YouTube 不给看（要登录、年龄限制）→ 带上它给的原因", () => {
     expect(() => mapYouTubePlayer({ playabilityStatus: { status: "ERROR", reason: "This video is unavailable" } }, {})).toThrow("这个 YouTube 视频读不到：可能被删了、设成了私享，或者链接不对");
     expect(() => mapYouTubePlayer({ playabilityStatus: { status: "LOGIN_REQUIRED", reason: "Sign in to confirm your age" } }, {})).toThrow("YouTube 不让读这个视频（Sign in to confirm your age）。可以把视频的标题、简介贴进来直接分析");
+    // 被拦和「视频没了」是两种错：前一种可以换一条路读（见 fetch-post.ts）
+    expect(() => mapYouTubePlayer({ playabilityStatus: { status: "LOGIN_REQUIRED", reason: "Sign in to confirm you’re not a bot" } }, {})).toThrow(YouTubeBlockedError);
+    const gone = (() => { try { mapYouTubePlayer({ playabilityStatus: { status: "ERROR", reason: "Video unavailable" } }, {}); } catch (e) { return e; } })();
+    expect(gone).toBeInstanceOf(SourceFetchError);
+    expect(gone).not.toBeInstanceOf(YouTubeBlockedError);
     expect(() => mapYouTubePlayer(null, {})).toThrow(SourceFetchError);
   });
 

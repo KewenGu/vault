@@ -228,7 +228,7 @@ async function fetchLink(db: Db, item: Item, counts: Counts): Promise<boolean> {
   let media: ItemMedia[] = [];
   let storeNotes: string[] = [];
   let transcript: string | null = post.captions || null;
-  let durationS = post.video?.durationS ?? null;
+  let durationS = post.video?.durationS ?? post.durationS ?? null;
   let digestNotes: string[] = [];
   let cuts: number[] = [];
   let digested = false;
