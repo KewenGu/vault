@@ -259,7 +259,7 @@ const isWeixin = (url: string) => {
 
 /** 微信公众号的文章服务器读不了时给用户的话：告诉他能走哪条路。 */
 export const WEIXIN_BLOCKED =
-  "微信公众号的文章服务器读不了（微信要求先过验证）。在 Safari 里打开这篇文章，从分享菜单选「存入 Vault（网页）」（「手机」页上有做法），或者把正文复制下来贴进来";
+  "微信公众号的文章服务器读不了（微信要求先过验证）。在 Safari 里打开这篇文章，从 Safari 的分享菜单选「存入 Vault」（快捷指令要按「手机」页上现在的步骤做），或者把正文复制下来贴进来";
 
 /** 读到的网页 → 帖子（类型是「文章」）。 */
 export function mapPage(page: PageRead, ref: LinkRef): FetchedPost {
