@@ -12,13 +12,25 @@ import { SourceFetchError, emptyStats, hashtagsIn, toCount, type FetchedPost, ty
  * 2. 视频网页（顺手读，读不到不影响）：发布时间、点赞数。
  *
  * 字幕就是口播文字（`captions`）：有它就不用语音识别。视频按 360p 存（18 分钟约 36 MB），超过转存上限的不存，
- * 只看封面、字幕和简介。读不到评论。YouTube 对机房 IP 会要求登录验证，那时报 SourceFetchError。
+ * 只看封面、字幕和简介。读不到评论。YouTube 对机房 IP 会要求登录验证，那时报 YouTubeBlockedError，
+ * 由 fetch-post.ts 换一条路读（本机的 yt-dlp，或者 Apify，见 youtube-apify.ts）。
  */
 
 const PLAYER_URL = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false";
 const ANDROID_CLIENT = { clientName: "ANDROID", clientVersion: "20.10.38", androidSdkVersion: 34, hl: "en", gl: "US" };
 const ANDROID_UA = "com.google.android.youtube/20.10.38 (Linux; U; Android 14)";
-const GONE = "这个 YouTube 视频读不到：可能被删了、设成了私享，或者链接不对";
+export const GONE = "这个 YouTube 视频读不到：可能被删了、设成了私享，或者链接不对";
+
+/**
+ * 视频在，但 YouTube 不给这台机器看：要求登录验证（机房 IP 一律如此）、年龄限制、地区限制。
+ * 和「视频没了」分开：这种情况换一条路（yt-dlp、Apify，见 fetch-post.ts）可能读得到。
+ */
+export class YouTubeBlockedError extends SourceFetchError {
+  constructor(message: string) {
+    super(message);
+    this.name = "YouTubeBlockedError";
+  }
+}
 /** 简介最多留这么多字 */
 const TEXT_MAX = 30_000;
 /** 字幕最多留这么多字（一小时的英文口播约 5 万字符）；拆解时再按提示词的上限截 */
@@ -82,12 +94,12 @@ export function pickFormat(raw: unknown, durationS: number | null, maxBytes: num
   const formats = arr(raw)
     .map((f) => obj(f))
     .filter((f) => str(f.url).startsWith("https://") && str(f.mimeType).startsWith("video/mp4"))
-    .map((f) => ({
-      url: str(f.url),
-      width: posNum(f.width),
-      height: posNum(f.height),
-      bytes: posNum(f.contentLength) ?? (posNum(f.bitrate) && durationS ? Math.round((posNum(f.bitrate)! * durationS) / 8) : null),
-    }));
+    .map((f) => {
+      // 没报大小的按码率 × 时长估一个：挑清晰度够用，但不能凭它不下载（见 RemoteFile.bytesEstimated）
+      const estimate = posNum(f.bitrate) && durationS ? Math.round((posNum(f.bitrate)! * durationS) / 8) : null;
+      const exact = posNum(f.contentLength);
+      return { url: str(f.url), width: posNum(f.width), height: posNum(f.height), bytes: exact ?? estimate, bytesEstimated: exact === null && estimate !== null };
+    });
   if (formats.length === 0) return null;
   const fits = formats.filter((f) => f.bytes === null || f.bytes <= maxBytes);
   const best = fits.length > 0 ? fits.sort((a, b) => (b.height ?? 0) - (a.height ?? 0))[0] : formats.sort((a, b) => (a.bytes ?? 0) - (b.bytes ?? 0))[0];
@@ -114,7 +126,7 @@ export function mapYouTubePlayer(
     const reason = str(obj(p.playabilityStatus).reason);
     // ERROR = 视频不存在 / 被删；别的（LOGIN_REQUIRED、UNPLAYABLE）是 YouTube 不给看：年龄限制、地区限制、要求登录验证
     if (status === "ERROR" || !status) throw new SourceFetchError(GONE);
-    throw new SourceFetchError(`YouTube 不让读这个视频${reason ? `（${reason}）` : ""}。可以把视频的标题、简介贴进来直接分析`);
+    throw new YouTubeBlockedError(`YouTube 不让读这个视频${reason ? `（${reason}）` : ""}。可以把视频的标题、简介贴进来直接分析`);
   }
   const durationS = posNum(details.lengthSeconds);
   const live = details.isLive === true;

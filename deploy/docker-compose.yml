@@ -20,7 +20,7 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
-    # 一条长视频会把整个文件读进内存再转码：给个上限，超了只重启这个容器，不拖垮整台机器
+    # 转码、抽画面、处理图片都吃内存（视频本身下载到磁盘，不进内存）：给个上限，超了只重启这个容器，不拖垮整台机器
     mem_limit: ${VAULT_MEM_LIMIT:-1700m}
 
   caddy:

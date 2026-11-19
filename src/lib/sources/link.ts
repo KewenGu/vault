@@ -154,6 +154,7 @@ const NOT_A_POST: Record<Site, string> = {
   youtube: "没认出这是哪个视频：贴视频页面的链接（youtube.com/watch?v=… 或 youtu.be/…），频道主页和播放列表读不了",
   x: "没认出这是哪条帖子：在 X 里点「分享 → 复制链接」再贴进来（x.com/…/status/… 这样的链接，主页读不了）",
 };
+const X_ARTICLE_LINK = "这是 X 长文本身的链接，读不了：在 X 里打开发这篇长文的那条帖子，点「分享 → 复制链接」贴帖子的链接（x.com/…/status/…），长文的全文会一起读到";
 const SHORT_LINK_LABEL: Record<Site, string> = { xiaohongshu: "小红书", douyin: "抖音", tiktok: "TikTok", instagram: "Instagram", youtube: "YouTube", x: "X" };
 
 const MAX_HOPS = 5;
@@ -171,6 +172,8 @@ export async function resolveLink(raw: string, fetchImpl: (service: string, inpu
     if (!ref) throw new LinkError("这个地址读不了（指向本机或内网）");
     return ref;
   }
+  // 长文的链接（x.com/i/article/<长文 id>）：这个 id 不是帖子的，没登录查不到是哪条帖子发的，不用去跟跳转
+  if (site === "x" && /^\/i\/article\/\d+/.test(current.pathname)) throw new LinkError(X_ARTICLE_LINK);
   for (let hop = 0; hop <= MAX_HOPS; hop++) {
     const ref = siteRef(site, current);
     if (ref) return ref;

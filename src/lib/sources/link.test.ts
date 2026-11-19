@@ -69,6 +69,12 @@ describe("收藏夹：链接识别", () => {
     expect(away).toHaveBeenCalledTimes(1);
   });
 
+  it("X 长文本身的链接（x.com/i/article/…）：不发请求，直接说要贴发长文的那条帖子", async () => {
+    const fetchImpl = vi.fn<(service: string, url: string, init?: RequestInit) => Promise<Response>>();
+    await expect(resolveLink("https://x.com/i/article/2109705772569423873", fetchImpl)).rejects.toThrow(/X 长文本身的链接.*x\.com\/…\/status\/…/);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it("TikTok：视频 / 图集 / 旧式链接都规范成 /@用户/video/<id>，不知道用户时用 @_", () => {
     const id = "6718335390845095173";
     expect(parseLink(`https://www.tiktok.com/@scout2015/video/${id}?is_from_webapp=1&sender_device=pc`)).toEqual({ platform: "tiktok", externalId: id, url: `https://www.tiktok.com/@scout2015/video/${id}` });
@@ -110,6 +116,7 @@ describe("收藏夹：链接识别", () => {
     expect(parseLink(`https://x.com/someone/status/${id}/photo/1`)?.externalId).toBe(id);
     expect(parseLink(`https://fxtwitter.com/someone/status/${id}`)?.url).toBe(`https://x.com/someone/status/${id}`);
     expect(parseLink("https://x.com/someone")).toBeNull();
+    expect(parseLink("https://x.com/i/article/2109705772569423873")).toBeNull();
     expect(parseLink("https://x.com/i/status/1")).toBeNull();
   });
 

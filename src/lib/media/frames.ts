@@ -255,15 +255,23 @@ export const canDigestVideo = () => ffmpegPath() !== null;
  * + 全片一览（overview）+ 一条音轨（audio: false 不要）」。要 ffmpeg（没有就别调，见 canDigestVideo）。
  * 切点测不出来不算失败（按固定时间点抽）；单帧抽不出来（时间点超了结尾）跳过；一帧都没有 / 文件读不出抛错。
  */
-export async function digestVideo(
-  video: Uint8Array,
-  ext: string,
-  opts: { maxFrames?: number; audioMaxSeconds?: number; detectCuts?: boolean; perSecond?: number; overview?: boolean; motion?: boolean; audio?: boolean } = {}
-): Promise<VideoDigest> {
-  const audioMax = opts.audioMaxSeconds ?? 600;
+export type DigestOptions = { maxFrames?: number; audioMaxSeconds?: number; detectCuts?: boolean; perSecond?: number; overview?: boolean; motion?: boolean; audio?: boolean };
+
+export async function digestVideo(video: Uint8Array, ext: string, opts: DigestOptions = {}): Promise<VideoDigest> {
   return withTempDir(async (dir) => {
     const input = path.join(dir, `in.${ext.replace(/[^\w]/g, "") || "mp4"}`);
     await writeFile(input, video);
+    return digestVideoFile(input, opts);
+  });
+}
+
+/**
+ * 同 digestVideo，但视频已经在磁盘上（input 是它的路径）：几百 MB 的视频下载时直接写盘、不进内存（Vault 2026-11-19）。
+ * 只读这个文件，不改不删；抽出来的东西放在自己的临时目录里。
+ */
+export async function digestVideoFile(input: string, opts: DigestOptions = {}): Promise<VideoDigest> {
+  const audioMax = opts.audioMaxSeconds ?? 600;
+  return withTempDir(async (dir) => {
     const probe = await probeMedia(input);
     let cuts: Cut[] = [];
     let scores: Cut[] = [];

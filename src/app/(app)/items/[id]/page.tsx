@@ -73,6 +73,7 @@ export default async function ItemPage({ params }: Props) {
           </video>
         )}
         {video?.compressed && <p className="-mt-2 text-xs text-ink-faint">这是压缩过的副本（原片太大存不下）。要看原画质去原链接。</p>}
+        {video?.local && <p className="-mt-2 text-xs text-ink-faint">原片太大，没有存进 Supabase，在这台服务器的磁盘上。</p>}
         {audio && (
           <audio id={PLAYER_ID} controls preload="metadata" className="w-full">
             <source src={itemFileUrl(item, audio)} type={audio.mime} />

@@ -15,6 +15,8 @@ export type SetupFacts = {
   ytdlp: string | null;
   /** 存储桶的单文件上限（字节；null = 桶没设上限，undefined = 没读到）和代码里的存档上限 */
   storage: { bucketLimit: number | null | undefined; wanted: number };
+  /** 留在这台服务器磁盘上的大视频原片：放在哪、几个文件、占多少、这个盘还剩多少（null = 没读到） */
+  localMedia: { dir: string; files: number; bytes: number; freeBytes: number | null };
 };
 
 /**
@@ -39,7 +41,7 @@ function storageCheck({ bucketLimit, wanted }: SetupFacts["storage"]): SetupChec
   const base = {
     key: "storage",
     label: "存档原片（存储上限）",
-    effect: `视频原片和上传的文件单个最多存 ${mb(wanted)} MB。更大的视频照样读画面和声音，只是不留原片、不能在这里播放。`,
+    effect: `视频原片和上传的文件单个最多往 Supabase 存 ${mb(wanted)} MB。链接里更大的视频照样读画面和声音，原片不进 Supabase，留在这台服务器的磁盘上（见「大视频的原片」）。`,
   };
   const raise = "想存更大的：Supabase 要付费套餐（免费套餐的全局上传上限封顶 50 MB），在控制台 Storage → Settings 调高之后，在 .env.local 里设 VAULT_STORE_MAX_MB（最多 200）";
   if (bucketLimit === undefined) return { ...base, state: "missing", detail: "没读到存储桶 vault（迁移没跑，或者密钥不对）", fix: "在 Supabase 的 SQL Editor 里运行 supabase/migrations 下的迁移。" };
@@ -52,6 +54,23 @@ function storageCheck({ bucketLimit, wanted }: SetupFacts["storage"]): SetupChec
     };
   }
   return { ...base, state: "ok", detail: `单个最多 ${mb(wanted)} MB${wanted > 50 * 1024 * 1024 ? "（超过 50 MB 的要付费套餐才存得进去）" : ""}。${raise}`, fix: "" };
+}
+
+/** 这个盘剩下不到这么多就提醒：再存一条大视频（最多几百 MB）可能就满了 */
+const LOCAL_FREE_WARN_BYTES = 2 * 1024 * 1024 * 1024;
+const gb = (bytes: number) => (bytes / 1024 / 1024 / 1024).toFixed(1);
+
+/** 留在这台服务器磁盘上的大视频原片：占了多少、还剩多少。不自动清理，快满了在这里提醒。 */
+function localMediaCheck({ dir, files, bytes, freeBytes }: SetupFacts["localMedia"]): SetupCheck {
+  const tight = freeBytes !== null && freeBytes < LOCAL_FREE_WARN_BYTES;
+  return {
+    key: "localMedia",
+    label: "大视频的原片（这台服务器的磁盘）",
+    state: tight ? "missing" : "ok",
+    detail: `${dir}：${files} 个文件，共 ${gb(bytes)} GB${freeBytes === null ? "" : `；这个盘还剩 ${gb(freeBytes)} GB`}`,
+    effect: "超过存档上限的视频，原片留在这里，页面从这里播放。不会自动清理，也只有这一台机器上有。磁盘满了，新的大视频会下载不下来（只读封面和文字）。",
+    fix: tight ? `磁盘快满了：删掉 ${dir} 下不要的原片（对应的内容和读出来的画面、口播都还在，只是不能在这里播放），或者给这台机器加磁盘。` : "",
+  };
 }
 
 export function setupChecks(f: SetupFacts): SetupCheck[] {
@@ -83,12 +102,13 @@ export function setupChecks(f: SetupFacts): SetupCheck[] {
       fix: asrVia.length > 0 ? "转写通道已经有了，先把上面的 ffmpeg 配好。" : "任选其一填进 .env.local：OPENAI_API_KEY（最省事），或 VOLC_SPEECH_API_KEY（豆包，便宜），或在本机装 whisper（不花钱）。",
     },
     storageCheck(f.storage),
+    localMediaCheck(f.localMedia),
     {
       key: "apify",
-      label: "读抖音、Instagram（Apify）",
+      label: "读抖音、Instagram，YouTube 的后备（Apify）",
       state: f.apify ? "ok" : "missing",
       detail: f.apify ? "已配置" : "没配 APIFY_TOKEN",
-      effect: "没有它，抖音和 Instagram 的链接读不了（可以手动把文案贴进来）。小红书、TikTok、YouTube、X、网页不需要它。",
+      effect: "没有它，抖音和 Instagram 的链接读不了（可以手动把文案贴进来）。YouTube 不给这台机器读时（云服务器上会这样）也靠它读标题、简介和字幕。小红书、TikTok、X、网页不需要它。",
       fix: "在 .env.local 里填 APIFY_TOKEN。",
     },
     {
@@ -104,8 +124,8 @@ export function setupChecks(f: SetupFacts): SetupCheck[] {
       label: "别的视频站（yt-dlp）",
       state: f.ytdlp ? "ok" : "optional",
       detail: f.ytdlp ?? "没装",
-      effect: "没有它，B 站、Vimeo 这类链接只按网页读文字；YouTube 的播放接口不给读时也没有后备。",
-      fix: "macOS：brew install yt-dlp。",
+      effect: "没有它，B 站、Vimeo 这类链接只按网页读文字；YouTube 的播放接口不给读时只能走 Apify（没有画面）。",
+      fix: "macOS：brew install yt-dlp。Docker 部署的镜像里自带，不用另装。",
     },
     {
       key: "jina",
