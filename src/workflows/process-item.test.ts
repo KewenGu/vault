@@ -1,4 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { existsSync } from "node:fs";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeFakeSupabase, type FakeSupabase } from "@/test/fake-supabase";
 import { emptyStats, type FetchedPost, type ItemMedia, type PostSnapshot } from "@/lib/sources/types";
 import type { Understanding } from "@/lib/vault/understand";
@@ -7,9 +11,8 @@ let fake: FakeSupabase;
 vi.mock("@/lib/supabase/service", () => ({ getServiceClient: () => fake.db }));
 vi.mock("@/lib/sources/fetch-post", () => ({ fetchPost: vi.fn() }));
 vi.mock("@/lib/sources/ytdlp", async (orig) => ({ ...(await orig<object>()), ytdlpDownload: vi.fn() }));
-vi.mock("@/lib/media/files", async (orig) => ({ ...(await orig<object>()), downloadRemote: vi.fn(), normalizeImage: vi.fn(), visionImage: vi.fn(async (data: Uint8Array) => data) }));
-vi.mock("@/lib/media/compress", () => ({ compressVideo: vi.fn() }));
-vi.mock("@/lib/media/frames", async (orig) => ({ ...(await orig<object>()), canDigestVideo: vi.fn(), digestVideo: vi.fn(), contactSheets: vi.fn() }));
+vi.mock("@/lib/media/files", async (orig) => ({ ...(await orig<object>()), downloadRemote: vi.fn(), downloadRemoteToFile: vi.fn(), normalizeImage: vi.fn(), visionImage: vi.fn(async (data: Uint8Array) => data) }));
+vi.mock("@/lib/media/frames", async (orig) => ({ ...(await orig<object>()), canDigestVideo: vi.fn(), digestVideo: vi.fn(), digestVideoFile: vi.fn(), contactSheets: vi.fn() }));
 vi.mock("@/lib/asr/volc", async (orig) => ({ ...(await orig<object>()), asrConfig: vi.fn(), transcribe: vi.fn() }));
 vi.mock("@/lib/asr/openai", async (orig) => ({ ...(await orig<object>()), openaiAsrConfig: vi.fn(), transcribeWithOpenAI: vi.fn() }));
 vi.mock("@/lib/asr/whisper-local", async (orig) => ({ ...(await orig<object>()), localWhisper: vi.fn(), whisperSetupHint: vi.fn(), transcribeLocally: vi.fn() }));
@@ -20,9 +23,8 @@ import { openaiAsrConfig, transcribeWithOpenAI } from "@/lib/asr/openai";
 import { asrConfig } from "@/lib/asr/volc";
 import { localWhisper, whisperSetupHint } from "@/lib/asr/whisper-local";
 import { linkItemEntities } from "@/lib/graph/merge";
-import { compressVideo } from "@/lib/media/compress";
-import { TooLargeError, VIDEO_MAX_BYTES, downloadRemote, normalizeImage } from "@/lib/media/files";
-import { canDigestVideo, contactSheets, digestVideo } from "@/lib/media/frames";
+import { TooLargeError, VIDEO_MAX_BYTES, downloadRemote, downloadRemoteToFile, normalizeImage } from "@/lib/media/files";
+import { canDigestVideo, contactSheets, digestVideo, digestVideoFile } from "@/lib/media/frames";
 import { fetchPost } from "@/lib/sources/fetch-post";
 import { understand } from "@/lib/vault/understand";
 import { processItem } from "./process-item";
@@ -104,6 +106,19 @@ type StoredItem = { status: string; error: string | null; title: string | null; 
 const item = () => fake.store.items[0] as unknown as StoredItem;
 const roles = () => item().media.map((m) => m.role);
 const jpeg = new Uint8Array([0xff, 0xd8, 0xff]);
+/**
+ * 视频是直接下载到磁盘上的。这里假装下载了一个 `bytes` 大的视频：磁盘上只写几个字节（读它的 ffmpeg 都是替身），报的大小是 `bytes`。
+ * 返回一个函数，告诉你它被写到了哪儿。
+ */
+const videoOnDisk = (bytes: number) => {
+  let where = "";
+  vi.mocked(downloadRemoteToFile).mockImplementation(async (_file, dest) => {
+    where = dest;
+    await writeFile(dest, jpeg);
+    return bytes;
+  });
+  return () => where;
+};
 const digest = (over: Record<string, unknown> = {}) => ({
   probe: { duration: 2318, hasAudio: true, width: 1920, height: 1080, fps: 30 },
   cuts: [{ at: 12.5, score: 0.6 }],
@@ -117,13 +132,25 @@ const digest = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-beforeEach(() => {
+/** 大视频的原片留在「这台服务器的磁盘」上：每个测试一个临时目录 */
+let localDir: string;
+const localVideo = () => path.join(localDir, USER, ID, "video.mp4");
+afterEach(async () => {
+  vi.unstubAllEnvs();
+  await rm(localDir, { recursive: true, force: true });
+});
+
+beforeEach(async () => {
+  localDir = await mkdtemp(path.join(os.tmpdir(), "vault-local-test-"));
+  vi.stubEnv("VAULT_LOCAL_MEDIA_DIR", localDir);
   vi.clearAllMocks();
   fake = makeFakeSupabase({ items: [row()] }, { rpc: { tag_counts: () => [{ tag: "个人成长", n: 3 }], prune_orphan_entities: () => 0 } });
   vi.mocked(fetchPost).mockResolvedValue(post());
   vi.mocked(normalizeImage).mockResolvedValue({ data: jpeg, mime: "image/jpeg", width: 1280, height: 720 });
   vi.mocked(canDigestVideo).mockReturnValue(true);
+  vi.mocked(downloadRemote).mockResolvedValue(jpeg);
   vi.mocked(digestVideo).mockResolvedValue(digest() as never);
+  vi.mocked(digestVideoFile).mockResolvedValue(digest() as never);
   vi.mocked(contactSheets).mockResolvedValue([{ data: jpeg, width: 1040, height: 700, tiles: 1, from: 19.5, to: 19.5 }]);
   vi.mocked(asrConfig).mockReturnValue(null);
   vi.mocked(openaiAsrConfig).mockReturnValue({ apiKey: "k" });
@@ -131,39 +158,41 @@ beforeEach(() => {
   vi.mocked(localWhisper).mockReturnValue(null);
   vi.mocked(whisperSetupHint).mockReturnValue(null);
   vi.mocked(understand).mockResolvedValue(understanding());
-  vi.mocked(compressVideo).mockResolvedValue({ data: new Uint8Array(44 * MB), plan: { height: 360, fps: 24, videoKbps: 114, audioKbps: 48, mono: true }, durationS: 2318, width: 640, height: 360 });
 });
 
 describe("a video too large to archive", () => {
-  const big = new Uint8Array(VIDEO_MAX_BYTES + 10 * MB);
+  let source: () => string;
   beforeEach(() => {
-    vi.mocked(downloadRemote).mockImplementation(async (file) => (file.url.endsWith(".mp4") ? big : jpeg));
+    source = videoOnDisk(VIDEO_MAX_BYTES + 10 * MB);
   });
 
-  it("is read from the original, and a compressed copy is stored for playback", async () => {
+  it("stays on this server's disk instead of going to storage, and is read from there", async () => {
     await processItem(ID);
-    // 下载时用的是「读」的上限，不是「存档」的上限
-    const videoCall = vi.mocked(downloadRemote).mock.calls.find(([f]) => f.url.endsWith(".mp4"))!;
-    expect(videoCall[1]).toBeGreaterThan(VIDEO_MAX_BYTES);
-    // 画面和声音只读一遍，读的是刚下载的原片（不是压缩后的副本）
-    expect(vi.mocked(digestVideo).mock.calls).toHaveLength(1);
-    expect(vi.mocked(digestVideo).mock.calls[0][0]).toBe(big);
+    // 视频下载到磁盘上，不进内存；下载时用的是「读」的上限，不是「存档」的上限
+    expect(vi.mocked(downloadRemote).mock.calls.some(([f]) => f.url.endsWith(".mp4"))).toBe(false);
+    const [file, dest, readMax] = vi.mocked(downloadRemoteToFile).mock.calls[0];
+    expect(file.url).toBe("https://cdn.example/video.mp4");
+    expect(dest).toBe(source());
+    expect(readMax).toBeGreaterThan(VIDEO_MAX_BYTES);
+    // 原片从临时目录搬到了这台服务器的磁盘上（没压缩、没改动），临时的那份不在了
+    expect(existsSync(source())).toBe(false);
+    expect(new Uint8Array(await readFile(localVideo()))).toEqual(jpeg);
+    // 画面和声音只读一遍，直接从磁盘上留下来的那份读
+    expect(digestVideo).not.toHaveBeenCalled();
+    expect(vi.mocked(digestVideoFile).mock.calls).toHaveLength(1);
+    expect(vi.mocked(digestVideoFile).mock.calls[0][0]).toBe(localVideo());
     // 大文件不测切点（省一遍整片解码）
-    expect(vi.mocked(digestVideo).mock.calls[0][2]).toMatchObject({ detectCuts: false });
-    // 压的也是原片，目标是存档上限
-    expect(vi.mocked(compressVideo).mock.calls[0][0]).toBe(big);
-    expect(vi.mocked(compressVideo).mock.calls[0][2]).toBe(VIDEO_MAX_BYTES);
-    // 存下来的：封面、压缩副本、抽的帧、帧格
+    expect(vi.mocked(digestVideoFile).mock.calls[0][1]).toMatchObject({ detectCuts: false });
+    // 存储桶里：封面、抽的帧、帧格。视频不进存储桶，登记成「在本机磁盘上」，时长、尺寸用探测到的
     expect(roles()).toEqual(["image", "video", "frame", "frame", "sheet"]);
-    const video = item().media.find((m) => m.role === "video")!;
-    expect(video).toMatchObject({ compressed: true, bytes: 44 * MB, height: 360, durationS: 2318 });
-    expect(fake.files.get(`vault/${USER}/${ID}/video.mp4`)).toBeDefined();
+    expect([...fake.files.keys()].some((k) => k.endsWith("video.mp4"))).toBe(false);
+    expect(item().media.find((m) => m.role === "video")).toEqual({ role: "video", path: `${USER}/${ID}/video.mp4`, mime: "video/mp4", width: 1920, height: 1080, bytes: VIDEO_MAX_BYTES + 10 * MB, durationS: 2318, local: true });
     expect(item().transcript).toBe("[1:05] 第一，别人的评价只是信息");
     expect(item().post.transcriptFrom).toBe("asr");
     expect(item().post.durationS).toBe(2318);
     expect(item().post.cuts).toEqual([12.5]);
-    const limit = VIDEO_MAX_BYTES / MB;
-    expect(item().post.notes).toEqual(["这条路读不到评论内容，只有评论数", `原片有 ${limit + 10} MB，超过 ${limit} MB 的上限：这里存的是压缩过的副本（360p，44 MB），内容是从原片读的；要看原画质去原链接`]);
+    // 没有什么「没看到」的：原片留下来了、内容也读了
+    expect(item().post.notes).toEqual(["这条路读不到评论内容，只有评论数"]);
     expect(item().post.digestNotes).toEqual([]);
     // 模型拿到了口播和画面
     const input = vi.mocked(understand).mock.calls[0][0];
@@ -173,40 +202,75 @@ describe("a video too large to archive", () => {
     expect(item().error).toBeNull();
   });
 
-  it("keeps the frames and transcript read from the original on re-analysis", async () => {
+  it("is read again from the kept original on re-analysis", async () => {
     await processItem(ID);
-    vi.mocked(digestVideo).mockClear();
+    vi.mocked(digestVideoFile).mockClear();
+    Object.assign(item(), { status: "analyzing" });
+    await processItem(ID);
+    expect(digestVideo).not.toHaveBeenCalled();
+    expect(vi.mocked(digestVideoFile).mock.calls.map((c) => c[0])).toEqual([localVideo()]);
+    expect(roles()).toEqual(["image", "video", "frame", "frame", "sheet"]);
+    expect(item().status).toBe("ready");
+  });
+
+  it("keeps the frames and transcript already read when the original is gone from the disk", async () => {
+    await processItem(ID);
+    // 磁盘满了手动清过、或者换了机器
+    await rm(localVideo());
+    vi.mocked(digestVideoFile).mockClear();
     vi.mocked(understand).mockClear();
     Object.assign(item(), { status: "analyzing" });
     await processItem(ID);
     expect(digestVideo).not.toHaveBeenCalled();
+    expect(digestVideoFile).not.toHaveBeenCalled();
     expect(roles()).toEqual(["image", "video", "frame", "frame", "sheet"]);
     expect(vi.mocked(understand).mock.calls[0][0].transcript).toContain("别人的评价只是信息");
     expect(item().status).toBe("ready");
   });
 
-  it("stores no copy when the video is too long to compress watchably, and says so", async () => {
-    vi.mocked(compressVideo).mockResolvedValue({ skipped: "视频有 120 分钟，压到 50 MB 以内画面没法看" });
+  it("replaces the kept original when the link is read again", async () => {
+    await processItem(ID);
+    // 重新读取：这次视频小了，进了存储桶——磁盘上那份旧的不该留着
+    videoOnDisk(3 * MB);
+    Object.assign(item(), { status: "fetching" });
+    await processItem(ID);
+    expect(existsSync(localVideo())).toBe(false);
+    expect(item().media.find((m) => m.role === "video")?.local).toBeUndefined();
+    expect([...fake.files.keys()].some((k) => k.endsWith("video.mp4"))).toBe(true);
+  });
+
+  it("is still read when it cannot be kept on the disk, and says so", async () => {
+    // 存原片的目录写不进去（这里：那个位置是个文件）
+    vi.stubEnv("VAULT_LOCAL_MEDIA_DIR", path.join(localDir, "blocked"));
+    await writeFile(path.join(localDir, "blocked"), jpeg);
     await processItem(ID);
     const limit = VIDEO_MAX_BYTES / MB;
     expect(roles()).toEqual(["image", "frame", "frame", "sheet"]);
-    expect([...fake.files.keys()].some((k) => k.endsWith("video.mp4"))).toBe(false);
-    expect(item().post.notes[1]).toBe(`原片没有存档（${limit + 10} MB，超过 ${limit} MB 的上限；视频有 120 分钟，压到 50 MB 以内画面没法看）：画面和声音照常读，但这里不能播放，要看去原链接`);
+    expect(item().post.notes[1]).toMatch(new RegExp(`^原片没有留下来（${limit + 10} MB，超过 ${limit} MB 的存档上限，存到这台服务器的磁盘上也没成：.+）：画面和声音照常读，但这里不能播放，要看去原链接$`));
+    // 读的是临时目录里的那份，读完删掉
+    expect(vi.mocked(digestVideoFile).mock.calls[0][0]).toBe(source());
+    expect(existsSync(source())).toBe(false);
     expect(item().transcript).toContain("别人的评价只是信息");
     expect(item().status).toBe("ready");
   });
 
-  it("still reads the content when compressing fails", async () => {
-    vi.mocked(compressVideo).mockRejectedValue(new Error("ffmpeg 出错（退出码 1）：Unknown encoder 'libx264'"));
+  it("keeps what was read from the original for items saved back when a compressed copy was stored", async () => {
+    // 2026-11-19 之前存的大视频：存储桶里是压缩副本，帧和口播是当时从原片读的。重新分析时不从副本重读
+    const dir = `${USER}/${ID}`;
+    const media: ItemMedia[] = [
+      { role: "video", path: `${dir}/video.mp4`, mime: "video/mp4", width: 640, height: 360, bytes: 44 * MB, durationS: 2318, compressed: true },
+      { role: "frame", path: `${dir}/frame-01.jpg`, mime: "image/jpeg", width: 1024, height: 576, bytes: 3, at: 0.2 },
+    ];
+    fake = makeFakeSupabase({ items: [row({ status: "analyzing", kind: "video", media, transcript: "[1:05] 第一，别人的评价只是信息", post: { text: "停止精神内耗的9个方法", notes: [], digestNotes: [], transcriptFrom: "asr" } })] }, { rpc: { tag_counts: () => [], prune_orphan_entities: () => 0 } });
     await processItem(ID);
-    expect(roles()).toEqual(["image", "frame", "frame", "sheet"]);
-    expect(item().post.notes[1]).toContain("副本没压成：ffmpeg 出错（退出码 1）：Unknown encoder 'libx264'");
-    expect(item().transcript).toContain("别人的评价只是信息");
+    expect(digestVideo).not.toHaveBeenCalled();
+    expect(roles()).toEqual(["video", "frame"]);
+    expect(vi.mocked(understand).mock.calls[0][0].transcript).toContain("别人的评价只是信息");
     expect(item().status).toBe("ready");
   });
 
   it("says so when the sound track could not be extracted, instead of calling the video silent", async () => {
-    vi.mocked(digestVideo).mockResolvedValue(digest({ audio: null }) as never);
+    vi.mocked(digestVideoFile).mockResolvedValue(digest({ audio: null }) as never);
     await processItem(ID);
     expect(item().post.digestNotes).toEqual(["音轨没导出来（ffmpeg 出错或超时），没有转写口播，只看了画面和文字"]);
     expect(item().transcript).toBeNull();
@@ -214,21 +278,55 @@ describe("a video too large to archive", () => {
   });
 
   it("notes a cut-off transcript on videos longer than the transcription limit", async () => {
-    vi.mocked(digestVideo).mockResolvedValue(digest({ probe: { duration: 5400, hasAudio: true, width: 1920, height: 1080, fps: 30 }, audio: { data: new Uint8Array([1]), seconds: 3600 } }) as never);
+    vi.mocked(digestVideoFile).mockResolvedValue(digest({ probe: { duration: 5400, hasAudio: true, width: 1920, height: 1080, fps: 30 }, audio: { data: new Uint8Array([1]), seconds: 3600 } }) as never);
     await processItem(ID);
-    expect(vi.mocked(digestVideo).mock.calls[0][2]).toMatchObject({ audioMaxSeconds: 3600 });
+    expect(vi.mocked(digestVideoFile).mock.calls[0][1]).toMatchObject({ audioMaxSeconds: 3600 });
     expect(item().post.digestNotes).toEqual(["口播只转写了前 60 分钟（全长 90 分钟）"]);
+  });
+});
+
+describe("an item deleted while it is still being processed", () => {
+  // 删除那一刻行和文件都删了；后台任务还在跑，后来写出来的文件收尾时要清掉
+  const deleteNow = () => fake.store.items.splice(0);
+
+  it("leaves nothing behind when a large video was still downloading", async () => {
+    vi.mocked(downloadRemoteToFile).mockImplementation(async (_file, dest) => {
+      await writeFile(dest, jpeg);
+      deleteNow();
+      return VIDEO_MAX_BYTES + 10 * MB;
+    });
+    await processItem(ID);
+    // 后台任务照样把原片搬到了磁盘上、把封面和帧传进了存储桶——收尾时都清掉了
+    expect(vi.mocked(digestVideoFile)).toHaveBeenCalled();
+    expect(existsSync(localVideo())).toBe(false);
+    expect([...fake.files.keys()]).toEqual([]);
+    expect(understand).not.toHaveBeenCalled();
+  });
+
+  it("leaves nothing behind when a small video was on its way into storage", async () => {
+    vi.mocked(downloadRemoteToFile).mockImplementation(async (_file, dest) => {
+      await writeFile(dest, jpeg);
+      deleteNow();
+      return 3 * MB;
+    });
+    await processItem(ID);
+    expect([...fake.files.keys()]).toEqual([]);
+  });
+
+  it("keeps the files of an item that is still there", async () => {
+    videoOnDisk(VIDEO_MAX_BYTES + 10 * MB);
+    await processItem(ID);
+    expect(existsSync(localVideo())).toBe(true);
+    expect([...fake.files.keys()].length).toBeGreaterThan(0);
   });
 });
 
 describe("a video beyond the read limit", () => {
   it("is not downloaded; the item is understood from cover and text, and says what it missed", async () => {
-    vi.mocked(downloadRemote).mockImplementation(async (file) => {
-      if (file.url.endsWith(".mp4")) throw new TooLargeError(900 * MB);
-      return jpeg;
-    });
+    vi.mocked(downloadRemoteToFile).mockRejectedValue(new TooLargeError(900 * MB));
     await processItem(ID);
     expect(digestVideo).not.toHaveBeenCalled();
+    expect(digestVideoFile).not.toHaveBeenCalled();
     expect(roles()).toEqual(["image"]);
     expect(item().post.notes[1]).toBe("视频太大（900 MB），超过 600 MB 没有下载，只看了封面和文字");
     expect(item().status).toBe("ready");
@@ -237,10 +335,7 @@ describe("a video beyond the read limit", () => {
 
 describe("a video that fails to download", () => {
   it("says why", async () => {
-    vi.mocked(downloadRemote).mockImplementation(async (file) => {
-      if (file.url.endsWith(".mp4")) throw new Error("下载文件(cdn.example) 失败：下载超时");
-      return jpeg;
-    });
+    vi.mocked(downloadRemoteToFile).mockRejectedValue(new Error("下载文件(cdn.example) 失败：下载超时"));
     await processItem(ID);
     expect(item().post.notes[1]).toBe("视频没下载下来（下载文件(cdn.example) 失败：下载超时），只看了封面和文字");
     expect(item().status).toBe("ready");
@@ -250,8 +345,7 @@ describe("a video that fails to download", () => {
 describe("a video the storage service refuses", () => {
   it("is still read; the page says the original was not kept and why", async () => {
     // 存档上限设得比存储服务肯收的大时（VAULT_STORE_MAX_MB 调高了、套餐没跟上）：这里用一个上限以内的文件
-    const data = new Uint8Array(40 * MB);
-    vi.mocked(downloadRemote).mockImplementation(async (file) => (file.url.endsWith(".mp4") ? data : jpeg));
+    const source = videoOnDisk(40 * MB);
     // 存储桶 / 项目的单文件上限还是 50 MB 的项目：封面这种小文件收，视频不收
     const from = fake.db.storage.from.bind(fake.db.storage);
     vi.spyOn(fake.db.storage, "from").mockImplementation(((bucket: string) => {
@@ -263,7 +357,9 @@ describe("a video the storage service refuses", () => {
     const getBucket = vi.fn(async () => ({ data: { file_size_limit: 20 * MB } as { file_size_limit: number | null }, error: null }));
     Object.assign(fake.db.storage, { getBucket });
     await processItem(ID);
-    expect(vi.mocked(digestVideo).mock.calls[0][0]).toBe(data);
+    // 没存进去的那份还在磁盘上：直接从那儿读，读完删掉
+    expect(vi.mocked(digestVideoFile).mock.calls[0][0]).toBe(source());
+    expect(existsSync(source())).toBe(false);
     expect(roles()).toEqual(["image", "frame", "frame", "sheet"]);
     // 存储桶的上限比文件小：点名是桶，给出要跑的迁移
     expect(item().post.notes[1]).toBe("原片没存进去（40 MB，存储桶的单文件上限是 20 MB：在 Supabase 的 SQL Editor 里运行迁移 20261118000001_bucket_limit.sql）：画面和声音照常读，但这里不能播放，要看去原链接");
@@ -280,13 +376,16 @@ describe("a video the storage service refuses", () => {
 
 describe("a video small enough to archive", () => {
   it("is stored, then read from storage in the next step", async () => {
-    const small = new Uint8Array(3 * MB);
-    vi.mocked(downloadRemote).mockImplementation(async (file) => (file.url.endsWith(".mp4") ? small : jpeg));
+    const source = videoOnDisk(3 * MB);
     await processItem(ID);
     expect([...fake.files.keys()].some((k) => k.endsWith(`${USER}/${ID}/video.mp4`))).toBe(true);
     expect(roles()).toEqual(["image", "video", "frame", "frame", "sheet"]);
+    expect(item().media.find((m) => m.role === "video")?.bytes).toBe(3 * MB);
+    // 下载的那份存进存储桶之后就删了；画面和声音是下一步从存储桶里取出来读的
+    expect(existsSync(source())).toBe(false);
+    expect(digestVideoFile).not.toHaveBeenCalled();
     expect(vi.mocked(digestVideo).mock.calls).toHaveLength(1);
-    expect(vi.mocked(digestVideo).mock.calls[0][0].byteLength).toBe(3 * MB);
+    expect(vi.mocked(digestVideo).mock.calls[0][0]).toEqual(jpeg);
     expect(vi.mocked(digestVideo).mock.calls[0][2]).toMatchObject({ detectCuts: true });
     expect(item().media.find((m) => m.role === "video")?.durationS).toBe(2318);
     expect(item().post.notes).toEqual(["这条路读不到评论内容，只有评论数"]);
@@ -297,7 +396,6 @@ describe("a video small enough to archive", () => {
 
 describe("what gets saved from the understanding", () => {
   beforeEach(() => {
-    vi.mocked(downloadRemote).mockResolvedValue(jpeg);
     vi.mocked(fetchPost).mockResolvedValue(post({ video: null, kind: "image" }));
   });
 

@@ -10,6 +10,7 @@ const all: SetupFacts = {
   asr: { volc: false, openai: true, whisper: null, whisperHint: null },
   ytdlp: "/opt/homebrew/bin/yt-dlp",
   storage: { bucketLimit: 200 * 1024 * 1024, wanted: 200 * 1024 * 1024 },
+  localMedia: { dir: "/data/media", files: 3, bytes: 800 * 1024 * 1024, freeBytes: 30 * 1024 * 1024 * 1024 },
 };
 const state = (f: SetupFacts) => Object.fromEntries(setupChecks(f).map((c) => [c.key, c.state]));
 const detail = (f: SetupFacts, key: string) => setupChecks(f).find((c) => c.key === key)!.detail;
@@ -61,7 +62,18 @@ describe("the archive limit check", () => {
     expect(storage(f).state).toBe("ok");
     expect(storage(f).detail).toContain("单个最多 50 MB。想存更大的");
     expect(storage(f).detail).toContain("VAULT_STORE_MAX_MB");
-    expect(storage(f).effect).toContain("最多存 50 MB");
+    expect(storage(f).effect).toContain("最多往 Supabase 存 50 MB");
+    expect(storage(f).effect).toContain("留在这台服务器的磁盘上");
+  });
+
+  it("shows how much disk the kept originals use, and warns when the disk is nearly full", () => {
+    const local = (f: SetupFacts) => setupChecks(f).find((c) => c.key === "localMedia")!;
+    expect(local(all)).toMatchObject({ state: "ok", detail: "/data/media：3 个文件，共 0.8 GB；这个盘还剩 30.0 GB", fix: "" });
+    const tight = local({ ...all, localMedia: { ...all.localMedia, freeBytes: 1.5 * 1024 * MB } });
+    expect(tight.state).toBe("missing");
+    expect(tight.fix).toContain("删掉 /data/media 下不要的原片");
+    // 剩余空间没读到：不乱报
+    expect(local({ ...all, localMedia: { ...all.localMedia, freeBytes: null } })).toMatchObject({ state: "ok", detail: "/data/media：3 个文件，共 0.8 GB" });
   });
 
   it("warns that a raised limit needs a paid plan", () => {

@@ -1,7 +1,10 @@
 import { lookup } from "node:dns/promises";
+import { createWriteStream } from "node:fs";
 import { isIP } from "node:net";
 import { request as httpRequest, type IncomingHttpHeaders, type IncomingMessage } from "node:http";
 import { request as httpsRequest } from "node:https";
+import { Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { brotliDecompressSync, gunzipSync, inflateSync } from "node:zlib";
 import { isPublicAddress, publicHttpUrl } from "./public-ip";
 import { egressProxy, proxyAgent } from "./egress-proxy";
@@ -14,6 +17,11 @@ export type PublicFetchOptions = {
   maxRedirects?: number; signal?: AbortSignal; method?: "GET" | "HEAD"; redirect?: "follow" | "manual";
   /** Optional shared budget, charged while streaming and for decoded expansion. */
   consumeBytes?: (bytes: number) => void;
+  /**
+   * Stream a 2xx body straight into this file instead of memory (large media). The returned Response then has an
+   * empty body; the caller reads the file. Still bounded by maxBytes; a failed download can leave a partial file.
+   */
+  toFile?: string;
 };
 
 /** Resolve once and reject mixed answers. The returned IP is pinned at connect time. */
@@ -34,7 +42,7 @@ function headersOf(raw: IncomingHttpHeaders): Headers {
   return headers;
 }
 
-async function requestOnce(url: URL, headers: Headers, opts: Required<Pick<PublicFetchOptions, "maxBytes" | "method">> & Pick<PublicFetchOptions, "consumeBytes">, signal: AbortSignal) {
+async function requestOnce(url: URL, headers: Headers, opts: Required<Pick<PublicFetchOptions, "maxBytes" | "method">> & Pick<PublicFetchOptions, "consumeBytes" | "toFile">, signal: AbortSignal) {
   const proxy = egressProxy(url);
   const pinned = proxy ? null : await new Promise<{ address: string; family: number }>((resolve, reject) => {
     const abort = () => reject(signal.reason);
@@ -60,6 +68,27 @@ async function requestOnce(url: URL, headers: Headers, opts: Required<Pick<Publi
       }
       const declared = Number(responseHeaders.get("content-length"));
       if (Number.isFinite(declared) && declared > opts.maxBytes) { res.destroy(); reject(new DownloadLimitError(declared)); return; }
+      if (opts.toFile) {
+        // Only a successful body is the file; an error page is not worth writing or buffering.
+        if (status < 200 || status >= 300) { res.destroy(); resolve({ status, headers: responseHeaders, body: new Uint8Array() }); return; }
+        const encoding = responseHeaders.get("content-encoding")?.toLowerCase();
+        if (encoding && encoding !== "identity") { res.destroy(); reject(new Error("不支持的下载压缩格式")); return; }
+        let written = 0;
+        const counted = new Transform({
+          transform(chunk: Buffer, _encoding, done) {
+            written += chunk.length;
+            if (written > opts.maxBytes) { done(new DownloadLimitError(null)); return; }
+            try { opts.consumeBytes?.(chunk.length); } catch (error) { done(error as Error); return; }
+            done(null, chunk);
+          },
+        });
+        // pipeline applies backpressure, so a slow disk does not pile the download up in memory.
+        pipeline(res, counted, createWriteStream(opts.toFile)).then(
+          () => resolve({ status, headers: responseHeaders, body: new Uint8Array() }),
+          (error) => reject(signal.aborted ? signal.reason : (error as NodeJS.ErrnoException).code === "ERR_STREAM_PREMATURE_CLOSE" ? new Error("下载连接提前中断") : error),
+        );
+        return;
+      }
       const chunks: Buffer[] = [];
       let bytes = 0;
       res.on("data", (chunk: Buffer) => {
@@ -106,7 +135,7 @@ export async function publicFetch(input: string, options: PublicFetchOptions = {
   try {
     for (let hop = 0; hop <= (options.maxRedirects ?? 5); hop++) {
       signal.throwIfAborted();
-      const result = await requestOnce(url, headers, { maxBytes: options.maxBytes ?? 2 * 1024 * 1024, method: options.method ?? "GET", consumeBytes: options.consumeBytes }, signal);
+      const result = await requestOnce(url, headers, { maxBytes: options.maxBytes ?? 2 * 1024 * 1024, method: options.method ?? "GET", consumeBytes: options.consumeBytes, toFile: options.toFile }, signal);
       if (options.redirect !== "manual" && [301, 302, 303, 307, 308].includes(result.status)) {
         const location = result.headers.get("location");
         if (!location) throw new Error("下载地址跳转到了空地址");

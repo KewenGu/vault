@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
+import { existsSync } from "node:fs";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { Readable } from "node:stream";
 import { gzipSync } from "node:zlib";
 import { isPublicAddress, publicHttpUrl } from "./public-ip";
@@ -82,6 +86,37 @@ describe("bounded DNS-pinned download", () => {
   it("preserves separate Set-Cookie fields needed for legitimate platform media", async () => {
     replies.push({ headers: { "set-cookie": ["first=1; Path=/", "second=2; Path=/"] } });
     expect((await publicFetch("https://example.com/")).headers.getSetCookie()).toEqual(["first=1; Path=/", "second=2; Path=/"]);
+  });
+  it("streams a body to a file instead of memory, under the same size limits", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "public-fetch-test-"));
+    try {
+      const file = path.join(dir, "video.mp4");
+      let used = 0;
+      replies.push({ chunks: [Buffer.from("abc"), Buffer.from("defg")] });
+      const res = await publicFetch("https://example.com/v.mp4", { toFile: file, maxBytes: 7, consumeBytes: (n) => { used += n; } });
+      expect(res.status).toBe(200);
+      expect((await res.arrayBuffer()).byteLength).toBe(0);
+      expect(await readFile(file, "utf8")).toBe("abcdefg");
+      expect(used).toBe(7);
+      // Over the limit: declared up front, or counted while streaming.
+      replies.push({ headers: { "content-length": "100" } });
+      await expect(publicFetch("https://example.com/v.mp4", { toFile: path.join(dir, "declared.mp4"), maxBytes: 5 })).rejects.toMatchObject({ name: "DownloadLimitError", bytes: 100 });
+      expect(existsSync(path.join(dir, "declared.mp4"))).toBe(false);
+      replies.push({ chunks: [Buffer.alloc(3), Buffer.alloc(3)] });
+      await expect(publicFetch("https://example.com/v.mp4", { toFile: path.join(dir, "streamed.mp4"), maxBytes: 5 })).rejects.toBeInstanceOf(DownloadLimitError);
+      // An error page or a redirect is not the file.
+      replies.push({ status: 403, chunks: [Buffer.from("denied")] });
+      expect((await publicFetch("https://example.com/v.mp4", { toFile: path.join(dir, "denied.mp4") })).status).toBe(403);
+      expect(existsSync(path.join(dir, "denied.mp4"))).toBe(false);
+      replies.push({ status: 302, headers: { location: "https://cdn.example.com/v.mp4" } }, { chunks: [Buffer.from("moved")] });
+      await publicFetch("https://example.com/v.mp4", { toFile: path.join(dir, "moved.mp4") });
+      expect(await readFile(path.join(dir, "moved.mp4"), "utf8")).toBe("moved");
+      // A compressed body cannot be written through as-is.
+      replies.push({ headers: { "content-encoding": "gzip" }, chunks: [gzipSync(Buffer.alloc(10))] });
+      await expect(publicFetch("https://example.com/v.mp4", { toFile: path.join(dir, "gz.mp4") })).rejects.toThrow("不支持的下载压缩格式");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
   it("enforces a shared streaming budget across parallel subresources", async () => {
     let used = 0;

@@ -1,6 +1,7 @@
 import "server-only";
 import { start } from "workflow/api";
 import type { Session } from "@/lib/auth/user";
+import { removeLocalItemFiles } from "@/lib/media/local-store";
 import { LinkError, resolveLink } from "@/lib/sources/link";
 import { getServiceClient } from "@/lib/supabase/service";
 import { processItem } from "@/workflows/process-item";
@@ -130,6 +131,8 @@ export async function removeItem(session: Session, id: string): Promise<void> {
   // 删文件、清没人用的实体要 service 权限；归属由 user_id 条件保证
   try {
     await deleteItem(getServiceClient(), session.user.id, id);
+    // 留在这台服务器磁盘上的原片（大视频）跟着删
+    await removeLocalItemFiles(session.user.id, id);
   } catch (e) {
     if (e instanceof Error && e.message.includes("不在了")) throw new VaultError(e.message, 404);
     throw e;

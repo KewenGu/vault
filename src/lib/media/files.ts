@@ -1,5 +1,6 @@
 import { publicFetch, DownloadLimitError } from "@/lib/network/public-fetch";
 import "server-only";
+import { stat } from "node:fs/promises";
 import sharp from "sharp";
 import { explainFetchError } from "@/lib/fetch-error";
 import { assertSafeUrl } from "@/lib/network/safe-url";
@@ -34,7 +35,8 @@ const MAX_HOPS = 5;
 /** 凭据只留在完全相同的源；不能用最后两段域名判断公共后缀。 */
 const siteOf = (url: string) => new URL(url).origin;
 
-async function fetchOnce(url: string, maxBytes: number, timeoutMs: number, headers: Record<string, string> = {}): Promise<Uint8Array> {
+/** 跟着跳转走到真正的文件，返回 2xx 的响应。toFile 给了就把内容直接写进那个文件（返回的响应没有内容）。 */
+async function openRemote(url: string, maxBytes: number, timeoutMs: number, headers: Record<string, string> = {}, toFile?: string): Promise<Response> {
   let current = url;
   for (let hop = 0; hop <= MAX_HOPS; hop++) {
     // CDN 会跳去别的节点域名：不限域名，但每一跳都过一遍 SSRF 守卫（不许指向内网）
@@ -45,7 +47,7 @@ async function fetchOnce(url: string, maxBytes: number, timeoutMs: number, heade
     try {
       // timeoutMs 一定要传：publicFetch 自己有一个默认 20 秒的总时限，只给 signal 的话它照样在 20 秒时掐断——
       // 几十上百 MB 的视频 20 秒下不完（Vault 2026-11-18：127 MB 的抖音视频每次都「没下载下来」）。
-      res = await publicFetch(current, { maxBytes, timeoutMs, headers: { "user-agent": MOBILE_UA, accept: "*/*", ...extra }, redirect: "manual", signal: AbortSignal.timeout(timeoutMs) });
+      res = await publicFetch(current, { maxBytes, timeoutMs, toFile, headers: { "user-agent": MOBILE_UA, accept: "*/*", ...extra }, redirect: "manual", signal: AbortSignal.timeout(timeoutMs) });
     } catch (e) {
       if (e instanceof DownloadLimitError) throw new TooLargeError(e.bytes);
       throw explainFetchError(e, `下载文件(${new URL(current).hostname})`);
@@ -66,46 +68,72 @@ async function fetchOnce(url: string, maxBytes: number, timeoutMs: number, heade
       await res.body?.cancel().catch(() => {});
       throw new TooLargeError(declared);
     }
-    // 边读边数：没报大小（或报小了）的也不会读超
-    const reader = res.body?.getReader();
-    if (!reader) throw new Error("下载文件失败（没有内容）");
-    const chunks: Uint8Array[] = [];
-    let size = 0;
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      size += value.byteLength;
-      if (size > maxBytes) {
-        await reader.cancel().catch(() => {});
-        throw new TooLargeError(null);
-      }
-      chunks.push(value);
-    }
-    if (size === 0) throw new Error("下载文件失败（空文件）");
-    const out = new Uint8Array(size);
-    let off = 0;
-    for (const c of chunks) {
-      out.set(c, off);
-      off += c.byteLength;
-    }
-    return out;
+    return res;
   }
   throw new Error("文件地址跳转次数太多");
 }
 
-/** 下载一个远程文件：主地址不行就按顺序试备用地址。超过上限抛 TooLargeError（不再试别的地址）。 */
-export async function downloadRemote(file: RemoteFile, maxBytes: number, timeoutMs = 120_000): Promise<Uint8Array> {
-  if (file.bytes && file.bytes > maxBytes) throw new TooLargeError(file.bytes);
+async function fetchOnce(url: string, maxBytes: number, timeoutMs: number, headers: Record<string, string> = {}): Promise<Uint8Array> {
+  const res = await openRemote(url, maxBytes, timeoutMs, headers);
+  // 边读边数：没报大小（或报小了）的也不会读超
+  const reader = res.body?.getReader();
+  if (!reader) throw new Error("下载文件失败（没有内容）");
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > maxBytes) {
+      await reader.cancel().catch(() => {});
+      throw new TooLargeError(null);
+    }
+    chunks.push(value);
+  }
+  if (size === 0) throw new Error("下载文件失败（空文件）");
+  const out = new Uint8Array(size);
+  let off = 0;
+  for (const c of chunks) {
+    out.set(c, off);
+    off += c.byteLength;
+  }
+  return out;
+}
+
+/** 按顺序试主地址和备用地址。超过上限抛 TooLargeError（不再试别的地址）。 */
+async function tryEachUrl<T>(file: RemoteFile, maxBytes: number, attempt: (url: string) => Promise<T>): Promise<T> {
+  // 平台报的大小超了就不发请求。估算出来的大小（码率 × 时长）不算数：常常偏大，让下载时服务器报的真实大小来判断
+  // （Vault 2026-11-19：X 上一条两个多小时的讲课录屏估出来 269 MB，没下载就被 250 MB 的上限拦下了）。
+  if (file.bytes && !file.bytesEstimated && file.bytes > maxBytes) throw new TooLargeError(file.bytes);
   let last: unknown = new Error("没有文件地址");
   for (const url of [file.url, ...(file.backupUrls ?? [])]) {
     try {
-      return await fetchOnce(url, maxBytes, timeoutMs, file.headers);
+      return await attempt(url);
     } catch (e) {
       if (e instanceof TooLargeError) throw e;
       last = e;
     }
   }
   throw last;
+}
+
+/** 下载一个远程文件：主地址不行就按顺序试备用地址。超过上限抛 TooLargeError（不再试别的地址）。 */
+export async function downloadRemote(file: RemoteFile, maxBytes: number, timeoutMs = 120_000): Promise<Uint8Array> {
+  return tryEachUrl(file, maxBytes, (url) => fetchOnce(url, maxBytes, timeoutMs, file.headers));
+}
+
+/**
+ * 同 downloadRemote，但内容直接写进磁盘上的 dest，不进内存（视频用：几百 MB 的文件读进内存，小机器撑不住）。
+ * 返回写了多少字节。失败时 dest 可能留着半个文件，由调用方连目录一起删。
+ */
+export async function downloadRemoteToFile(file: RemoteFile, dest: string, maxBytes: number, timeoutMs = 120_000): Promise<number> {
+  return tryEachUrl(file, maxBytes, async (url) => {
+    await openRemote(url, maxBytes, timeoutMs, file.headers, dest);
+    const { size } = await stat(dest);
+    if (size === 0) throw new Error("下载文件失败（空文件）");
+    if (size > maxBytes) throw new TooLargeError(size);
+    return size;
+  });
 }
 
 export type StoredImage = { data: Uint8Array; mime: "image/jpeg"; width: number; height: number };

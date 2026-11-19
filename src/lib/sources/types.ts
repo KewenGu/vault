@@ -50,7 +50,16 @@ export function statLabel(platform: SourcePlatform, key: PostStatKey): string {
  * 平台 CDN 上的一个文件（地址带时效签名，要马上转存）。
  * headers：下载时要带的请求头（TikTok 的视频要页面发的 cookie + referer）；只发给和 url 同一个站的地址，跳去别的站就不带了。
  */
-export type RemoteFile = { url: string; backupUrls?: string[]; headers?: Record<string, string>; width?: number | null; height?: number | null; bytes?: number | null };
+export type RemoteFile = {
+  url: string;
+  backupUrls?: string[];
+  headers?: Record<string, string>;
+  width?: number | null;
+  height?: number | null;
+  bytes?: number | null;
+  /** bytes 是估算的（码率 × 时长），不是平台报的真实大小：用来挑清晰度可以，不能凭它不下载 */
+  bytesEstimated?: boolean;
+};
 
 /** 从平台读到的一条帖子（还没转存文件）。 */
 export type FetchedPost = {
@@ -108,8 +117,10 @@ export type ItemMedia = {
   height: number | null;
   bytes: number;
   durationS?: number | null;
-  /** video：存的不是原片，是压到存档上限以内的副本（原片太大；读内容用的是原片） */
+  /** video：存的不是原片，是压到存档上限以内的副本（原片太大；读内容用的是原片）。2026-11-19 起不再压副本，只有那之前存的内容有 */
   compressed?: boolean;
+  /** video：原片不在存储桶里，在这台服务器的磁盘上（超过存档上限；见 lib/media/local-store.ts）。path 是同样的相对路径 */
+  local?: boolean;
   /** frame：这一帧的时间；sheet：这张帧格从哪一秒开始 */
   at?: number;
   /** sheet：这张帧格到哪一秒（全片一览，2026-10-13 起有） */

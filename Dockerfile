@@ -45,13 +45,14 @@ ENV NODE_ENV=production \
     FFMPEG_PATH=/usr/local/bin/ffmpeg \
     YTDLP_PATH=/usr/local/bin/yt-dlp \
     WORKFLOW_TARGET_WORLD=local \
-    WORKFLOW_LOCAL_DATA_DIR=/data/workflow
+    WORKFLOW_LOCAL_DATA_DIR=/data/workflow \
+    VAULT_LOCAL_MEDIA_DIR=/data/media
 COPY --from=build /app/package.json /app/next.config.ts ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/.next ./.next
 COPY --from=build /app/public ./public
-# /data：后台任务的状态（处理到一半重启能接着跑）。挂一个卷，别放在容器里。
-RUN mkdir -p /data/workflow && chown -R node:node /data
+# /data：后台任务的状态（处理到一半重启能接着跑）、存储桶存不下的大视频原片（/data/media）。挂一个卷，别放在容器里。
+RUN mkdir -p /data/workflow /data/media && chown -R node:node /data
 USER node
 VOLUME /data
 EXPOSE 3000
