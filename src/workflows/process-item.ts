@@ -14,6 +14,7 @@ import { canDigestVideo, contactSheets, digestVideo, digestVideoFile, sheetLayou
 import { keepLocalFile, localFileSize, localMediaPath, removeLocalItemFiles } from "@/lib/media/local-store";
 import { clockTenths, cuesToText, frameNote, likelyChinese, parseTranscript, speechAt, speechLabel, type Cue } from "@/lib/media/transcript";
 import { fetchPost } from "@/lib/sources/fetch-post";
+import { mapCapture } from "@/lib/sources/web";
 import { emptyStats, type FetchedPost, type ItemMedia, type PostSnapshot } from "@/lib/sources/types";
 import { ytdlpDownload } from "@/lib/sources/ytdlp";
 import { buildEmbeddingText, buildSearchText } from "@/lib/vault/indexing";
@@ -213,9 +214,11 @@ async function storeMedia(db: Db, dir: string, post: FetchedPost, tmp: string): 
 async function fetchLink(db: Db, item: Item, counts: Counts): Promise<boolean> {
   if (!item.platform || !item.externalId || !item.url) throw new Error("这条内容没有链接");
   const ref = { platform: item.platform, externalId: item.externalId, url: item.url };
+  // 在手机的 Safari 里读过的网页（服务器读不到）：用那一份，不去抓
+  const capture = item.post.capture;
   let post: FetchedPost;
   try {
-    post = await meterInto(counts, () => fetchPost(ref));
+    post = capture ? mapCapture(capture, ref) : await meterInto(counts, () => fetchPost(ref));
   } catch (e) {
     if (!item.userText?.trim()) throw e;
     const { error } = await db.from("items").update({ status: "analyzing" }).eq("id", item.id);
@@ -266,6 +269,7 @@ async function fetchLink(db: Db, item: Item, counts: Counts): Promise<boolean> {
     digestNotes,
     transcriptFrom: post.captions ? "captions" : transcript ? "asr" : null,
     cuts,
+    ...(capture ? { capture } : {}),
   });
   const { error } = await db
     .from("items")

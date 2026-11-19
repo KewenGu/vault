@@ -29,10 +29,11 @@
 | YouTube | App 的播放接口（字幕 + 360p 视频）；被拦时（云服务器上）走 Apify，只有字幕、没有画面 | 免费；走 Apify 时约 $0.004 / 条 |
 | X | FxTwitter 公开接口 → 官方嵌入接口（长文 Articles 读全文和配图，要贴发长文的那条帖子的链接）；帖子提到的东西都跟着读：引用的、长文里嵌的帖子，正文和长文里的每个链接（网页、YouTube、小红书… 走各自的读法），读到的帖子里提到的接着往下读，最多 30 条 | 免费（跟着读的链接按各自平台计费） |
 | 其他网页（博客、新闻、商品页、Reddit…） | Jina Reader → 自己抓；本机有 yt-dlp 时认别的视频站 | Jina 带密钥时 $0.0005 |
+| 微信公众号文章 | 服务器读不了（微信对服务器和机房 IP 要求先过验证，2026-11-19 实测 Jina 和直接请求都只拿到验证页）：在 iPhone 的 Safari 里打开，用快捷指令「存入 Vault（网页）」从页面上读标题、正文、配图、发布时间（见「手机上用」）。直接贴链接会读失败，页面上告诉你这条路 | 免费 |
 | 上传 | 图片 / 截图、视频、音频、`.txt` / `.md`，单个最多 50 MB（可调，见「存档上限」） | — |
 | 文字 | 直接贴，最多 20 万字 | — |
 
-链接读不到时（被删、要登录、风控），可以在那条内容的页面上手动贴正文，按贴的文字理解。
+链接读不到时（被删、要登录、风控），可以在那条内容的页面上手动贴正文，按贴的文字理解；也可以在手机的 Safari 里打开它，用快捷指令「存入 Vault（网页）」存（同一个链接会换上读到的内容重新处理）。
 
 ## 验证到了哪一步
 
@@ -131,6 +132,8 @@ ffmpeg 的版本门槛是从 SM-Intelligence 带过来的安全基线（处理�
 
 网页已经适配手机宽度。在 Android 的 Chrome 里把站点「添加到主屏幕」之后，别的 App 的分享菜单里会出现 Vault，分享的链接落到确认页，点一下存入。iOS 的 Safari 不支持这个分享入口，用一个快捷指令代替：「手机」页（`/mobile`）上有按当前域名填好的步骤；做好后把它的 iCloud 链接填进 `VAULT_IOS_SHORTCUT_URL`，页面上就有「安装快捷指令」按钮（快捷指令只能从苹果设备上分享出来，网站自己生成不了）。局域网里用手机访问电脑上的开发服务器时，上传的文件不会去重（浏览器只在 https 或 localhost 下提供算校验值的接口）。
 
+服务器读不到的网页（微信公众号）用第二个快捷指令「存入 Vault（网页）」：只出现在 Safari 的分享菜单里，用「在网页上运行 JavaScript」从正在看的页面上取标题、正文、配图、发布时间，打开 `/share#page=<Base64 的 JSON>`，确认后存成一条链接内容，后台用这一份、不去抓网页（`src/lib/vault/page-capture.ts`）。内容放在 `#` 片段里，不发给服务器，长文不会撞上请求头的长度上限；没登录时登录完接着存。脚本也在「手机」页上，按当前域名填好。还没在 iPhone 上实际跑过；很长的文章（两三万字以上）地址可能被截断，确认页会说「收到了但不完整」。
+
 ## 检查
 
 ```bash
@@ -145,7 +148,7 @@ npm run check
 
 | 方法和路径 | 做什么 |
 |---|---|
-| `POST /api/v1/items` | 存一条。`{ input, note? }`，`input` 是链接、分享文案或文字。返回 `{ id, existing }` |
+| `POST /api/v1/items` | 存一条。`{ input, note? }`，`input` 是链接、分享文案或文字。服务器读不到、客户端自己读到的网页传 `{ page: { url, title, text, description?, cover?, images?, author?, site?, publishedAt? }, note? }`（存过的同一个链接换上这份重新处理）。返回 `{ id, existing }` |
 | `GET /api/v1/items` | 列出 / 搜索。`q`、`type`、`category`、`tag`、`platform`、`source`、`kind`、`entity`、`limit` |
 | `GET /api/v1/items/:id` | 详情：理解结果、正文、口播、文件、关联的实体 |
 | `PATCH /api/v1/items/:id` | 改备注和标签。`{ note?, tags? }` |
@@ -163,6 +166,7 @@ supabase/migrations/        表、行级安全、搜索和图谱的数据库函�
 src/workflows/process-item.ts   一条内容的后台处理：读取 → 看和听 → 理解 → 建索引并入图
 src/lib/
   vault/      capture（存进来的是什么）· store（items 表读写）· service（存 / 重跑 / 删）
+              page-capture（在手机的 Safari 里读网页：快捷指令的脚本和确认页的解码）
               understand（提示词和解析）· taxonomy（类型、领域、实体的定义）
               indexing（搜索全文和向量文字）· search（关键词 + 语义）· facets（筛选栏计数）
   graph/      merge（实体增量并入）· data（图谱页的数据）

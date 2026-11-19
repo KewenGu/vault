@@ -6,6 +6,8 @@ import { LinkError, resolveLink } from "@/lib/sources/link";
 import { getServiceClient } from "@/lib/supabase/service";
 import { processItem } from "@/workflows/process-item";
 import { captureFields, classifyCapture, fileDedupeKey, planUpload, textDedupeKey, titleFromFilename, uploadPath, uploadedMedia } from "./capture";
+import { readPost } from "@/lib/sources/types";
+import { readCapture } from "./page-capture";
 import { BUCKET, TEXT_MAX, createItem, deleteItem, getItem, inProgress, itemDir, linkDedupeKey, restartItem } from "./store";
 
 /**
@@ -58,6 +60,36 @@ export async function saveInput(session: Session, rawInput: string, rawNote = ""
     saved = await createItem(db, user.id, { source: "text", dedupeKey: textDedupeKey(capture.text), status: "fetching", kind: "text", userText: capture.text, note });
   }
   if (!saved.existing) await startProcessing(saved.id);
+  return saved;
+}
+
+/**
+ * 存一个在手机的 Safari 里读到的网页（快捷指令带来的，见 page-capture.ts）：服务器读不到的网页（微信公众号）走这条路，
+ * 后台用这一份内容，不去抓网页。
+ * - 有专门读法的平台（小红书、抖音、X…）照常按链接读：读取器拿得到的比页面上显示的全（互动数、视频）。
+ * - 这个网页存过（多半是之前读失败了）：换上这一份重新读，不新建一条。正在处理中的不打断。
+ */
+export async function savePage(session: Session, raw: unknown, rawNote = ""): Promise<Saved> {
+  const capture = readCapture(raw);
+  if (!capture) throw new VaultError("没收到网页的内容：在 Safari 里重新分享一次");
+  let ref;
+  try {
+    ref = await resolveLink(capture.url);
+  } catch (e) {
+    if (e instanceof LinkError) throw new VaultError(e.message);
+    throw e;
+  }
+  if (ref.platform !== "web") return saveInput(session, ref.url, rawNote);
+  const note = rawNote.trim();
+  const { user, db } = session;
+  const post = readPost({ capture });
+  const saved = await createItem(db, user.id, { source: "link", dedupeKey: linkDedupeKey(ref), status: "fetching", platform: ref.platform, externalId: ref.externalId, url: ref.url, kind: "article", title: capture.title, post, note });
+  if (saved.existing) {
+    const had = await getItem(db, user.id, saved.id);
+    if (!had || inProgress(had)) return saved;
+    await restartItem(db, user.id, saved.id, "fetch", { post: { ...had.post, capture } });
+  }
+  await startProcessing(saved.id);
   return saved;
 }
 

@@ -27,7 +27,8 @@ export async function signIn(formData: FormData) {
   const email = String(formData.get("email") ?? "").trim();
   const password = String(formData.get("password") ?? "");
   const next = safeNext(formData.get("next"));
-  const back = { next: next === "/" ? undefined : next, email };
+  // 出错回登录页时 next 放进查询参数：# 片段（在 Safari 里读到的整篇网页，见 next-field.tsx）可能几十 KB，放进地址会超长，不带
+  const back = { next: next === "/" ? undefined : next.split("#")[0], email };
   const supabase = await createServerSupabase();
   const { data, error } = await supabase.auth.signInWithPassword({ email, password });
   if (error) {
@@ -45,7 +46,8 @@ export async function signUp(formData: FormData) {
   const email = String(formData.get("email") ?? "").trim();
   const password = String(formData.get("password") ?? "");
   const next = safeNext(formData.get("next"));
-  const back = { next: next === "/" ? undefined : next, email };
+  // 出错回登录页时 next 放进查询参数：# 片段（在 Safari 里读到的整篇网页，见 next-field.tsx）可能几十 KB，放进地址会超长，不带
+  const back = { next: next === "/" ? undefined : next.split("#")[0], email };
   if (!isAllowed(email)) redirect(loginUrl({ ...back, error: "not_allowed" }));
   if (password.length < 8) redirect(loginUrl({ ...back, error: "weak" }));
   const supabase = await createServerSupabase();

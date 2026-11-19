@@ -80,11 +80,19 @@ export function extractShareUrl(text: string): string | null {
 /** 分享链接里常见的追踪参数：同一篇文章带不带它们都算同一条收藏 */
 const TRACKING = /^(utm_\w+|fbclid|gclid|dclid|msclkid|mc_cid|mc_eid|igshid|igsh|spm|_hsenc|_hsmi|ref_src|ref_url|share_token|share_source)$/i;
 
+/** 微信公众号文章的长链接里认文章的只有这几个参数；chksm、scene、sharer_* 这些随分享的人和场合变 */
+const WEIXIN_KEEP = ["__biz", "mid", "idx", "sn"];
+
 /** 网页链接整理成固定写法（去掉 #片段和追踪参数），再取哈希当 id：同一个地址只收藏一次。 */
 function webRef(url: URL): LinkRef | null {
   const u = new URL(url.href);
   u.hash = "";
   for (const key of [...u.searchParams.keys()]) if (TRACKING.test(key)) u.searchParams.delete(key);
+  if (u.hostname === "mp.weixin.qq.com") {
+    // 短链接 /s/<id> 本身就认得出文章，参数全不要；长链接 /s?__biz=…&mid=…&idx=…&sn=… 只留这四个
+    const keep = /^\/s\/[\w-]+$/.test(u.pathname) ? [] : u.pathname === "/s" && u.searchParams.has("__biz") ? WEIXIN_KEEP : null;
+    if (keep) u.search = new URLSearchParams(keep.flatMap((k) => (u.searchParams.has(k) ? [[k, u.searchParams.get(k)!]] : []))).toString();
+  }
   if (!assertSafeUrl(u.href)) return null;
   return { platform: "web", externalId: createHash("sha256").update(u.href).digest("hex").slice(0, 32), url: u.href };
 }

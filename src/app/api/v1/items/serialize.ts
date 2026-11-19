@@ -27,6 +27,12 @@ export function itemSummary(item: Item) {
   };
 }
 
+function omitCapture(post: Item["post"]): Item["post"] {
+  const out = { ...post };
+  delete out.capture;
+  return out;
+}
+
 /** 详情：再带上理解结果、正文、口播和所有文件。 */
 export function itemDetail(item: Item) {
   return {
@@ -34,7 +40,8 @@ export function itemDetail(item: Item) {
     understanding: item.understanding,
     text: item.userText || item.post.text,
     transcript: item.transcript,
-    post: item.post,
+    // 在 Safari 里读的网页原样留着一份（重新读取用），正文和上面的 text 重复，不往外给
+    post: omitCapture(item.post),
     media: item.media.map((m) => ({ role: m.role, url: itemFileUrl(item, m), mime: m.mime, width: m.width, height: m.height, durationS: m.durationS ?? null, at: m.at ?? null })),
     costUsd: item.costUsd,
   };

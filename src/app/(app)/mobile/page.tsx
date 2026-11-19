@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { headers } from "next/headers";
 import { CopyField } from "@/components/copy-field";
 import { requireSession } from "@/lib/auth/user";
+import { captureScript } from "@/lib/vault/page-capture";
 import { shareAddress, shortcutInstall } from "@/lib/vault/shortcut";
 
 export const metadata: Metadata = { title: "手机上用" };
@@ -24,7 +25,8 @@ export default async function MobilePage() {
   await requireSession();
   const h = await headers();
   const proto = h.get("x-forwarded-proto")?.split(",")[0].trim() || "http";
-  const address = shareAddress(`${proto}://${h.get("x-forwarded-host") ?? h.get("host")}`);
+  const origin = `${proto}://${h.get("x-forwarded-host") ?? h.get("host")}`;
+  const address = shareAddress(origin);
   const install = shortcutInstall(process.env.VAULT_IOS_SHORTCUT_URL);
 
   const steps = (
@@ -116,6 +118,40 @@ export default async function MobilePage() {
             </p>
           </div>
         )}
+      </section>
+
+      <section className="panel flex flex-col gap-4 px-4 py-4">
+        <div className="flex flex-col gap-1.5">
+          <h2 className="text-[15px] font-medium">iPhone：服务器读不到的网页（微信公众号）</h2>
+          <p className="text-sm leading-relaxed text-ink-muted">
+            公众号文章对服务器要求先过验证，Vault 自己读不了，但在 Safari 里能看。再做一个快捷指令，在 Safari 里把正在看的网页（标题、正文、配图、发布时间）读下来交给 Vault。别的要登录才能看、你在 Safari 里登录过的网页也能这样存。
+          </p>
+        </div>
+        <ol className="flex list-decimal flex-col gap-3 pl-5 text-sm leading-relaxed text-ink-secondary marker:text-ink-faint">
+          <li>
+            先打开系统设置里的 <Ui en="Settings → Apps → Shortcuts → Advanced" zh="设置 → App → 快捷指令 → 高级" />，打开 <Ui en="Allow Running Scripts" zh="允许运行脚本" />。
+          </li>
+          <li>
+            新建一个快捷指令，名字改成「存入 Vault（网页）」。点底部的 ⓘ，打开 <Ui en="Show in Share Sheet" zh="在共享表单中显示" />。回到编辑页，点最上面一行里的 Any，只勾 <Ui en="Safari Web Pages" zh="Safari 网页" />。
+          </li>
+          <li>
+            加一个动作 <Ui en="Run JavaScript on Webpage" zh="在网页上运行 JavaScript" />
+            ，它的输入是 <Ui en="Shortcut Input" zh="快捷指令输入" />。把里面自带的示例代码全部删掉，换成下面这段（地址已经按这个站点填好）：
+            <div className="mt-2">
+              <CopyField value={captureScript(origin)} label="快捷指令里的脚本" multiline />
+            </div>
+          </li>
+          <li>
+            最后加一个动作 <Ui en="Open URLs" zh="打开 URL" />，里面只放上一步的结果（Run JavaScript on Webpage 的输出）。
+          </li>
+          <li>点完成。</li>
+        </ol>
+        <div className="flex flex-col gap-1.5 border-t border-edge pt-4 text-sm leading-relaxed text-ink-secondary">
+          <h3 className="font-medium text-ink">怎么用</h3>
+          <p>在 Safari 里打开文章（微信里点右上角的 ···，选在浏览器里打开；没有这一项就复制链接，到 Safari 里粘贴打开），等正文显示出来，点 Safari 的分享，选「存入 Vault（网页）」。落到确认页，看一眼标题和正文开头，点存入。</p>
+          <p>之前存过、读失败了的同一篇，会换上这次读到的内容重新处理，不会多出一条。</p>
+          <p className="text-ink-muted">第一次运行时系统会问能不能在这个网站上运行脚本，选允许。存的是你当时在页面上看到的文字；很长的文章（两三万字以上）地址可能太长被截断，确认页会说「收到了但不完整」，那就复制正文贴进来。</p>
+        </div>
       </section>
 
       <section className="panel flex flex-col gap-1.5 px-4 py-4 text-sm leading-relaxed text-ink-secondary">

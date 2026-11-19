@@ -4,7 +4,7 @@ import { SourceFetchError } from "./types";
 
 vi.mock("./ytdlp", async (orig) => ({ ...(await orig<object>()), ytdlpInfo: vi.fn() }));
 
-import { JINA_COUNT_KEY, cleanMarkdown, dropPreamble, fetchWebPage, looksLikeLoginWall, mapJinaData, mapPage, parseHtmlPage, readPage, usableImage, type PageRead } from "./web";
+import { JINA_COUNT_KEY, WEIXIN_BLOCKED, cleanMarkdown, dropPreamble, fetchWebPage, looksLikeLoginWall, looksLikeVerifyWall, mapCapture, mapJinaData, mapPage, parseHtmlPage, readPage, usableImage, type PageRead } from "./web";
 import { ytdlpInfo } from "./ytdlp";
 
 const body = "这是一篇讲怎么做内容的长文。".repeat(20);
@@ -189,6 +189,58 @@ describe("收藏夹：读网页", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 500 })));
     await expect(fetchWebPage(ref)).rejects.toThrow(SourceFetchError);
     await expect(fetchWebPage({ ...ref, url: "http://127.0.0.1/admin" })).rejects.toThrow("这个地址读不了（指向本机或内网）");
+  });
+});
+
+describe("服务器读不到的网页（微信公众号）", () => {
+  const wx = { platform: "web" as const, externalId: "w", url: "https://mp.weixin.qq.com/s/icMS29rjuUeKiPdiJyzJAg" };
+  /** 2026-11-19 从云服务器读一篇公众号文章：Jina 和直接请求拿到的都是这个验证页（缩短了） */
+  const verifyJina = {
+    title: "Weixin Official Accounts Platform",
+    description: "",
+    url: wx.url,
+    content: "## 环境异常\n\n当前环境异常，完成验证后即可继续访问。\n\n[去验证](https://mp.weixin.qq.com/mp/wappoc_appmsgcaptcha?poc_token=x)\n\n: ，.Video Mini Program Like，轻点两下取消赞 Wow，轻点两下取消在看",
+    warning: "This page maybe requiring CAPTCHA, please make sure you are authorized to access this page.",
+    metadata: {},
+  };
+  const verifyHtml = `<html><head><title></title></head><body class="zh_CN"><div class="weui-msg"><div class="weui-msg__text-area"><h2 class="weui-msg__title">环境异常</h2><p class="weui-msg__desc">当前环境异常，完成验证后即可继续访问。</p></div><a href="#">去验证</a></div>${"<p>轻点两下取消赞</p>".repeat(30)}</body></html>`;
+
+  it("Jina 说要过验证码的不算读到了", () => {
+    expect(mapJinaData(verifyJina, wx.url)).toBeNull();
+  });
+
+  it("读到的是验证页：认出来，公众号告诉用户在 Safari 里读，别的站说要过人机验证", async () => {
+    expect(looksLikeVerifyWall(parseHtmlPage(verifyHtml, wx.url))).toBe(true);
+    expect(looksLikeVerifyWall({ title: "讲安全验证的长文", text: "完成验证".repeat(1000) })).toBe(false);
+    expect(looksLikeVerifyWall(page())).toBe(false);
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => (String(url).startsWith("https://r.jina.ai/") ? jina(verifyJina) : new Response(verifyHtml, { headers: { "content-type": "text/html" } }))));
+    await expect(fetchWebPage(wx)).rejects.toThrow(WEIXIN_BLOCKED);
+    await expect(fetchWebPage({ ...ref, url: "https://example.com/post" })).rejects.toThrow("这个网页要先过人机验证，服务器读不了。把内容复制下来贴进来直接分析");
+    // 什么都没读到也一样：公众号给它专门的说法
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 500 })));
+    await expect(fetchWebPage(wx)).rejects.toThrow(WEIXIN_BLOCKED);
+  });
+
+  it("在 Safari 里读到的网页 → 文章：配图照样挑过，备注说明是在手机上读的", () => {
+    const post = mapCapture(
+      {
+        url: wx.url,
+        title: "Pinky 开源仅 4 天就斩获 1.6K Star",
+        text: body,
+        description: "摘要",
+        cover: "https://mmbiz.qpic.cn/sz_mmbiz_jpg/abc/0?wx_fmt=jpeg",
+        images: ["https://mmbiz.qpic.cn/sz_mmbiz_png/def/640?wx_fmt=png", "https://res.wx.qq.com/a/icon.png", "https://mmbiz.qpic.cn/x/anim.gif"],
+        author: "",
+        site: "开源星探",
+        publishedAt: "2026-11-10T10:19:00.000Z",
+      },
+      wx
+    );
+    expect(post).toMatchObject({ kind: "article", title: "Pinky 开源仅 4 天就斩获 1.6K Star", text: body, author: { name: "开源星探" }, publishedAt: "2026-11-10T10:19:00.000Z" });
+    expect(post.images.map((i) => i.url)).toEqual(["https://mmbiz.qpic.cn/sz_mmbiz_jpg/abc/0?wx_fmt=jpeg", "https://mmbiz.qpic.cn/sz_mmbiz_png/def/640?wx_fmt=png"]);
+    expect(post.notes).toContain("服务器读不到这个网页，内容是在手机的 Safari 里读的：正文和配图是当时页面上显示的");
+    // 正文没取到时用简介
+    expect(mapCapture({ url: wx.url, title: "t", text: "", description: "只有简介", cover: null, images: [], author: "", site: "", publishedAt: null }, wx).text).toBe("只有简介");
   });
 });
 

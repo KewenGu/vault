@@ -193,6 +193,7 @@ export type NewItem = { source: ItemSource; dedupeKey: string; status: ItemStatu
   title: string;
   userText: string;
   media: ItemMedia[];
+  post: PostSnapshot;
 }>;
 
 const cleanNote = (note: string | undefined) => Array.from((note ?? "").trim()).slice(0, NOTE_MAX).join("") || null;
@@ -221,6 +222,7 @@ export async function createItem(db: Db, userId: string, input: NewItem): Promis
       title: input.title ?? null,
       user_text: input.userText ?? null,
       media: (input.media ?? []) as unknown as Json,
+      ...(input.post ? { post: input.post as unknown as Json } : {}),
       note: cleanNote(input.note),
       started_at: new Date().toISOString(),
     })
@@ -241,7 +243,7 @@ export const linkDedupeKey = (ref: Pick<LinkRef, "platform" | "externalId">) => 
  * 重新来一轮，清掉上次的报错。`from` 决定后台任务从哪一步开始：
  * fetch = 重新读链接 / 重新处理上传的文件（会换掉转存的文件）；analyze = 不重读，只重新抽帧转写 + 理解。
  */
-export async function restartItem(db: Db, userId: string, id: string, from: "fetch" | "analyze", patch: { url?: string; userText?: string | null } = {}): Promise<void> {
+export async function restartItem(db: Db, userId: string, id: string, from: "fetch" | "analyze", patch: { url?: string; userText?: string | null; post?: PostSnapshot } = {}): Promise<void> {
   const { data, error } = await db
     .from("items")
     .update({
@@ -250,6 +252,7 @@ export async function restartItem(db: Db, userId: string, id: string, from: "fet
       started_at: new Date().toISOString(),
       ...(patch.url ? { url: patch.url } : {}),
       ...(patch.userText !== undefined ? { user_text: patch.userText } : {}),
+      ...(patch.post ? { post: patch.post as unknown as Json } : {}),
     })
     .eq("id", id)
     .eq("user_id", userId)

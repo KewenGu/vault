@@ -1,14 +1,17 @@
 import { NextResponse } from "next/server";
 import { searchItems } from "@/lib/vault/search";
-import { saveInput } from "@/lib/vault/service";
+import { saveInput, savePage } from "@/lib/vault/service";
 import { jsonBody, str, withSession } from "../respond";
 import { hitSummary } from "./serialize";
 
-/** 存一条：`{ input: "链接、分享文案或一段文字", note?: "为什么存" }` → `{ id, existing }`。处理在后台跑，用 GET 这条看进度。 */
+/**
+ * 存一条：`{ input: "链接、分享文案或一段文字", note?: "为什么存" }` → `{ id, existing }`。处理在后台跑，用 GET 这条看进度。
+ * 服务器读不到、客户端自己读到的网页：`{ page: { url, title, text, description?, cover?, images?, author?, site?, publishedAt? }, note? }`（见 lib/vault/page-capture.ts）。
+ */
 export async function POST(request: Request) {
   return withSession(request, async (session) => {
     const body = await jsonBody(request);
-    const saved = await saveInput(session, str(body.input), str(body.note));
+    const saved = body.page !== undefined ? await savePage(session, body.page, str(body.note)) : await saveInput(session, str(body.input), str(body.note));
     return NextResponse.json(saved, { status: saved.existing ? 200 : 201 });
   });
 }
