@@ -41,16 +41,25 @@ export default async function MobilePage() {
         ——这样不从分享菜单进来时，存的就是剪贴板里的内容。
       </li>
       <li>
-        加一个动作 <Ui en="URL Encode" zh="URL 编码" />
+        加一个动作 <Ui en="Get Text from Input" />
         ，它的输入选 <Ui en="Shortcut Input" zh="快捷指令输入" />。
       </li>
       <li>
-        再加一个动作 <Ui en="Open URLs" zh="打开 URL" />
-        。在它的地址格里先粘贴下面这个地址，后面紧接着放上一步的结果 <Ui en="URL Encoded Text" />
-        （格子里已经自动填了它的话，把地址粘在它前面）。
+        加一个动作 <Ui en="Base64 Encode" zh="Base64 编码" />
+        ，输入是上一步的 Text。点动作右边的箭头展开，把 <Ui en="Line Breaks" /> 改成 <Ui en="None" />
+        （默认每 76 个字符换一行，换了行地址就断了）。
+      </li>
+      <li>
+        加一个动作 <Ui en="Text" zh="文本" />
+        。先粘贴下面这个地址，在同一行后面紧接着插入上一步的结果 <Ui en="Base64 Encoded" />
+        ，中间不要有空格或换行。
         <div className="mt-2">
           <CopyField value={address} label="快捷指令里填的地址" />
         </div>
+      </li>
+      <li>
+        最后加一个动作 <Ui en="Open URLs" zh="打开 URL" />
+        ，里面只放上一步的 Text。不要把地址直接写在这一步里：它会把地址和内容当成两个网址分别打开。
       </li>
       <li>点完成。</li>
     </ol>
@@ -85,7 +94,7 @@ export default async function MobilePage() {
           </details>
         ) : (
           <>
-            <p className="text-sm leading-relaxed text-ink-muted">一共两个动作，做一次就行，大约一分钟。</p>
+            <p className="text-sm leading-relaxed text-ink-muted">一共四个动作，做一次就行，两三分钟。</p>
             {steps}
           </>
         )}
