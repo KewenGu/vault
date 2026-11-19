@@ -115,7 +115,7 @@ export type ItemMedia = {
   height: number | null;
   bytes: number;
   durationS?: number | null;
-  /** video：存的不是原片，是压到存档上限以内的副本（原片太大；读内容用的是原片） */
+  /** video：存的不是原片，是压到存档上限以内的副本（原片太大；读内容用的是原片）。2026-11-19 起不再压副本，只有那之前存的内容有 */
   compressed?: boolean;
   /** frame：这一帧的时间；sheet：这张帧格从哪一秒开始 */
   at?: number;

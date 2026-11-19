@@ -8,8 +8,6 @@ import { localWhisper, transcribeLocally, whisperSetupHint } from "@/lib/asr/whi
 import { embedTexts } from "@/lib/embeddings";
 import { defaultGraphDeps, linkItemEntities } from "@/lib/graph/merge";
 import { extractSpeechAudio } from "@/lib/media/audio";
-import { compressVideo } from "@/lib/media/compress";
-import { pictureLabel } from "@/lib/media/compress-plan";
 import { withTempDir } from "@/lib/media/ffmpeg";
 import { IMAGE_MAX_BYTES, MAX_IMAGES, VIDEO_MAX_BYTES, TooLargeError, downloadRemote, downloadRemoteToFile, normalizeImage, visionImage } from "@/lib/media/files";
 import { canDigestVideo, contactSheets, digestVideo, digestVideoFile, sheetLayout } from "@/lib/media/frames";
@@ -50,7 +48,7 @@ const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const SPEECH_MAX_SECONDS = 3600;
 /**
  * 为了读懂内容，视频最多下载这么大（默认 600 MB，`VAULT_VIDEO_READ_MAX_MB` 可以改）。
- * 和「存档」的上限（VIDEO_MAX_BYTES）是两回事：超过存档上限的视频不存原片，
+ * 和「存档」的上限（VIDEO_MAX_BYTES）是两回事：超过存档上限的视频不存原片（也不存别的副本），
  * 但照样下载到本机抽画面、转写——2026-11-18 第一条真实的抖音视频（38 分钟、127 MB）就因为把两个上限混在一起，
  * 整条没下载，只看了封面和文案。
  * 视频直接写到磁盘上的临时目录，不进内存（2026-11-19 改的：以前整个读进内存，2 GB 的机器只敢设 250 MB，
@@ -180,27 +178,11 @@ async function storeMedia(db: Db, dir: string, post: FetchedPost, tmp: string): 
           console.error(`视频存档失败 ${dir}: ${messageOf(e)}`);
         }
       } else {
-        // 原片存不下：内容还是从原片读（画面清楚、字看得清），另外压一份放得下的副本，供页面播放、点时间跳转
+        // 原片存不下：内容照样从磁盘上的原片读，读完就删，什么都不往存储桶里放。
+        // 2026-11-19 之前这里会另外压一份放得下的副本供播放；去掉了——1 核的机器压一条长视频要十几二十分钟，
+        // 长于一小时的压到 50 MB 以内也没法看。想留原片：Supabase 换付费套餐后调高 VAULT_STORE_MAX_MB，再重新读取这条链接。
         unstored = { file, bytes };
-        const size = `${megabytes(bytes)} MB，超过 ${megabytes(VIDEO_MAX_BYTES)} MB 的上限`;
-        let why = "这台机器没有可用的 ffmpeg，压不了副本";
-        if (canDigestVideo()) {
-          try {
-            const copy = await compressVideo(file, VIDEO_MAX_BYTES);
-            if ("skipped" in copy) why = copy.skipped;
-            else {
-              const path = `${dir}/video.mp4`;
-              await upload(db, path, copy.data, "video/mp4");
-              media.push({ role: "video", path, mime: "video/mp4", width: copy.width, height: copy.height, bytes: copy.data.byteLength, durationS: copy.durationS, compressed: true });
-              notes.push(`原片有 ${size}：这里存的是压缩过的副本（${pictureLabel(copy.plan)}，${megabytes(copy.data.byteLength)} MB），内容是从原片读的；要看原画质去原链接`);
-              why = "";
-            }
-          } catch (e) {
-            why = `副本没压成：${messageOf(e).slice(0, 100)}`;
-            console.error(`视频压缩失败 ${dir}: ${messageOf(e)}`);
-          }
-        }
-        if (why) notes.push(`原片没有存档（${size}；${why}）：${cannotPlay}`);
+        notes.push(`原片没有存档（${megabytes(bytes)} MB，超过 ${megabytes(VIDEO_MAX_BYTES)} MB 的存档上限）：${cannotPlay}`);
       }
     } catch (e) {
       const seen = post.captions ? "只看了封面、字幕和文字" : "只看了封面和文字";
@@ -503,7 +485,7 @@ async function digestItemStep(itemId: string): Promise<{ counts: Counts }> {
   const video = videoOf(item);
   const audio = audioOf(item);
   if (!video && !audio) return { counts };
-  // 存的是压缩副本、而画面和口播已经从原片读过：留着那一份（比从副本重读的清楚），不重做
+  // 2026-11-19 之前存进来的大视频，存的是压缩副本，而画面和口播已经从原片读过：留着那一份（比从副本重读的清楚），不重做
   if (video?.compressed && framesOf(item).length > 0 && item.transcript) return { counts };
   let media = item.media;
   let transcript = item.post.transcriptFrom === "captions" ? item.transcript : null;
