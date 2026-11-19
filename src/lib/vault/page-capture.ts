@@ -115,69 +115,85 @@ export function decodeCaptureHash(hash: string): HashCapture {
 }
 
 /**
+ * 要在 Safari 里读的网站：服务器自己读不了的（微信公众号对服务器和机房 IP 要求先过验证）。
+ * 别的网站在 Safari 里分享时只交链接，和普通的分享一样：小红书、抖音这些有专门的读法，读到的比页面上显示的全；
+ * 普通网页服务器能读，也不用把整页塞进地址里（太长会被截断）。以后发现别的站服务器读不了，加在这里。
+ */
+export const BROWSER_READ_HOSTS = ["mp.weixin.qq.com"];
+
+/**
  * 快捷指令「在网页上运行 JavaScript」（Run JavaScript on Webpage）里放的脚本：在 Safari 当前的网页里跑，
  * 最后 completion(要打开的地址)。地址按当前站点填好（origin），用户整段复制过去。
  *
+ * - 不在 BROWSER_READ_HOSTS 里的网站：只交链接，打开 `/share?b64=<网页地址>`（和普通的分享同一条路，见 shortcut.ts）。
  * - 微信公众号按它的页面结构取：正文 #js_content、标题 #activity-name、公众号名 #js_name、作者 meta author，
  *   发布时间在页面脚本里（var ct = "秒数" 或 createTime = '2026-11-10 18:19'，北京时间）；配图的地址在 data-src 里。
- * - 别的网页：正文取 <article> / <main> / <body> 显示出来的文字，标题、简介、题图、作者、时间取 meta。
+ *   打开 `/share#page=<内容>`。
  * - 出错时打开 `/share#error=原因`，确认页上把原因显示出来。
  *
  * 只用老一点的语法（var、function），不同 iOS 版本的快捷指令都能跑。
  */
 export function captureScript(origin: string): string {
-  const base = `${origin.replace(/\/+$/, "")}/share#`;
+  const share = `${origin.replace(/\/+$/, "")}/share`;
   // 每句都以分号结尾、注释用 /* */：复制时换行丢了也还能跑
-  return `/* 存入 Vault：读当前网页（从 Vault 的「手机」页复制，地址已经填好） */
-var VAULT = ${JSON.stringify(base)};
-try {
-  var d = document;
-  var meta = function (n) {
-    var e = d.querySelector('meta[property="' + n + '"]') || d.querySelector('meta[name="' + n + '"]');
-    return e ? (e.getAttribute("content") || "").trim() : "";
-  };
-  var shown = function (e) {
-    if (!e) return "";
-    var t = (e.innerText || "").trim();
-    return t || (e.textContent || "").replace(/[ \\t]+/g, " ").trim();
-  };
-  var wx = location.hostname === "mp.weixin.qq.com";
-  var root = (wx && d.querySelector("#js_content")) || d.querySelector("article") || d.querySelector("main") || d.body;
-  var text = shown(root).replace(/\\n{3,}/g, "\\n\\n").slice(0, ${CAPTURE_TEXT_MAX});
-  var images = [];
-  var imgs = root ? root.querySelectorAll("img") : [];
-  for (var i = 0; i < imgs.length && images.length < ${CAPTURE_IMAGES_MAX}; i++) {
-    var src = imgs[i].getAttribute("data-src") || imgs[i].currentSrc || imgs[i].src || "";
-    if (/^https?:/i.test(src) && images.indexOf(src) < 0) images.push(src);
-  }
-  var published = meta("article:published_time") || meta("og:article:published_time") || meta("datePublished") || meta("pubdate") || "";
-  if (wx && !published) {
-    var scripts = d.querySelectorAll("script");
-    for (var j = 0; j < scripts.length && !published; j++) {
-      var s = scripts[j].textContent || "";
-      var ct = /\\bvar\\s+ct\\s*=\\s*["'](\\d{9,11})["']/.exec(s);
-      var made = /\\bcreateTime\\s*=\\s*["'](\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2})["']/.exec(s);
-      if (ct) published = new Date(Number(ct[1]) * 1000).toISOString();
-      else if (made) published = made[1].replace(" ", "T") + ":00+08:00";
-    }
-  }
-  var page = {
-    url: location.href,
-    title: (wx && shown(d.querySelector("#activity-name"))) || meta("og:title") || d.title || "",
-    text: text,
-    description: meta("og:description") || meta("description"),
-    cover: meta("og:image") || meta("twitter:image") || null,
-    images: images,
-    author: meta("author") || meta("article:author") || "",
-    site: (wx && shown(d.querySelector("#js_name"))) || meta("og:site_name") || "",
-    publishedAt: published || null
-  };
-  var bytes = new TextEncoder().encode(JSON.stringify(page));
+  return `/* 存入 Vault：在 Safari 里分享网页（从 Vault 的「手机」页复制，地址已经填好） */
+var VAULT = ${JSON.stringify(share)};
+var READ = ${JSON.stringify(BROWSER_READ_HOSTS)};
+var b64 = function (str) {
+  var bytes = new TextEncoder().encode(str);
   var bin = "";
   for (var k = 0; k < bytes.length; k += 8192) bin += String.fromCharCode.apply(null, bytes.subarray(k, k + 8192));
-  completion(VAULT + "${CAPTURE_PREFIX}" + btoa(bin).replace(/\\+/g, "-").replace(/\\//g, "_").replace(/=+$/, ""));
+  return btoa(bin).replace(/\\+/g, "-").replace(/\\//g, "_").replace(/=+$/, "");
+};
+try {
+  if (READ.indexOf(location.hostname) < 0) {
+    completion(VAULT + "?b64=" + b64(location.href));
+  } else {
+    var d = document;
+    var meta = function (n) {
+      var e = d.querySelector('meta[property="' + n + '"]') || d.querySelector('meta[name="' + n + '"]');
+      return e ? (e.getAttribute("content") || "").trim() : "";
+    };
+    var shown = function (e) {
+      if (!e) return "";
+      var t = (e.innerText || "").trim();
+      return t || (e.textContent || "").replace(/[ \\t]+/g, " ").trim();
+    };
+    var wx = location.hostname === "mp.weixin.qq.com";
+    var root = (wx && d.querySelector("#js_content")) || d.querySelector("article") || d.querySelector("main") || d.body;
+    var text = shown(root).replace(/\\n{3,}/g, "\\n\\n").slice(0, ${CAPTURE_TEXT_MAX});
+    var images = [];
+    var imgs = root ? root.querySelectorAll("img") : [];
+    for (var i = 0; i < imgs.length && images.length < ${CAPTURE_IMAGES_MAX}; i++) {
+      var src = imgs[i].getAttribute("data-src") || imgs[i].currentSrc || imgs[i].src || "";
+      if (/^https?:/i.test(src) && images.indexOf(src) < 0) images.push(src);
+    }
+    var published = meta("article:published_time") || meta("og:article:published_time") || meta("datePublished") || meta("pubdate") || "";
+    if (wx && !published) {
+      var scripts = d.querySelectorAll("script");
+      for (var j = 0; j < scripts.length && !published; j++) {
+        var s = scripts[j].textContent || "";
+        var ct = /\\bvar\\s+ct\\s*=\\s*["'](\\d{9,11})["']/.exec(s);
+        var made = /\\bcreateTime\\s*=\\s*["'](\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2})["']/.exec(s);
+        if (ct) published = new Date(Number(ct[1]) * 1000).toISOString();
+        else if (made) published = made[1].replace(" ", "T") + ":00+08:00";
+      }
+    }
+    var page = {
+      url: location.href,
+      title: (wx && shown(d.querySelector("#activity-name"))) || meta("og:title") || d.title || "",
+      text: text,
+      description: meta("og:description") || meta("description"),
+      cover: meta("og:image") || meta("twitter:image") || null,
+      images: images,
+      author: meta("author") || meta("article:author") || "",
+      site: (wx && shown(d.querySelector("#js_name"))) || meta("og:site_name") || "",
+      publishedAt: published || null
+    };
+    completion(VAULT + "#${CAPTURE_PREFIX}" + b64(JSON.stringify(page)));
+  }
 } catch (e) {
-  completion(VAULT + "${CAPTURE_ERROR_PREFIX}" + encodeURIComponent(String((e && e.message) || e)));
+  completion(VAULT + "#${CAPTURE_ERROR_PREFIX}" + encodeURIComponent(String((e && e.message) || e)));
 }
 `;
 }
