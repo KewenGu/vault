@@ -3,6 +3,9 @@
  * 在 Safari 里是能看的。一个快捷指令从 Safari 的分享菜单拿到当前网页，跑 captureScript 取出标题、正文、配图、作者、发布时间，
  * 编码后打开 `/share#page=…`；确认页把它交给 savePage（lib/vault/service.ts）存成一条链接内容，后台不再去抓这个网页。
  *
+ * 要单独一个快捷指令、接收类型只勾 Safari 网页：2026-11-19 在 iPhone 上实测，和普通分享合成一个（接收 Any，再按「获取类型」分支）时，
+ * Safari 交进来的类型是 URL，取消勾选 URLs 也还是 URL，「在网页上运行 JavaScript」报「无法将 URL 转换为 Safari 网页」。
+ *
  * 内容放在 # 片段里，不放在查询参数里：片段不发给服务器，一篇长文几十 KB 也不会撞上请求头的长度上限；
  * 确认页在浏览器里解开，再用表单提交。片段里是 Base64（URL 安全写法），原因同 lib/vault/shortcut.ts。
  *
