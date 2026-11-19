@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { fetchXPost, linkedPostIds, mapFxTweet, mapSyndicationTweet, readFxTweet, readSyndicationTweet, syndicationToken, withMentions } from "./x";
+import { mapFxTweet, mapSyndicationTweet, mentionsIn, readFxTweet, readSyndicationTweet, readXPost, syndicationToken } from "./x";
 import { SourceFetchError } from "./types";
 
 /** 按 api.fxtwitter.com 真实返回的形状缩出来的（2026-10）。 */
@@ -86,6 +86,7 @@ describe("收藏夹：读 X 帖子", () => {
     const block = (type: string, text: string, entityRanges: unknown[] = []) => ({ type, text, entityRanges, inlineStyleRanges: [], data: {} });
     const atomic = (key: number) => block("atomic", " ", [{ key, offset: 0, length: 1 }]);
     const entity = (key: number, type: string, data: Record<string, unknown>) => ({ key: String(key), value: { type, mutability: "Immutable", data } });
+    const ms = Array.from({ length: 13 }, (_, i) => `m${i + 1}`);
     const post = mapFxTweet(
       fx({
         text: "怎么搭一支 AI 开发团队，7 步：https://x.com/i/article/2109705772569423873",
@@ -94,7 +95,7 @@ describe("收藏夹：读 X 帖子", () => {
           id: "2109705772569423873",
           title: "用 Opus 搭开发团队（完整教程）",
           cover_media: img("cover"),
-          media_entities: ["m1", "m2", "m3", "m4", "m5", "m6", "m7"].map(img),
+          media_entities: ms.map(img),
           content: {
             blocks: [
               block("unstyled", "从一个 issue 出发。"),
@@ -116,7 +117,7 @@ describe("收藏夹：读 X 帖子", () => {
               entity(0, "TWEET", { tweetId: "2102435511222890900" }),
               entity(1, "MARKDOWN", { markdown: "```bash\ngh auth login\n```\n" }),
               entity(2, "DIVIDER", {}),
-              entity(3, "MEDIA", { mediaItems: ["m1", "m2", "m3", "m4", "m5", "m6", "m7", "gone"].map((mediaId) => ({ mediaId })) }),
+              entity(3, "MEDIA", { mediaItems: [...ms, "gone"].map((mediaId) => ({ mediaId })) }),
               entity(4, "LINK", { url: "https://cli.github.com" }),
               entity(5, "POLL", {}),
             ],
@@ -137,16 +138,16 @@ describe("收藏夹：读 X 帖子", () => {
         "1. 装 git\n2. 装 gh（链接：https://cli.github.com）\n- 架构师\n- 测试",
         "```bash\ngh auth login\n```",
         "---",
-        "[配图 1]\n[配图 2]\n[配图 3]\n[配图 4]\n[配图 5]\n[配图 6，没存]\n[配图 7，没存]\n[媒体，没读到]",
+        [...Array.from({ length: 11 }, (_, i) => `[配图 ${i + 1}]`), "[配图 12，没存]", "[配图 13，没存]", "[媒体，没读到]"].join("\n"),
         "## 收尾",
       ].join("\n\n")
     );
-    // 题图 + 前 5 张配图（一共 6 张，和网页文章一样）
-    expect(post.images.map((i) => i.url)).toEqual(["cover", "m1", "m2", "m3", "m4", "m5"].map((id) => `https://pbs.twimg.com/media/${id}.jpg`));
+    // 题图 + 前 11 张配图（一共 12 张，转存的上限）
+    expect(post.images.map((i) => i.url)).toEqual(["cover", ...ms.slice(0, 11)].map((id) => `https://pbs.twimg.com/media/${id}.jpg`));
     expect(post.images[0]).toEqual({ url: "https://pbs.twimg.com/media/cover.jpg", width: 1280, height: 720 });
     expect(post.notes).toEqual([
       "读不到回复的内容，只有回复数",
-      "长文里有 7 张配图，只存了前 5 张（正文里标了「没存」的没看到）",
+      "长文里有 13 张配图，只存了前 11 张（正文里标了「没存」的没看到）",
       "长文里有 1 个图片 / 视频没读到",
       "长文里有读不出的内容块（POLL），跳过了",
     ]);
@@ -163,114 +164,56 @@ describe("收藏夹：读 X 帖子", () => {
     expect(mapFxTweet(fx({ article: { title: "只有标题" } })).notes).toContain("长文只读到了标题，没读到正文");
   });
 
-  it("提到的帖子：引用的（FxTwitter 带着完整的，直接用）、正文里贴的帖子链接（去重、不算自己）、长文里嵌的；别人的长文链接读不到记一句", () => {
+  it("提到的东西：引用的（FxTwitter 带着完整的，直接用）、正文和长文里的所有链接（去重、不算自己和自己的长文）、长文里嵌的帖子", () => {
     const read = readFxTweet(
       fx({
-        text: "看这两条 https://x.com/a/status/111111 和 https://twitter.com/b/status/222222?s=20，还有 https://x.com/a/status/111111/photo/1。自己 https://x.com/me/status/2106418403661779046 别人的长文 https://x.com/i/article/999999",
+        text: "看 https://x.com/a/status/111111 和 https://twitter.com/b/status/222222?s=20，还有 https://x.com/a/status/111111/photo/1。视频 https://youtu.be/dQw4w9WgXcQ 博客 https://example.com/post。短链 http://xhslink.com/o/abc 自己 https://x.com/me/status/2106418403661779046 别人的长文 https://x.com/i/article/999999",
         quote: fx({ id: "333333", text: "被引用的原话 https://x.com/c/status/444444", author: { name: "被引", screen_name: "quoted" }, media: { photos: [{ url: "https://pbs.twimg.com/q.jpg" }] } }),
-        article: { id: "888888", title: "T", content: { blocks: [{ type: "atomic", text: " ", entityRanges: [{ key: 0 }] }], entityMap: [{ key: "0", value: { type: "TWEET", data: { tweetId: "555555" } } }] } },
+        article: {
+          id: "888888",
+          title: "T",
+          content: {
+            blocks: [
+              { type: "atomic", text: " ", entityRanges: [{ key: 0 }] },
+              { type: "unstyled", text: "见文档", entityRanges: [{ key: 1 }] },
+            ],
+            entityMap: [
+              { key: "0", value: { type: "TWEET", data: { tweetId: "555555" } } },
+              { key: "1", value: { type: "LINK", data: { url: "https://docs.example.com/guide" } } },
+            ],
+          },
+        },
       })
     );
-    expect(read.mentions.map(({ id, how }) => [id, how])).toEqual([
-      ["333333", "quote"],
-      ["111111", "link"],
-      ["222222", "link"],
-      ["555555", "embed"],
+    expect(read.mentions.map(({ how, url, ref, unavailable }) => [how, ref ? `${ref.platform}:${ref.externalId}` : url, unavailable ?? ""])).toEqual([
+      ["quote", "x:333333", ""],
+      ["link", "x:111111", ""],
+      ["link", "x:222222", ""],
+      ["link", "youtube:dQw4w9WgXcQ", ""],
+      ["link", expect.stringMatching(/^web:/), ""],
+      ["link", "http://xhslink.com/o/abc", ""],
+      ["link", "https://x.com/i/article/999999", "这是 X 长文本身的链接，查不到是哪条帖子发的"],
+      ["link", expect.stringMatching(/^web:/), ""],
+      ["embed", "x:555555", ""],
     ]);
-    // 引用的帖子已经读到（它自己又提到的帖子也记着）；别的要另外读
+    // 引用的帖子已经读到（它自己提到的也列着，接着往下读）；别的要另外读
     expect(read.mentions[0].read?.post).toMatchObject({ externalId: "333333", text: "被引用的原话 https://x.com/c/status/444444", author: { name: "被引 @quoted" } });
-    expect(read.mentions[0].read?.mentions.map((m) => m.id)).toEqual(["444444"]);
+    expect(read.mentions[0].read?.mentions.map((m) => m.ref?.externalId)).toEqual(["444444"]);
     expect(read.mentions.slice(1).every((m) => !m.read)).toBe(true);
-    expect(read.post.notes).toContain("正文里链接了 1 篇 X 长文（x.com/i/article/…），这种链接读不到内容");
     expect(read.post.text).not.toContain("被引用的原话");
 
     // 引用的是长文、FxTwitter 只带了开头：另外读一次
-    const partial = readFxTweet(fx({ quote: fx({ id: "333333", article: { title: "引用的长文", preview_text: "开头" } }) }));
-    expect(partial.mentions).toEqual([{ id: "333333", how: "quote", read: undefined }]);
+    expect(readFxTweet(fx({ quote: fx({ id: "333333", article: { title: "引用的长文", preview_text: "开头" } }) })).mentions[0]).toMatchObject({ how: "quote", read: undefined });
     // 引用的帖子看不到（FxTwitter 给墓碑）：不再去读，原因记下来
-    expect(readFxTweet(fx({ quote: { type: "tombstone", reason: "deleted", id: "333333" } })).mentions).toEqual([{ id: "333333", how: "quote", unavailable: "被删了" }]);
-    expect(withMentions(mapFxTweet(fx()), [{ id: "333333", how: "quote", unavailable: "被删了" }]).notes).toContain("引用的帖子没读到（https://x.com/i/status/333333）：被删了");
+    expect(readFxTweet(fx({ text: "看", quote: { type: "tombstone", reason: "deleted", id: "333333" } })).mentions).toEqual([
+      { how: "quote", url: "https://x.com/i/status/333333", ref: { platform: "x", externalId: "333333", url: "https://x.com/i/status/333333" }, unavailable: "被删了" },
+    ]);
     expect(readFxTweet(fx({ quote: { type: "tombstone", reason: "private" } })).post.notes).toContain("引用的帖子没读到：是私密账号，或者要登录才能看");
     // 自己长文的链接不算
-    const notes: string[] = [];
-    expect(linkedPostIds("7 步：https://x.com/i/article/888888", "1", "888888", notes)).toEqual([]);
-    expect(notes).toEqual([]);
+    expect(mentionsIn(["https://x.com/i/article/888888"], "1", "888888")).toEqual([]);
   });
 
-  it("把提到的帖子并进来：正文接在后面（嵌的放回原位），图存到 6 张，自己没视频用它们的；读不到、没往下读、超出条数的记一句", () => {
-    const sub = (id: string, over: Record<string, unknown> = {}) => ({ post: mapFxTweet(fx({ id, text: `帖子 ${id}`, author: { name: `作者${id}`, screen_name: `u${id}` }, ...over })), mentions: [] });
-    const photos = (n: number, p: string) => ({ photos: Array.from({ length: n }, (_, i) => ({ url: `https://pbs.twimg.com/${p}${i}.jpg` })) });
-    const main = mapFxTweet(fx({ text: "主帖", article: { title: "长文", content: { blocks: [{ type: "atomic", text: " ", entityRanges: [{ key: 0 }] }, { type: "unstyled", text: "结尾" }], entityMap: [{ key: "0", value: { type: "TWEET", data: { tweetId: "5" } } }] } } }));
-    expect(main.text).toBe("主帖\n\n【X 长文】长文\n\n【嵌入的帖子】https://x.com/i/status/5\n\n结尾");
-    const quote = sub("1", { media: photos(4, "q") });
-    quote.post.notes.push("这是回 @x 的一条回复，上文没读到");
-    const merged = withMentions(
-      main,
-      [
-        { id: "1", how: "quote", read: { ...quote, mentions: [{ id: "9", how: "link" }, { id: "9", how: "embed" }] } },
-        { id: "2", how: "link", read: sub("2", { media: { videos: [video] } }) },
-        { id: "3", how: "link", read: sub("3", { media: { videos: [video], ...photos(3, "v") } }) },
-        { id: "4", how: "link", error: new SourceFetchError("x") },
-        { id: "6", how: "link", error: new TypeError("fetch failed") },
-        { id: "5", how: "embed", read: sub("5") },
-      ],
-      2
-    );
-    expect(merged.text).toBe(
-      "主帖\n\n【X 长文】长文\n\n【长文里嵌的帖子：作者5 @u5】\n帖子 5\n\n结尾" +
-        "\n\n【引用的帖子：作者1 @u1】\n帖子 1\n\n【正文里链接的帖子：作者2 @u2】\n帖子 2\n\n【正文里链接的帖子：作者3 @u3】\n帖子 3"
-    );
-    expect(merged.kind).toBe("article");
-    // 4 张引用的图 + 2 的视频封面 = 5，3 的只放得下 1 张
-    expect(merged.images.map((i) => i.url)).toEqual(["q0", "q1", "q2", "q3"].map((n) => `https://pbs.twimg.com/${n}.jpg`).concat(["https://pbs.twimg.com/thumb.jpg", "https://pbs.twimg.com/v0.jpg"]));
-    expect(merged.video?.url).toBe("https://video.twimg.com/v/720.mp4");
-    expect(merged.notes).toEqual([
-      "读不到回复的内容，只有回复数",
-      "引用的帖子（作者1 @u1）：这是回 @x 的一条回复，上文没读到",
-      "引用的帖子（作者1 @u1）又提到了 1 条帖子，没再往下读",
-      "视频是正文里链接的帖子（作者2 @u2）里的",
-      "正文里链接的帖子（作者3 @u3）有 2 张图没存",
-      "正文里链接的帖子（作者3 @u3）里也有视频，没存",
-      "正文里链接的帖子没读到（https://x.com/i/status/4）：可能被删了，或者是私密账号",
-      "正文里链接的帖子没读到（https://x.com/i/status/6）：网络出错",
-      "还提到了 2 条别的帖子没读（一条最多跟着读 5 条）",
-    ]);
-    // 互动数、作者、标签还是自己的
-    expect(merged).toMatchObject({ externalId: "2106418403661779046", author: { name: "某某 @someone" }, stats: main.stats, title: "长文" });
-
-    // 纯文字帖引用了视频帖：变成视频帖；只贴了一条链接、自己没字：标题用被引的
-    const plain = mapFxTweet(fx({ text: "https://x.com/a/status/2" }));
-    expect(plain.title).toBe("");
-    const asVideo = withMentions(plain, [{ id: "2", how: "link", read: sub("2", { media: { videos: [video] } }) }]);
-    expect(asVideo).toMatchObject({ kind: "video", title: "帖子 2" });
-    expect(withMentions(mapFxTweet(fx({ text: "看图" })), [{ id: "1", how: "quote", read: sub("1", { media: photos(1, "q") }) }]).kind).toBe("image");
-  });
-
-  it("读一条帖子时跟着读它提到的帖子：引用的不再请求，链接的走同样两条路，读不到的不影响这条", async () => {
-    const tweets: Record<string, unknown> = {
-      "111111": fx({ id: "111111", text: "链接里的帖子", author: { screen_name: "linked" } }),
-    };
-    const fetchMock = vi.fn(async (url: string) => {
-      const id = /status\/(\d+)/.exec(url)?.[1] ?? /id=(\d+)/.exec(url)?.[1] ?? "";
-      if (id === ref.externalId) return json({ code: 200, tweet: fx({ text: "主帖 https://x.com/a/status/111111 https://x.com/a/status/404404", quote: fx({ id: "333333", text: "引用的", author: { screen_name: "q" } }) }) });
-      if (tweets[id]) return json({ code: 200, tweet: tweets[id] });
-      return url.includes("fxtwitter") ? json({ code: 404, message: "NOT_FOUND", tweet: null }, 404) : json({}, 404);
-    });
-    vi.stubGlobal("fetch", fetchMock);
-    const post = await fetchXPost(ref);
-    expect(post.text).toBe("主帖 https://x.com/a/status/111111 https://x.com/a/status/404404\n\n【引用的帖子：@q】\n引用的\n\n【正文里链接的帖子：@linked】\n链接里的帖子");
-    expect(post.notes).toContain("正文里链接的帖子没读到（https://x.com/i/status/404404）：可能被删了，或者是私密账号");
-    expect(fetchMock.mock.calls.map((c) => c[0]).sort()).toEqual(["https://api.fxtwitter.com/i/status/111111", "https://api.fxtwitter.com/i/status/2106418403661779046", "https://api.fxtwitter.com/i/status/404404"]);
-
-    // 超过 5 条的不读
-    const many = Array.from({ length: 7 }, (_, i) => `https://x.com/a/status/${700000 + i}`).join(" ");
-    vi.stubGlobal("fetch", vi.fn(async (url: string) => (url.endsWith(ref.externalId) ? json({ code: 200, tweet: fx({ text: many }) }) : json({ code: 200, tweet: fx({ id: /\d+$/.exec(url)![0] }) }))));
-    const capped = await fetchXPost(ref);
-    expect(vi.mocked(fetch).mock.calls).toHaveLength(6);
-    expect(capped.notes).toContain("还提到了 2 条别的帖子没读（一条最多跟着读 5 条）");
-  });
-
-  it("备用接口：引用的帖子它也带着（只有正文和图），正文里的帖子链接照样跟着读", () => {
+  it("备用接口：引用的帖子它也带着（只有正文和图），正文里的链接照样列出来", () => {
     const read = readSyndicationTweet({
       __typename: "Tweet",
       id_str: "100000",
@@ -279,13 +222,11 @@ describe("收藏夹：读 X 帖子", () => {
       user: { screen_name: "me" },
       quoted_tweet: { id_str: "300000", text: "被引用的", user: { name: "Q", screen_name: "q" }, mediaDetails: [{ type: "photo", media_url_https: "https://pbs.twimg.com/q.jpg" }] },
     });
-    expect(read.mentions.map((m) => [m.id, m.how])).toEqual([
+    expect(read.mentions.map((m) => [m.ref?.externalId, m.how])).toEqual([
       ["300000", "quote"],
       ["200000", "link"],
     ]);
     expect(read.mentions[0].read?.post).toMatchObject({ text: "被引用的", kind: "image", author: { name: "Q @q" } });
-    // 备用接口那句不重复记
-    expect(withMentions(read.post, [{ id: "300000", how: "quote", read: read.mentions[0].read }]).notes).toEqual(["这次走的是备用接口：没有转发数、书签数、浏览量", "读不到回复的内容，只有回复数"]);
   });
 
   it("备用接口读到长文：只有标题、开头一段和题图，记一句后面没读到", () => {
@@ -342,14 +283,14 @@ describe("收藏夹：读 X 帖子", () => {
   it("先问 FxTwitter；它不行（限流、返回网页）就换官方嵌入接口", async () => {
     const ok = vi.fn(async (url: string) => (url.includes("fxtwitter") ? json({ code: 200, tweet: fx() }) : json({})));
     vi.stubGlobal("fetch", ok);
-    expect((await fetchXPost(ref)).stats.views).toBe(51000);
+    expect((await readXPost(ref)).post.stats.views).toBe(51000);
     expect(ok.mock.calls.map((c) => c[0])).toEqual(["https://api.fxtwitter.com/i/status/2106418403661779046"]);
 
     const html = vi.fn(async (url: string) =>
       url.includes("fxtwitter") ? new Response("<html>rate limited</html>", { status: 429 }) : json({ __typename: "Tweet", id_str: ref.externalId, text: "备用读到的", favorite_count: 3, user: { screen_name: "a" } })
     );
     vi.stubGlobal("fetch", html);
-    const post = await fetchXPost(ref);
+    const { post } = await readXPost(ref);
     expect(post.text).toBe("备用读到的");
     expect(html.mock.calls[1][0]).toBe(`https://cdn.syndication.twimg.com/tweet-result?id=${ref.externalId}&token=${syndicationToken(ref.externalId)}&lang=en`);
   });
@@ -357,13 +298,13 @@ describe("收藏夹：读 X 帖子", () => {
   it("帖子不在了 / 私密账号：直接报读不到，不再换接口；两边都没有也是读不到", async () => {
     const gone = vi.fn(async () => json({ code: 404, message: "NOT_FOUND", tweet: null }, 404));
     vi.stubGlobal("fetch", gone);
-    await expect(fetchXPost(ref)).rejects.toThrow(SourceFetchError);
+    await expect(readXPost(ref)).rejects.toThrow(SourceFetchError);
     expect(gone).toHaveBeenCalledTimes(1);
     vi.stubGlobal("fetch", vi.fn(async () => json({ code: 401, message: "PRIVATE_TWEET" }, 401)));
-    await expect(fetchXPost(ref)).rejects.toThrow("这条 X 帖子是私密账号发的，读不了。可以把帖子文字贴进来直接分析");
+    await expect(readXPost(ref)).rejects.toThrow("这条 X 帖子是私密账号发的，读不了。可以把帖子文字贴进来直接分析");
     vi.spyOn(console, "error").mockImplementation(() => {});
     vi.stubGlobal("fetch", vi.fn(async (url: string) => (url.includes("fxtwitter") ? Promise.reject(new TypeError("fetch failed")) : json({}))));
-    await expect(fetchXPost(ref)).rejects.toThrow(SourceFetchError);
+    await expect(readXPost(ref)).rejects.toThrow(SourceFetchError);
     vi.restoreAllMocks();
   });
 });

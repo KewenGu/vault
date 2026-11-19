@@ -1,4 +1,6 @@
+import { MAX_IMAGES } from "@/lib/media/files";
 import { labeledPublicFetch as labeledFetch } from "@/lib/network/labeled-public-fetch";
+import { embedPlaceholder, type Followed, type Mention } from "./follow";
 import { parseLink, type LinkRef } from "./link";
 import { SourceFetchError, emptyStats, hashtagsIn, titleFromText, toCount, type FetchedPost, type RemoteFile } from "./types";
 
@@ -13,17 +15,15 @@ import { SourceFetchError, emptyStats, hashtagsIn, titleFromText, toCount, type 
  *
  * 两条路都读不到回复的内容（只有回复数）。帖子不存在 / 私密抛 SourceFetchError；网络错误原样抛（可以重试）。
  *
- * 帖子提到的别的 X 帖子也一起读（只往下读一层，最多 MAX_MENTIONS 条）：引用转发的帖子、正文里贴的帖子链接、长文里嵌的帖子。
- * 它们的正文接在后面（长文里嵌的放回原来的位置），图片排在后面存到上限；帖子自己没视频时用它们的第一个视频。
- * 读不到的记进 notes。互动数、话题标签只算这条帖子自己的。
+ * 这里读一条帖子本身，并列出它提到的东西（引用转发的帖子、正文和长文里的所有链接、长文里嵌的帖子）；
+ * 跟着读它们在 follow.ts。
  */
 
 const UA = "Mozilla/5.0 (compatible; SM-Intelligence/1.0)";
 const GONE = "这条 X 帖子读不到：可能被删了、账号设成了私密，或者链接不对。在 X 里重新点「分享 → 复制链接」再贴一次";
+// 这两句 follow.ts 并进来时不重复（那边有同样的字）
 const REPLIES_NOTE = "读不到回复的内容，只有回复数";
 const FALLBACK_NOTE = "这次走的是备用接口：没有转发数、书签数、浏览量";
-/** 一条帖子最多再读几条它提到的帖子 */
-const MAX_MENTIONS = 5;
 
 type Obj = Record<string, unknown>;
 const obj = (v: unknown): Obj => (v && typeof v === "object" && !Array.isArray(v) ? (v as Obj) : {});
@@ -48,11 +48,10 @@ const mp4Variants = (raw: unknown): Variant[] =>
     .filter((v) => str(v.content_type) === "video/mp4" && str(v.url).startsWith("https://"))
     .map((v) => ({ url: str(v.url), bitrate: posNum(v.bitrate) }));
 
-/** 字数和配图上限（长文、加上提到的帖子以后）：和网页文章一样（web.ts 的 WEB_TEXT_MAX / WEB_MAX_IMAGES）。 */
+/** 长文的字数上限和网页文章一样（web.ts 的 WEB_TEXT_MAX）；配图存到转存的上限（MAX_IMAGES）。 */
 const TEXT_MAX = 30_000;
-const MAX_IMAGES = 6;
 
-/** 正文太长时截到上限，并记一条（what：「长文」「加上提到的帖子」）。 */
+/** 正文太长时截到上限，并记一条。 */
 function capText(text: string, notes: string[], what: string): string {
   const chars = Array.from(text);
   if (chars.length <= TEXT_MAX) return text;
@@ -65,10 +64,10 @@ const BLOCK_PREFIX: Record<string, string> = { "header-one": "# ", "header-two":
 /**
  * FxTwitter 给的 X 长文（tweet.article）→ 标题 + 正文 + 配图。正文是 Draft.js 的块：段落、标题、列表、引用照 Markdown 写；
  * atomic 块看它指向的实体：MARKDOWN（代码块、表格）原样放，MEDIA 是配图（正文里留「[配图 N]」，图按顺序存），
- * DIVIDER 是分割线，TWEET 是嵌进来的别的帖子（先留「【嵌入的帖子】链接」占位，读到了再换成内容，见 withMentions）。
- * 段里的链接放在段尾（X 算位置的字数和 JS 对 emoji 不一样）。没有标题也没有正文返回 null。
+ * DIVIDER 是分割线，TWEET 是嵌进来的别的帖子（先留「【嵌入的帖子】链接」占位，读到了再换成内容，见 follow.ts）。
+ * 段里的链接放在段尾（X 算位置的字数和 JS 对 emoji 不一样），也列在 links 里（要跟着读）。没有标题也没有正文返回 null。
  */
-export function readFxArticle(raw: unknown): { title: string; body: string; images: RemoteFile[]; tweetIds: string[]; notes: string[] } | null {
+export function readFxArticle(raw: unknown): { title: string; body: string; images: RemoteFile[]; tweetIds: string[]; links: string[]; notes: string[] } | null {
   const a = obj(raw);
   const title = str(a.title).trim();
   const content = obj(a.content);
@@ -130,6 +129,7 @@ export function readFxArticle(raw: unknown): { title: string; body: string; imag
   };
 
   const parts: { text: string; list: boolean }[] = [];
+  const allLinks: string[] = [];
   let ordered = 0;
   for (const b of blocks) {
     const type = str(b.type);
@@ -140,6 +140,7 @@ export function readFxArticle(raw: unknown): { title: string; body: string; imag
       continue;
     }
     const links = [...new Set(arr(b.entityRanges).map((r) => entityOf(r)).filter((e) => str(e.type) === "LINK").map((e) => str(obj(e.data).url)).filter(Boolean))];
+    allLinks.push(...links);
     const text = str(b.text).trim();
     if (!text) continue;
     const prefix = type === "ordered-list-item" ? `${ordered}. ` : (BLOCK_PREFIX[type] ?? "");
@@ -152,41 +153,40 @@ export function readFxArticle(raw: unknown): { title: string; body: string; imag
   if (unreadMedia > 0) notes.push(`长文里有 ${unreadMedia} 个图片 / 视频没读到`);
   if (unknown.size > 0) notes.push(`长文里有读不出的内容块（${[...unknown].join("、")}），跳过了`);
   if (blocks.length === 0) notes.push("长文只读到了标题，没读到正文");
-  return { title, body, images, tweetIds: [...new Set(tweetIds)], notes };
+  return { title, body, images, tweetIds: [...new Set(tweetIds)], links: [...new Set(allLinks)], notes };
 }
 
-const embedPlaceholder = (id: string) => `【嵌入的帖子】https://x.com/i/status/${id}`;
+const xRef = (id: string): LinkRef => ({ platform: "x", externalId: id, url: `https://x.com/i/status/${id}` });
+
+/** 文字里的链接（去掉句末标点）。 */
+const urlsIn = (text: string): string[] => [...text.matchAll(/https?:\/\/[\x21-\x7e]+/gi)].map((m) => m[0].replace(/["'<>]+.*$/, "").replace(/[)\]}.,;:!?]+$/, ""));
 
 /**
- * 正文里贴的别的 X 帖子（按出现顺序，去重，不含自己）。贴的是 X 长文的链接（x.com/i/article/…，不是发长文的那条帖子本身）
- * 读不到：长文 id 查不到是哪条帖子发的，记一句。
+ * 链接 → 要跟着读的东西（按出现顺序，同一条只算一次，不含帖子自己和自己的长文）。
+ * 认得出是哪条的直接给 ref；X 长文本身的链接（x.com/i/article/…）查不到是哪条帖子发的，记成读不到；
+ * 别的（短链、认不出的）ref 是 null，跟着读时再跟跳转。
  */
-export function linkedPostIds(text: string, selfId: string, ownArticleId: string, notes: string[]): string[] {
-  const ids: string[] = [];
-  let articles = 0;
-  for (const m of text.matchAll(/https?:\/\/[^\s<>"'）】」]+/gi)) {
-    const url = m[0].replace(/[)\].,;:!?。，；：！？]+$/, "");
-    const ref = parseLink(url);
-    if (ref?.platform === "x") {
-      if (ref.externalId !== selfId && !ids.includes(ref.externalId)) ids.push(ref.externalId);
+export function mentionsIn(urls: string[], selfId: string, ownArticleId: string): Mention[] {
+  const out: Mention[] = [];
+  const seen = new Set<string>([`x:${selfId}`]);
+  for (const url of urls) {
+    const article = /^https?:\/\/(?:www\.|mobile\.)?(?:x|twitter)\.com\/i\/article\/(\d+)/i.exec(url);
+    if (article) {
+      if (article[1] === ownArticleId || seen.has(`article:${article[1]}`)) continue;
+      seen.add(`article:${article[1]}`);
+      out.push({ how: "link", url, ref: null, unavailable: "这是 X 长文本身的链接，查不到是哪条帖子发的" });
       continue;
     }
-    const article = /^https?:\/\/(?:www\.|mobile\.)?(?:x|twitter)\.com\/i\/article\/(\d+)/i.exec(url);
-    if (article && article[1] !== ownArticleId) articles++;
+    const ref = parseLink(url);
+    const key = ref ? `${ref.platform}:${ref.externalId}` : url;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ how: "link", url, ref });
   }
-  if (articles > 0) notes.push(`正文里链接了 ${articles} 篇 X 长文（x.com/i/article/…），这种链接读不到内容`);
-  return ids;
+  return out;
 }
 
-/**
- * 帖子提到的一条别的帖子。how：quote 引用转发，link 正文里贴的链接，embed 长文里嵌的。
- * read：已经读到的（FxTwitter 返回的引用帖子是完整的，不用再请求一次）；unavailable：已经知道看不到（被删、私密…），不用再去读。
- */
-export type XMention = { id: string; how: "quote" | "link" | "embed"; read?: XRead; unavailable?: string };
-/** 读一条帖子：帖子本身（不含提到的帖子）+ 它提到的帖子。 */
-export type XRead = { post: FetchedPost; mentions: XMention[] };
-
-const tryRead = (f: () => XRead): XRead | undefined => {
+const tryRead = (f: () => Followed): Followed | undefined => {
   try {
     return f();
   } catch {
@@ -197,83 +197,37 @@ const tryRead = (f: () => XRead): XRead | undefined => {
 /** FxTwitter 的墓碑（引用的帖子看不到时给的 { type: "tombstone", reason }）为什么看不到。 */
 const TOMBSTONE_REASON: Record<string, string> = { deleted: "被删了", suspended: "账号被封了", private: "是私密账号，或者要登录才能看", blocked: "作者屏蔽了别人" };
 
-/** FxTwitter 返回的 tweet → 帖子 + 它提到的帖子。引用的是长文、又只给了开头时，不用它带的，另外读一次。 */
-export function readFxTweet(raw: unknown, maxVideoBytes?: number): XRead {
+/** FxTwitter 返回的 tweet → 帖子 + 它提到的东西。引用的是长文、又只给了开头时，不用它带的，另外读一次。 */
+export function readFxTweet(raw: unknown, maxVideoBytes?: number): Followed {
   const t = obj(raw);
   const post = mapFxTweet(t, maxVideoBytes);
   const quote = obj(t.quote);
   const quoteId = str(quote.id);
   const quoteArticle = obj(quote.article);
   const partialArticle = Object.keys(quoteArticle).length > 0 && arr(obj(quoteArticle.content).blocks).length === 0;
-  const mentions: XMention[] = [];
+  const mentions: Mention[] = [];
   if (quote.type === "tombstone") {
     const why = TOMBSTONE_REASON[str(quote.reason)] ?? "看不到";
-    if (quoteId) mentions.push({ id: quoteId, how: "quote", unavailable: why });
+    if (quoteId) mentions.push({ how: "quote", ...urlRef(quoteId), unavailable: why });
     else post.notes.push(`引用的帖子没读到：${why}`);
-  } else if (quoteId) mentions.push({ id: quoteId, how: "quote", read: partialArticle ? undefined : tryRead(() => readFxTweet(quote, maxVideoBytes)) });
-  for (const id of linkedPostIds(str(t.text), post.externalId, str(obj(t.article).id), post.notes)) mentions.push({ id, how: "link" });
-  for (const id of readFxArticle(t.article)?.tweetIds ?? []) mentions.push({ id, how: "embed" });
+  } else if (quoteId) mentions.push({ how: "quote", ...urlRef(quoteId), read: partialArticle ? undefined : tryRead(() => readFxTweet(quote, maxVideoBytes)) });
+  const article = readFxArticle(t.article);
+  mentions.push(...mentionsIn([...urlsIn(str(t.text)), ...(article?.links ?? [])], post.externalId, str(obj(t.article).id)));
+  for (const id of article?.tweetIds ?? []) mentions.push({ how: "embed", ...urlRef(id) });
   return { post, mentions };
 }
 
-/** 官方嵌入接口返回的 tweet → 帖子 + 它提到的帖子（引用的帖子它也带着，但只有正文和图）。 */
-export function readSyndicationTweet(raw: unknown, maxVideoBytes?: number): XRead {
+const urlRef = (id: string) => ({ url: `https://x.com/i/status/${id}`, ref: xRef(id) });
+
+/** 官方嵌入接口返回的 tweet → 帖子 + 它提到的东西（引用的帖子它也带着，但只有正文和图）。 */
+export function readSyndicationTweet(raw: unknown, maxVideoBytes?: number): Followed {
   const t = obj(raw);
   const post = mapSyndicationTweet(t, maxVideoBytes);
   const quoted = obj(t.quoted_tweet);
-  const mentions: XMention[] = [];
-  if (str(quoted.id_str)) mentions.push({ id: str(quoted.id_str), how: "quote", read: tryRead(() => readSyndicationTweet(quoted, maxVideoBytes)) });
-  for (const id of linkedPostIds(post.text, post.externalId, str(obj(t.article).rest_id), post.notes)) mentions.push({ id, how: "link" });
+  const mentions: Mention[] = [];
+  if (str(quoted.id_str)) mentions.push({ how: "quote", ...urlRef(str(quoted.id_str)), read: tryRead(() => readSyndicationTweet(quoted, maxVideoBytes)) });
+  mentions.push(...mentionsIn(urlsIn(post.text), post.externalId, str(obj(t.article).rest_id)));
   return { post, mentions };
-}
-
-const MENTION_LABEL: Record<XMention["how"], string> = { quote: "引用的帖子", link: "正文里链接的帖子", embed: "长文里嵌的帖子" };
-
-/** 提到的帖子读的结果：read 是读到的；没读到时 unavailable 是已知的原因，error 是读的时候出的错。 */
-export type ResolvedMention = { id: string; how: XMention["how"]; read?: XRead; unavailable?: string; error?: unknown };
-
-/**
- * 把读到的提到的帖子并进这条帖子：正文接在后面（长文里嵌的换掉占位），图片排在后面存到上限，自己没视频时用它们的第一个视频；
- * 它们读的时候留下的情况、没读到的、没再往下读的、超出条数没读的都记进 notes。互动数、标签、作者还是这条帖子自己的。
- */
-export function withMentions(main: FetchedPost, mentions: ResolvedMention[], skipped = 0): FetchedPost {
-  let text = main.text;
-  const images = [...main.images];
-  let video = main.video;
-  const notes = [...main.notes];
-  let title = main.title;
-  for (const m of mentions) {
-    const label = MENTION_LABEL[m.how];
-    const url = `https://x.com/i/status/${m.id}`;
-    if (!m.read) {
-      const why = m.unavailable ?? (m.error === undefined || m.error instanceof SourceFetchError ? "可能被删了，或者是私密账号" : "网络出错");
-      notes.push(`${label}没读到（${url}）：${why}`);
-      continue;
-    }
-    const sub = m.read.post;
-    const who = `${label}（${sub.author.name}）`;
-    const section = `【${label}：${sub.author.name}】\n${sub.text}`;
-    if (m.how === "embed" && text.includes(embedPlaceholder(m.id))) text = text.replace(embedPlaceholder(m.id), section);
-    else text += `\n\n${section}`;
-    title ||= sub.title;
-
-    const fresh = sub.images.filter((f) => !images.some((i) => i.url === f.url));
-    const room = Math.max(0, MAX_IMAGES - images.length);
-    images.push(...fresh.slice(0, room));
-    if (fresh.length > room) notes.push(`${who}有 ${fresh.length - room} 张图没存`);
-    if (sub.video && !video) {
-      video = sub.video;
-      notes.push(`视频是${who}里的`);
-    } else if (sub.video) notes.push(`${who}里也有视频，没存`);
-
-    for (const n of sub.notes) if (n !== REPLIES_NOTE && n !== FALLBACK_NOTE) notes.push(`${who}：${n}`);
-    const further = new Set(m.read.mentions.map((x) => x.id)).size;
-    if (further > 0) notes.push(`${who}又提到了 ${further} 条帖子，没再往下读`);
-  }
-  if (skipped > 0) notes.push(`还提到了 ${skipped} 条别的帖子没读（一条最多跟着读 ${MAX_MENTIONS} 条）`);
-  text = capText(text, notes, "加上提到的帖子");
-  const kind = main.kind !== "text" ? main.kind : video ? "video" : images.length > main.images.length ? "image" : "text";
-  return { ...main, kind, title, text, images, video, notes };
 }
 
 /** 作者显示成「名字 @账号」（X 上认人靠 @账号）。 */
@@ -402,7 +356,7 @@ export function syndicationToken(id: string): string {
   return ((Number(id) / 1e15) * Math.PI).toString(36).replace(/(0+|\.)/g, "");
 }
 
-async function viaFx(id: string, maxVideoBytes?: number): Promise<XRead | null> {
+async function viaFx(id: string, maxVideoBytes?: number): Promise<Followed | null> {
   const res = await labeledFetch("FxTwitter(api.fxtwitter.com)", `https://api.fxtwitter.com/i/status/${id}`, {
     headers: { "user-agent": UA, accept: "application/json" },
     signal: AbortSignal.timeout(15_000),
@@ -415,7 +369,7 @@ async function viaFx(id: string, maxVideoBytes?: number): Promise<XRead | null> 
   return code === 200 && json.tweet ? readFxTweet(json.tweet, maxVideoBytes) : null;
 }
 
-async function viaSyndication(id: string, maxVideoBytes?: number): Promise<XRead> {
+async function viaSyndication(id: string, maxVideoBytes?: number): Promise<Followed> {
   const res = await labeledFetch("X(cdn.syndication.twimg.com)", `https://cdn.syndication.twimg.com/tweet-result?id=${id}&token=${syndicationToken(id)}&lang=en`, {
     headers: { "user-agent": UA, accept: "application/json" },
     signal: AbortSignal.timeout(15_000),
@@ -431,33 +385,14 @@ async function viaSyndication(id: string, maxVideoBytes?: number): Promise<XRead
   return readSyndicationTweet(await res.json().catch(() => null), maxVideoBytes);
 }
 
-/** 读一条帖子本身：FxTwitter → 官方嵌入接口。 */
-async function readXPost(id: string, maxVideoBytes?: number): Promise<XRead> {
-  let read: XRead | null = null;
+/** 读一条 X 帖子本身（FxTwitter → 官方嵌入接口），连同它提到的东西（还没读，跟着读见 follow.ts）。 */
+export async function readXPost(ref: Pick<LinkRef, "externalId">, maxVideoBytes?: number): Promise<Followed> {
+  let read: Followed | null = null;
   try {
-    read = await viaFx(id, maxVideoBytes);
+    read = await viaFx(ref.externalId, maxVideoBytes);
   } catch (e) {
     if (e instanceof SourceFetchError) throw e;
-    console.error(`FxTwitter 读帖子失败，换备用接口 id=${id}: ${e instanceof Error ? e.message : String(e)}`);
+    console.error(`FxTwitter 读帖子失败，换备用接口 id=${ref.externalId}: ${e instanceof Error ? e.message : String(e)}`);
   }
-  return read ?? (await viaSyndication(id, maxVideoBytes));
-}
-
-/** 读一条 X 帖子，连同它提到的帖子（引用的、链接的、长文里嵌的，往下读一层）。提到的帖子读不到不影响这条。 */
-export async function fetchXPost(ref: LinkRef, maxVideoBytes?: number): Promise<FetchedPost> {
-  const { post, mentions } = await readXPost(ref.externalId, maxVideoBytes);
-  const seen = new Set([post.externalId]);
-  const unique = mentions.filter((m) => !seen.has(m.id) && seen.add(m.id));
-  const picked = unique.slice(0, MAX_MENTIONS);
-  const resolved = await Promise.all(
-    picked.map(async (m): Promise<ResolvedMention> => {
-      if (m.read || m.unavailable) return m;
-      try {
-        return { ...m, read: await readXPost(m.id, maxVideoBytes) };
-      } catch (error) {
-        return { ...m, error };
-      }
-    })
-  );
-  return withMentions(post, resolved, unique.length - picked.length);
+  return read ?? (await viaSyndication(ref.externalId, maxVideoBytes));
 }
