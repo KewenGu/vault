@@ -57,7 +57,7 @@ describe("收藏夹：读 X 帖子", () => {
   it("视频帖：挑估算大小不超上限的最高码率 mp4，更低的档当备用；封面当图", () => {
     const post = mapFxTweet(fx({ media: { videos: [video] } }));
     expect(post.kind).toBe("video");
-    expect(post.video).toEqual({ url: "https://video.twimg.com/v/720.mp4", backupUrls: ["https://video.twimg.com/v/320.mp4"], bytes: 1341600, width: 640, height: 640, durationS: 12.9 });
+    expect(post.video).toEqual({ url: "https://video.twimg.com/v/720.mp4", backupUrls: ["https://video.twimg.com/v/320.mp4"], bytes: 1341600, bytesEstimated: true, width: 640, height: 640, durationS: 12.9 });
     expect(post.images).toEqual([{ url: "https://pbs.twimg.com/thumb.jpg", width: 640, height: 640 }]);
     // 上限很小：换成能放下的那档
     expect(mapFxTweet(fx({ media: { videos: [video] } }), 600_000).video).toMatchObject({ url: "https://video.twimg.com/v/320.mp4", backupUrls: [] });

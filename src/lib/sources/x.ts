@@ -24,7 +24,10 @@ const posNum = (v: unknown): number | null => (typeof v === "number" && Number.i
 
 type Variant = { url: string; bitrate: number | null };
 
-/** 视频的几档 mp4 里挑一档：估算大小（码率 × 时长）不超过上限的最高码率；都超了给最小的那档（下载时会按大小拦下）。 */
+/**
+ * 视频的几档 mp4 里挑一档：估算大小（码率 × 时长）不超过上限的最高码率；都超了给最小的那档（下载时会按大小拦下）。
+ * X 不报文件大小，bytes 是估的（标的码率是上限，画面不怎么动的录屏实际小得多），所以带 bytesEstimated：下不下载看服务器报的真实大小。
+ */
 function pickVariant(variants: Variant[], durationS: number | null, maxBytes: number): { url: string; backupUrls: string[]; bytes: number | null } | null {
   const sorted = [...variants].sort((a, b) => (b.bitrate ?? 0) - (a.bitrate ?? 0));
   if (sorted.length === 0) return null;
@@ -93,7 +96,7 @@ export function mapFxTweet(raw: unknown, maxVideoBytes = 50 * 1024 * 1024): Fetc
     hashtags: hashtagsIn(str(t.text)),
     topComments: [],
     images,
-    video: picked ? { url: picked.url, backupUrls: picked.backupUrls, bytes: picked.bytes, width: posNum(first?.width), height: posNum(first?.height), durationS } : null,
+    video: picked ? { url: picked.url, backupUrls: picked.backupUrls, bytes: picked.bytes, bytesEstimated: picked.bytes !== null, width: posNum(first?.width), height: posNum(first?.height), durationS } : null,
     music: null,
     notes,
   };
@@ -139,7 +142,7 @@ export function mapSyndicationTweet(raw: unknown, maxVideoBytes = 50 * 1024 * 10
     hashtags: hashtagsIn(body),
     topComments: [],
     images,
-    video: picked && clip ? { url: picked.url, backupUrls: picked.backupUrls, bytes: picked.bytes, ...dims(clip), durationS } : null,
+    video: picked && clip ? { url: picked.url, backupUrls: picked.backupUrls, bytes: picked.bytes, bytesEstimated: picked.bytes !== null, ...dims(clip), durationS } : null,
     music: null,
     notes,
   };

@@ -82,12 +82,12 @@ export function pickFormat(raw: unknown, durationS: number | null, maxBytes: num
   const formats = arr(raw)
     .map((f) => obj(f))
     .filter((f) => str(f.url).startsWith("https://") && str(f.mimeType).startsWith("video/mp4"))
-    .map((f) => ({
-      url: str(f.url),
-      width: posNum(f.width),
-      height: posNum(f.height),
-      bytes: posNum(f.contentLength) ?? (posNum(f.bitrate) && durationS ? Math.round((posNum(f.bitrate)! * durationS) / 8) : null),
-    }));
+    .map((f) => {
+      // 没报大小的按码率 × 时长估一个：挑清晰度够用，但不能凭它不下载（见 RemoteFile.bytesEstimated）
+      const estimate = posNum(f.bitrate) && durationS ? Math.round((posNum(f.bitrate)! * durationS) / 8) : null;
+      const exact = posNum(f.contentLength);
+      return { url: str(f.url), width: posNum(f.width), height: posNum(f.height), bytes: exact ?? estimate, bytesEstimated: exact === null && estimate !== null };
+    });
   if (formats.length === 0) return null;
   const fits = formats.filter((f) => f.bytes === null || f.bytes <= maxBytes);
   const best = fits.length > 0 ? fits.sort((a, b) => (b.height ?? 0) - (a.height ?? 0))[0] : formats.sort((a, b) => (a.bytes ?? 0) - (b.bytes ?? 0))[0];

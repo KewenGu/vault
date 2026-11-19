@@ -67,7 +67,9 @@ describe("收藏夹：读 YouTube 视频", () => {
     const f = (height: number, contentLength?: string, bitrate?: number) => ({ url: `https://rr1.googlevideo.com/${height}`, mimeType: "video/mp4; codecs=avc1", width: (height * 16) / 9, height, contentLength, bitrate });
     expect(pickFormat([f(360, "30000000"), f(720, "90000000")], 600, 50_000_000)).toMatchObject({ url: "https://rr1.googlevideo.com/360", bytes: 30000000, durationS: 600 });
     expect(pickFormat([f(360, "30000000"), f(720, "45000000")], 600, 50_000_000)).toMatchObject({ height: 720 });
-    expect(pickFormat([f(360, undefined, 400_000)], 600, 50_000_000)).toMatchObject({ bytes: 30_000_000 });
+    expect(pickFormat([f(360, undefined, 400_000)], 600, 50_000_000)).toMatchObject({ bytes: 30_000_000, bytesEstimated: true });
+    // 平台报了大小的不算估算：超过读取上限时不用发请求就知道
+    expect(pickFormat([f(360, "30000000", 400_000)], 600, 50_000_000)).toMatchObject({ bytes: 30000000, bytesEstimated: false });
     expect(pickFormat([f(360, "80000000"), f(720, "90000000")], 600, 50_000_000)).toMatchObject({ height: 360, bytes: 80000000 });
     expect(pickFormat([{ url: "https://rr1.googlevideo.com/webm", mimeType: "video/webm" }, { url: "http://insecure/x", mimeType: "video/mp4" }], 600, 50_000_000)).toBeNull();
   });
