@@ -49,12 +49,15 @@ describe("收藏夹：链接识别", () => {
     expect(parseLink("http://xhslink.com/o/6y3HQIIiyUh")).toBeNull();
   });
 
-  it("抖音：video / note / share/video / modal_id 都规范成 douyin.com/video/<id>", () => {
+  it("抖音：video / share/video / modal_id 规范成 douyin.com/video/<id>，图文（note / share/note / slides）规范成 /note/<id>", () => {
     const want = { platform: "douyin", externalId: "7682728905966423334", url: "https://www.douyin.com/video/7682728905966423334" };
     expect(parseLink("https://www.douyin.com/video/7682728905966423334?previous_page=app_code_link")).toEqual(want);
     expect(parseLink("https://www.iesdouyin.com/share/video/7682728905966423334/?region=CN&mid=1")).toEqual(want);
     expect(parseLink("https://www.douyin.com/jingxuan?modal_id=7682728905966423334")).toEqual(want);
-    expect(parseLink("https://www.douyin.com/note/7682728905966423334")).toEqual(want);
+    const note = { ...want, url: "https://www.douyin.com/note/7682728905966423334" };
+    expect(parseLink("https://www.douyin.com/note/7682728905966423334")).toEqual(note);
+    expect(parseLink("https://www.iesdouyin.com/share/note/7682728905966423334/?region=CN")).toEqual(note);
+    expect(parseLink("https://www.iesdouyin.com/share/slides/7682728905966423334/")).toEqual(note);
     expect(parseLink("https://www.douyin.com/user/MS4wLjABAAAA")).toBeNull();
   });
 

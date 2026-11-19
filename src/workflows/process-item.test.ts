@@ -412,6 +412,18 @@ describe("what gets saved from the understanding", () => {
     expect(String(item().search_text)).toContain("第一，别人的评价只是信息");
   });
 
+  it("swaps in the canonical link once the reader knows what the post is (a Douyin link that turned out to be 图文)", async () => {
+    vi.mocked(fetchPost).mockResolvedValue(post({ video: null, kind: "image", url: "https://www.douyin.com/note/7708299268364242185" }));
+    await processItem(ID);
+    expect(fake.store.items[0].url).toBe("https://www.douyin.com/note/7708299268364242185");
+    expect(fake.store.items[0].kind).toBe("image");
+  });
+
+  it("leaves the link alone when the reader gives none", async () => {
+    await processItem(ID);
+    expect(fake.store.items[0].url).toBe("https://www.douyin.com/video/7708299268364242185");
+  });
+
   it("keeps the platform's own title where there is one, and the user's tags once edited", async () => {
     fake = makeFakeSupabase({ items: [row({ platform: "youtube", dedupe_key: "youtube:abc", tags: ["我的标签"], tags_locked: true })] }, { rpc: { tag_counts: () => [] } });
     vi.mocked(fetchPost).mockResolvedValue(post({ platform: "youtube", title: "9 Ways to Stop Overthinking", video: null, kind: "image" }));
