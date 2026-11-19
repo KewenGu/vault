@@ -11,6 +11,7 @@ import { extractSpeechAudio } from "@/lib/media/audio";
 import { withTempDir } from "@/lib/media/ffmpeg";
 import { IMAGE_MAX_BYTES, MAX_IMAGES, VIDEO_MAX_BYTES, TooLargeError, downloadRemote, downloadRemoteToFile, normalizeImage, visionImage } from "@/lib/media/files";
 import { canDigestVideo, contactSheets, digestVideo, digestVideoFile, sheetLayout } from "@/lib/media/frames";
+import { keepLocalFile, localFileSize, localMediaPath, removeLocalItemFiles } from "@/lib/media/local-store";
 import { clockTenths, cuesToText, frameNote, likelyChinese, parseTranscript, speechAt, speechLabel, type Cue } from "@/lib/media/transcript";
 import { fetchPost } from "@/lib/sources/fetch-post";
 import { emptyStats, type FetchedPost, type ItemMedia, type PostSnapshot } from "@/lib/sources/types";
@@ -48,7 +49,7 @@ const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const SPEECH_MAX_SECONDS = 3600;
 /**
  * 为了读懂内容，视频最多下载这么大（默认 600 MB，`VAULT_VIDEO_READ_MAX_MB` 可以改）。
- * 和「存档」的上限（VIDEO_MAX_BYTES）是两回事：超过存档上限的视频不存原片（也不存别的副本），
+ * 和「存档」的上限（VIDEO_MAX_BYTES）是两回事：超过存档上限的视频不进存储桶（原片留在这台服务器的磁盘上），
  * 但照样下载到本机抽画面、转写——2026-11-18 第一条真实的抖音视频（38 分钟、127 MB）就因为把两个上限混在一起，
  * 整条没下载，只看了封面和文案。
  * 视频直接写到磁盘上的临时目录，不进内存（2026-11-19 改的：以前整个读进内存，2 GB 的机器只敢设 250 MB，
@@ -127,6 +128,7 @@ type VideoSource = { data: Uint8Array; ext: string } | { file: string; bytes: nu
 /**
  * 把读到的帖子的图片 / 视频下载下来转存；下不了的记进 notes（不算失败——文字还在，照样能理解）。
  * tmp：放下载下来的视频的临时目录（调用方建、调用方删）。
+ * unstored：视频没进存储桶（太大，或者存储那边不收）——画面和声音要趁现在从这个文件读。
  */
 async function storeMedia(db: Db, dir: string, post: FetchedPost, tmp: string): Promise<{ media: ItemMedia[]; notes: string[]; unstored: { file: string; bytes: number } | null }> {
   const media: ItemMedia[] = [];
@@ -147,7 +149,6 @@ async function storeMedia(db: Db, dir: string, post: FetchedPost, tmp: string): 
     }
   }
   if (failed > 0) notes.push(`有 ${failed} 张图没下载下来`);
-  // 太大存不了档的视频：留着磁盘上的这份，读完画面和声音就删（见 videoReadMaxBytes）
   let unstored: { file: string; bytes: number } | null = null;
   if (post.video) {
     const readMax = videoReadMaxBytes();
@@ -178,11 +179,19 @@ async function storeMedia(db: Db, dir: string, post: FetchedPost, tmp: string): 
           console.error(`视频存档失败 ${dir}: ${messageOf(e)}`);
         }
       } else {
-        // 原片存不下：内容照样从磁盘上的原片读，读完就删，什么都不往存储桶里放。
-        // 2026-11-19 之前这里会另外压一份放得下的副本供播放；去掉了——1 核的机器压一条长视频要十几二十分钟，
-        // 长于一小时的压到 50 MB 以内也没法看。想留原片：Supabase 换付费套餐后调高 VAULT_STORE_MAX_MB，再重新读取这条链接。
-        unstored = { file, bytes };
-        notes.push(`原片没有存档（${megabytes(bytes)} MB，超过 ${megabytes(VIDEO_MAX_BYTES)} MB 的存档上限）：${cannotPlay}`);
+        // 存储桶存不下：不上传、也不压缩，原片搬到这台服务器的磁盘上留着（lib/media/local-store.ts），页面从磁盘播放，
+        // 内容也从那儿读。等 Supabase 换了付费套餐、VAULT_STORE_MAX_MB 调高之后再搬去存储桶。
+        // （2026-11-19 之前这里会压一份放得下的副本存进存储桶：1 核的机器压一条长视频要十几二十分钟，长于一小时的压到 50 MB 也没法看。）
+        const path = `${dir}/video.mp4`;
+        try {
+          unstored = { file: await keepLocalFile(file, path), bytes };
+          media.push({ role: "video", path, mime: "video/mp4", width: post.video.width ?? null, height: post.video.height ?? null, bytes, durationS: post.video.durationS, local: true });
+        } catch (e) {
+          // 留不下（磁盘满了、目录没权限）：照样从临时目录里的这份读，读完就没了
+          unstored = { file, bytes };
+          notes.push(`原片没有留下来（${megabytes(bytes)} MB，超过 ${megabytes(VIDEO_MAX_BYTES)} MB 的存档上限，存到这台服务器的磁盘上也没成：${messageOf(e).slice(0, 100)}）：${cannotPlay}`);
+          console.error(`原片留在磁盘上失败 ${dir}: ${messageOf(e)}`);
+        }
       }
     } catch (e) {
       const seen = post.captions ? "只看了封面、字幕和文字" : "只看了封面和文字";
@@ -215,6 +224,7 @@ async function fetchLink(db: Db, item: Item, counts: Counts): Promise<boolean> {
   }
   // 重新读取：先清掉上一轮的文件（图片数量可能变了）
   await removeItemFiles(db, item.userId, item.id);
+  await removeLocalItemFiles(item.userId, item.id);
   let media: ItemMedia[] = [];
   let storeNotes: string[] = [];
   let transcript: string | null = post.captions || null;
@@ -222,18 +232,19 @@ async function fetchLink(db: Db, item: Item, counts: Counts): Promise<boolean> {
   let digestNotes: string[] = [];
   let cuts: number[] = [];
   let digested = false;
-  // 下载下来的视频放在一个临时目录里，这一步结束（成功、失败都一样）整个删掉
+  // 视频先下载到一个临时目录里，这一步结束（成功、失败都一样）整个删掉；要留的大视频在 storeMedia 里已经搬走了
   await withTempDir(async (tmp) => {
     const stored = await storeMedia(db, itemDir(item.userId, item.id), post, tmp);
     media = stored.media;
     storeNotes = stored.notes;
     if (!stored.unstored) return;
     digested = true;
-    // 原片存不下：趁文件还在磁盘上，现在就把画面和声音读出来（存下来的视频是下一步从存储桶里取出来读的）
+    // 原片没进存储桶：现在就从磁盘上的文件把画面和声音读出来（存进存储桶的视频是下一步取出来读的）
     try {
       const language = likelyChinese(post.platform, `${post.title}\n${post.text}\n${item.note}`) ? "zh" : null;
       const d = await digestVideoSource(db, { id: item.id, userId: item.userId, captions: post.captions ?? null, language }, stored.unstored, counts);
-      media = [...media, ...d.frames, ...d.sheets];
+      // 探测到的真实时长、尺寸比平台报的准
+      media = [...media.map((m) => (m.role === "video" && d.durationS !== null ? { ...m, durationS: d.durationS, width: d.width ?? m.width, height: d.height ?? m.height } : m)), ...d.frames, ...d.sheets];
       transcript = d.transcript;
       digestNotes = d.notes;
       cuts = d.cuts;
@@ -456,11 +467,12 @@ async function digestVideoSource(
   return { frames, sheets, transcript, notes, cuts, durationS: Math.round(digest.probe.duration * 100) / 100, width: digest.probe.width, height: digest.probe.height };
 }
 
-/** ②（存了原片的视频）：从存储桶取出来读。 */
+/** ②（存了原片的视频）：从存储桶取出来读；原片在这台服务器磁盘上的直接读那个文件。 */
 async function digestVideoItem(db: Db, item: Item, video: ItemMedia, counts: Counts): Promise<{ media: ItemMedia[]; transcript: string | null; notes: string[]; cuts: number[] }> {
   const captions = item.post.transcriptFrom === "captions" ? item.transcript : null;
   const kept = item.media.filter((m) => m.role !== "frame" && m.role !== "sheet");
-  const source = { data: canDigestVideo() ? await download(db, video.path) : new Uint8Array(), ext: extOf(video.path) };
+  const local = video.local ? localMediaPath(video.path) : null;
+  const source: VideoSource = local ? { file: local, bytes: video.bytes } : { data: canDigestVideo() ? await download(db, video.path) : new Uint8Array(), ext: extOf(video.path) };
   const d = await digestVideoSource(db, { id: item.id, userId: item.userId, captions, language: speechLanguage(item) }, source, counts);
   // 探测到的真实时长、尺寸比平台报的准
   const media = [...kept.map((m) => (m.role === "video" && d.durationS !== null ? { ...m, durationS: d.durationS, width: d.width ?? m.width, height: d.height ?? m.height } : m)), ...d.frames, ...d.sheets];
@@ -487,6 +499,8 @@ async function digestItemStep(itemId: string): Promise<{ counts: Counts }> {
   if (!video && !audio) return { counts };
   // 2026-11-19 之前存进来的大视频，存的是压缩副本，而画面和口播已经从原片读过：留着那一份（比从副本重读的清楚），不重做
   if (video?.compressed && framesOf(item).length > 0 && item.transcript) return { counts };
+  // 原片本该在这台服务器的磁盘上、但文件不在了（清过磁盘、换了机器）：留着之前读到的画面和口播，不重做
+  if (video?.local && (await localFileSize(video.path)) === null) return { counts };
   let media = item.media;
   let transcript = item.post.transcriptFrom === "captions" ? item.transcript : null;
   let notes: string[] = [];

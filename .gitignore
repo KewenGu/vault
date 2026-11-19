@@ -20,6 +20,9 @@
 # production
 /build
 
+# 留在本机磁盘上的大视频原片（VAULT_LOCAL_MEDIA_DIR 没设时的默认位置）
+/.vault-media/
+
 # misc
 .DS_Store
 *.pem

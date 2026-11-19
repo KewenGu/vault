@@ -1,6 +1,8 @@
 import { existsSync } from "node:fs";
-import { writeFile } from "node:fs/promises";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeFakeSupabase, type FakeSupabase } from "@/test/fake-supabase";
 import { emptyStats, type FetchedPost, type ItemMedia, type PostSnapshot } from "@/lib/sources/types";
 import type { Understanding } from "@/lib/vault/understand";
@@ -130,7 +132,17 @@ const digest = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-beforeEach(() => {
+/** 大视频的原片留在「这台服务器的磁盘」上：每个测试一个临时目录 */
+let localDir: string;
+const localVideo = () => path.join(localDir, USER, ID, "video.mp4");
+afterEach(async () => {
+  vi.unstubAllEnvs();
+  await rm(localDir, { recursive: true, force: true });
+});
+
+beforeEach(async () => {
+  localDir = await mkdtemp(path.join(os.tmpdir(), "vault-local-test-"));
+  vi.stubEnv("VAULT_LOCAL_MEDIA_DIR", localDir);
   vi.clearAllMocks();
   fake = makeFakeSupabase({ items: [row()] }, { rpc: { tag_counts: () => [{ tag: "个人成长", n: 3 }], prune_orphan_entities: () => 0 } });
   vi.mocked(fetchPost).mockResolvedValue(post());
@@ -154,7 +166,7 @@ describe("a video too large to archive", () => {
     source = videoOnDisk(VIDEO_MAX_BYTES + 10 * MB);
   });
 
-  it("is read from the original on disk, and nothing of the video is stored", async () => {
+  it("stays on this server's disk instead of going to storage, and is read from there", async () => {
     await processItem(ID);
     // 视频下载到磁盘上，不进内存；下载时用的是「读」的上限，不是「存档」的上限
     expect(vi.mocked(downloadRemote).mock.calls.some(([f]) => f.url.endsWith(".mp4"))).toBe(false);
@@ -162,23 +174,25 @@ describe("a video too large to archive", () => {
     expect(file.url).toBe("https://cdn.example/video.mp4");
     expect(dest).toBe(source());
     expect(readMax).toBeGreaterThan(VIDEO_MAX_BYTES);
-    // 画面和声音只读一遍，读的是刚下载的原片，直接从磁盘上读
+    // 原片从临时目录搬到了这台服务器的磁盘上（没压缩、没改动），临时的那份不在了
+    expect(existsSync(source())).toBe(false);
+    expect(new Uint8Array(await readFile(localVideo()))).toEqual(jpeg);
+    // 画面和声音只读一遍，直接从磁盘上留下来的那份读
     expect(digestVideo).not.toHaveBeenCalled();
     expect(vi.mocked(digestVideoFile).mock.calls).toHaveLength(1);
-    expect(vi.mocked(digestVideoFile).mock.calls[0][0]).toBe(source());
+    expect(vi.mocked(digestVideoFile).mock.calls[0][0]).toBe(localVideo());
     // 大文件不测切点（省一遍整片解码）
     expect(vi.mocked(digestVideoFile).mock.calls[0][1]).toMatchObject({ detectCuts: false });
-    // 读完之后磁盘上那份删掉了
-    expect(existsSync(source())).toBe(false);
-    // 存下来的：封面、抽的帧、帧格。视频本身不存，也不压副本
-    expect(roles()).toEqual(["image", "frame", "frame", "sheet"]);
+    // 存储桶里：封面、抽的帧、帧格。视频不进存储桶，登记成「在本机磁盘上」，时长、尺寸用探测到的
+    expect(roles()).toEqual(["image", "video", "frame", "frame", "sheet"]);
     expect([...fake.files.keys()].some((k) => k.endsWith("video.mp4"))).toBe(false);
+    expect(item().media.find((m) => m.role === "video")).toEqual({ role: "video", path: `${USER}/${ID}/video.mp4`, mime: "video/mp4", width: 1920, height: 1080, bytes: VIDEO_MAX_BYTES + 10 * MB, durationS: 2318, local: true });
     expect(item().transcript).toBe("[1:05] 第一，别人的评价只是信息");
     expect(item().post.transcriptFrom).toBe("asr");
     expect(item().post.durationS).toBe(2318);
     expect(item().post.cuts).toEqual([12.5]);
-    const limit = VIDEO_MAX_BYTES / MB;
-    expect(item().post.notes).toEqual(["这条路读不到评论内容，只有评论数", `原片没有存档（${limit + 10} MB，超过 ${limit} MB 的存档上限）：画面和声音照常读，但这里不能播放，要看去原链接`]);
+    // 没有什么「没看到」的：原片留下来了、内容也读了
+    expect(item().post.notes).toEqual(["这条路读不到评论内容，只有评论数"]);
     expect(item().post.digestNotes).toEqual([]);
     // 模型拿到了口播和画面
     const input = vi.mocked(understand).mock.calls[0][0];
@@ -188,16 +202,55 @@ describe("a video too large to archive", () => {
     expect(item().error).toBeNull();
   });
 
-  it("keeps the frames and transcript read from the original on re-analysis", async () => {
+  it("is read again from the kept original on re-analysis", async () => {
     await processItem(ID);
+    vi.mocked(digestVideoFile).mockClear();
+    Object.assign(item(), { status: "analyzing" });
+    await processItem(ID);
+    expect(digestVideo).not.toHaveBeenCalled();
+    expect(vi.mocked(digestVideoFile).mock.calls.map((c) => c[0])).toEqual([localVideo()]);
+    expect(roles()).toEqual(["image", "video", "frame", "frame", "sheet"]);
+    expect(item().status).toBe("ready");
+  });
+
+  it("keeps the frames and transcript already read when the original is gone from the disk", async () => {
+    await processItem(ID);
+    // 磁盘满了手动清过、或者换了机器
+    await rm(localVideo());
     vi.mocked(digestVideoFile).mockClear();
     vi.mocked(understand).mockClear();
     Object.assign(item(), { status: "analyzing" });
     await processItem(ID);
     expect(digestVideo).not.toHaveBeenCalled();
     expect(digestVideoFile).not.toHaveBeenCalled();
-    expect(roles()).toEqual(["image", "frame", "frame", "sheet"]);
+    expect(roles()).toEqual(["image", "video", "frame", "frame", "sheet"]);
     expect(vi.mocked(understand).mock.calls[0][0].transcript).toContain("别人的评价只是信息");
+    expect(item().status).toBe("ready");
+  });
+
+  it("replaces the kept original when the link is read again", async () => {
+    await processItem(ID);
+    // 重新读取：这次视频小了，进了存储桶——磁盘上那份旧的不该留着
+    videoOnDisk(3 * MB);
+    Object.assign(item(), { status: "fetching" });
+    await processItem(ID);
+    expect(existsSync(localVideo())).toBe(false);
+    expect(item().media.find((m) => m.role === "video")?.local).toBeUndefined();
+    expect([...fake.files.keys()].some((k) => k.endsWith("video.mp4"))).toBe(true);
+  });
+
+  it("is still read when it cannot be kept on the disk, and says so", async () => {
+    // 存原片的目录写不进去（这里：那个位置是个文件）
+    vi.stubEnv("VAULT_LOCAL_MEDIA_DIR", path.join(localDir, "blocked"));
+    await writeFile(path.join(localDir, "blocked"), jpeg);
+    await processItem(ID);
+    const limit = VIDEO_MAX_BYTES / MB;
+    expect(roles()).toEqual(["image", "frame", "frame", "sheet"]);
+    expect(item().post.notes[1]).toMatch(new RegExp(`^原片没有留下来（${limit + 10} MB，超过 ${limit} MB 的存档上限，存到这台服务器的磁盘上也没成：.+）：画面和声音照常读，但这里不能播放，要看去原链接$`));
+    // 读的是临时目录里的那份，读完删掉
+    expect(vi.mocked(digestVideoFile).mock.calls[0][0]).toBe(source());
+    expect(existsSync(source())).toBe(false);
+    expect(item().transcript).toContain("别人的评价只是信息");
     expect(item().status).toBe("ready");
   });
 
