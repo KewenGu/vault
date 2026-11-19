@@ -255,6 +255,7 @@ async function fetchLink(db: Db, item: Item, counts: Counts): Promise<boolean> {
     .from("items")
     .update({
       status: "analyzing",
+      ...(post.url && post.url !== item.url ? { url: post.url } : {}),
       kind: post.kind,
       title: post.title || null,
       author: post.author.name || null,

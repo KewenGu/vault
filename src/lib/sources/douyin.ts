@@ -1,7 +1,7 @@
 import { labeledFetch } from "@/lib/fetch-error";
 import { httpError } from "@/lib/error-text";
 import { recordCall } from "@/lib/usage/meter";
-import type { LinkRef } from "./link";
+import { douyinUrl, type LinkRef } from "./link";
 import { SourceFetchError, type FetchedPost, type RemoteFile } from "./types";
 
 /**
@@ -90,9 +90,11 @@ export function mapDouyinItem(item: unknown, externalId: string): FetchedPost {
   const music = m?.title ? `${m.title}${m.isOriginal ? "（原声）" : m.author ? ` — ${m.author}` : ""}` : null;
   // 抖音没有单独的标题：文案第一行（去掉话题）当标题
   const firstLine = text.split("\n")[0].replace(/#\S+/g, "").trim();
+  const id = String(it.id || externalId);
   return {
     platform: "douyin",
-    externalId: String(it.id || externalId),
+    externalId: id,
+    url: douyinUrl(id, isImages ? "image" : "video"),
     kind: isImages ? "image" : "video",
     title: Array.from(firstLine).slice(0, 60).join(""),
     text,

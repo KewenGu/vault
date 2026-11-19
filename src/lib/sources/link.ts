@@ -25,7 +25,7 @@ export const DESKTOP_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Apple
 export type LinkRef = {
   platform: SourcePlatform;
   externalId: string;
-  /** 抓取时用的链接：小红书是带口令的原链接，其余平台是规范写法（`https://www.douyin.com/video/<id>`），网页是去掉追踪参数的地址 */
+  /** 抓取时用的链接：小红书是带口令的原链接，其余平台是规范写法（`https://www.douyin.com/video/<id>`，抖音图文是 `/note/<id>`），网页是去掉追踪参数的地址 */
   url: string;
 };
 
@@ -89,6 +89,9 @@ function webRef(url: URL): LinkRef | null {
   return { platform: "web", externalId: createHash("sha256").update(u.href).digest("hex").slice(0, 32), url: u.href };
 }
 
+/** 抖音作品的规范链接：视频 `douyin.com/video/<id>`，图文 `douyin.com/note/<id>`。 */
+export const douyinUrl = (id: string, kind: "video" | "image") => `https://www.douyin.com/${kind === "image" ? "note" : "video"}/${id}`;
+
 function siteRef(site: Site, url: URL): LinkRef | null {
   const path = url.pathname;
   if (site === "xiaohongshu") {
@@ -99,9 +102,10 @@ function siteRef(site: Site, url: URL): LinkRef | null {
     return { platform: site, externalId: m[1].toLowerCase(), url: kept.href };
   }
   if (site === "douyin") {
-    const m = /^\/(?:share\/)?(?:video|note|slides)\/(\d{6,24})\/?$/.exec(path);
-    const id = m?.[1] ?? (/^\d{6,24}$/.test(url.searchParams.get("modal_id") ?? "") ? url.searchParams.get("modal_id")! : null);
-    return id ? { platform: site, externalId: id, url: `https://www.douyin.com/video/${id}` } : null;
+    const m = /^\/(?:share\/)?(video|note|slides)\/(\d{6,24})\/?$/.exec(path);
+    const id = m?.[2] ?? (/^\d{6,24}$/.test(url.searchParams.get("modal_id") ?? "") ? url.searchParams.get("modal_id")! : null);
+    // 图文（note / slides）留成 /note/；看不出是哪种的（modal_id）先当视频，读完按读到的种类改（见 douyin.ts）
+    return id ? { platform: site, externalId: id, url: douyinUrl(id, m?.[1] === "note" || m?.[1] === "slides" ? "image" : "video") } : null;
   }
   if (site === "tiktok") {
     const m = /^\/@([\w.-]+)\/(?:video|photo)\/(\d{8,24})\/?$/.exec(path);

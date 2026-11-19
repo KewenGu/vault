@@ -63,6 +63,7 @@ describe("收藏夹：读抖音", () => {
     expect(post).toMatchObject({
       platform: "douyin",
       externalId: "7288896159513316647",
+      url: "https://www.douyin.com/video/7288896159513316647",
       kind: "video",
       title: "开头这句太绝了",
       text: "开头这句太绝了 #职场 #AI工具\n第二行…",
@@ -78,9 +79,9 @@ describe("收藏夹：读抖音", () => {
     expect(post.images).toEqual([{ url: "https://p95/origin.webp", backupUrls: ["https://p95/cover.webp"], width: null, height: null }]);
   });
 
-  it("图文：每一张图都要（没地址的跳过），背景音乐的 mp3 不当视频；作者声明记一句", () => {
+  it("图文：链接换成 /note/，每一张图都要（没地址的跳过），背景音乐的 mp3 不当视频；作者声明记一句", () => {
     const post = mapDouyinItem(imageItem, "7709473635812144229");
-    expect(post).toMatchObject({ kind: "image", video: null, title: "生活的苦，只是体力与情绪的重复；学习的苦，是认知与思维的重塑。", music: "晴天 — 周杰伦", hashtags: ["法式清醒", "人生哲学"] });
+    expect(post).toMatchObject({ kind: "image", url: "https://www.douyin.com/note/7709473635812144229", video: null, title: "生活的苦，只是体力与情绪的重复；学习的苦，是认知与思维的重塑。", music: "晴天 — 周杰伦", hashtags: ["法式清醒", "人生哲学"] });
     expect(post.images).toEqual([
       { url: "https://p11-sign.douyinpic.com/1.webp", width: 1440, height: 1918 },
       { url: "https://p11-sign.douyinpic.com/2.webp", width: 1440, height: 1918 },
