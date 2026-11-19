@@ -285,6 +285,42 @@ describe("a video too large to archive", () => {
   });
 });
 
+describe("an item deleted while it is still being processed", () => {
+  // 删除那一刻行和文件都删了；后台任务还在跑，后来写出来的文件收尾时要清掉
+  const deleteNow = () => fake.store.items.splice(0);
+
+  it("leaves nothing behind when a large video was still downloading", async () => {
+    vi.mocked(downloadRemoteToFile).mockImplementation(async (_file, dest) => {
+      await writeFile(dest, jpeg);
+      deleteNow();
+      return VIDEO_MAX_BYTES + 10 * MB;
+    });
+    await processItem(ID);
+    // 后台任务照样把原片搬到了磁盘上、把封面和帧传进了存储桶——收尾时都清掉了
+    expect(vi.mocked(digestVideoFile)).toHaveBeenCalled();
+    expect(existsSync(localVideo())).toBe(false);
+    expect([...fake.files.keys()]).toEqual([]);
+    expect(understand).not.toHaveBeenCalled();
+  });
+
+  it("leaves nothing behind when a small video was on its way into storage", async () => {
+    vi.mocked(downloadRemoteToFile).mockImplementation(async (_file, dest) => {
+      await writeFile(dest, jpeg);
+      deleteNow();
+      return 3 * MB;
+    });
+    await processItem(ID);
+    expect([...fake.files.keys()]).toEqual([]);
+  });
+
+  it("keeps the files of an item that is still there", async () => {
+    videoOnDisk(VIDEO_MAX_BYTES + 10 * MB);
+    await processItem(ID);
+    expect(existsSync(localVideo())).toBe(true);
+    expect([...fake.files.keys()].length).toBeGreaterThan(0);
+  });
+});
+
 describe("a video beyond the read limit", () => {
   it("is not downloaded; the item is understood from cover and text, and says what it missed", async () => {
     vi.mocked(downloadRemoteToFile).mockRejectedValue(new TooLargeError(900 * MB));

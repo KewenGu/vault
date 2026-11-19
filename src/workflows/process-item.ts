@@ -324,13 +324,15 @@ async function fetchUpload(db: Db, item: Item): Promise<void> {
   if (error) throw new Error(`保存失败: ${error.message}`);
 }
 
-async function fetchItemStep(itemId: string): Promise<StepResult & { digested: boolean }> {
+/** userId：这条内容是谁的（收尾清文件要用；一开始就不在了是 null）。 */
+async function fetchItemStep(itemId: string): Promise<StepResult & { digested: boolean; userId: string | null }> {
   "use step";
   const counts: Counts = {};
   const { db, item } = await load(itemId);
-  if (!item) return { ok: false, error: "这条内容不在了", counts, digested: false };
-  if (item.status === "analyzing") return { ok: true, counts, digested: false };
-  if (item.status !== "fetching") return { ok: false, error: `状态是 ${item.status}，不再读取`, counts, digested: false };
+  if (!item) return { ok: false, error: "这条内容不在了", counts, digested: false, userId: null };
+  const userId = item.userId;
+  if (item.status === "analyzing") return { ok: true, counts, digested: false, userId };
+  if (item.status !== "fetching") return { ok: false, error: `状态是 ${item.status}，不再读取`, counts, digested: false, userId };
   try {
     let digested = false;
     if (item.source === "link") digested = await fetchLink(db, item, counts);
@@ -339,11 +341,11 @@ async function fetchItemStep(itemId: string): Promise<StepResult & { digested: b
       const { error } = await db.from("items").update({ status: "analyzing", post: emptyPost(item.post) as unknown as Json }).eq("id", itemId);
       if (error) throw new Error(`更新失败: ${error.message}`);
     }
-    return { ok: true, counts, digested };
+    return { ok: true, counts, digested, userId };
   } catch (e) {
     const error = messageOf(e);
     await markFailed(itemId, item.understanding ? `重新读取没成，留着上次的结果：${error}` : error, item.understanding !== null);
-    return { ok: false, error, counts, digested: false };
+    return { ok: false, error, counts, digested: false, userId };
   }
 }
 
@@ -674,6 +676,21 @@ async function recordUsageStep(itemId: string, counts: Counts): Promise<void> {
   if (upErr) console.error(`记用量失败 item=${itemId}: ${upErr.message}`);
 }
 
+/**
+ * 收尾：处理到一半被用户删掉的内容，把这一轮后来又写出来的文件清掉。
+ * 删除那一刻已经把行、存储桶里的文件、服务器磁盘上的原片都删了（lib/vault/service.ts 的 removeItem），
+ * 但后台任务不知道，会接着把下载到一半的视频、抽出来的帧写出来——行已经没了，这些文件就成了没人管的。
+ * 查不出这条内容还在不在的时候不动：宁可多留，也不误删。
+ */
+async function removeFilesIfDeletedStep(itemId: string, userId: string): Promise<void> {
+  "use step";
+  const db = getServiceClient();
+  const { data, error } = await db.from("items").select("id").eq("id", itemId).eq("user_id", userId).maybeSingle();
+  if (error || data) return;
+  await removeItemFiles(db, userId, itemId);
+  await removeLocalItemFiles(userId, itemId);
+}
+
 function add(into: Counts, from: Counts) {
   for (const [k, n] of Object.entries(from)) into[k] = (into[k] ?? 0) + n;
 }
@@ -691,4 +708,5 @@ export async function processItem(itemId: string) {
     if (understood.ok) add(counts, (await indexItemStep(itemId)).counts);
   }
   await recordUsageStep(itemId, counts);
+  if (fetched.userId) await removeFilesIfDeletedStep(itemId, fetched.userId);
 }

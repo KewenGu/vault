@@ -281,15 +281,30 @@ export function makeFakeSupabase(
         });
       },
       delete() {
+        const remove = (rows: Row[]) => {
+          store[name] = table(name).filter((r) => !rows.includes(r));
+          ops.push(`delete:${name}`);
+        };
         const chain = filterable(
           () => table(name),
           (rows) => {
-            store[name] = table(name).filter((r) => !rows.includes(r));
-            ops.push(`delete:${name}`);
+            remove(rows);
             return { data: null, error: null };
           }
         );
-        return chain;
+        // delete().….select()：返回删掉的那些行（同 PostgREST 的 returning），只删一次
+        return Object.assign(chain, {
+          select: () => {
+            let result: { data: Row[]; error: null } | null = null;
+            const run = () => {
+              if (result) return result;
+              const rows = chain.rows();
+              remove(rows);
+              return (result = { data: rows.map((r) => ({ ...r })), error: null });
+            };
+            return { then: (res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) => Promise.resolve(run()).then(res, rej) };
+          },
+        });
       },
     };
   }
