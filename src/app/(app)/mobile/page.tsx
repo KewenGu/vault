@@ -60,7 +60,7 @@ export default async function MobilePage() {
         <ol className={sub}>
           <li>
             <Ui en="Run JavaScript on Webpage" zh="在网页上运行 JavaScript" />
-            ：快捷指令会自动把它的输入填成上一步的 Type，这是错的——点那个 Type，改成 <Ui en="Shortcut Input" zh="快捷指令输入" />，动作要显示成「Run JavaScript on Shortcut Input」。把里面自带的示例代码全部删掉，换成下面这段（地址已经按这个站点填好）。
+            ：点它的输入，选 <Ui en="Shortcut Input" zh="快捷指令输入" />（它不是第一个动作，不选会报错）。把里面自带的示例代码全部删掉，换成下面这段（地址已经按这个站点填好）。
             它只在微信公众号的页面上读正文；别的网站只交链接，和下面的分支一样。
             <div className="mt-2">
               <CopyField value={captureScript(origin)} label="快捷指令里的脚本" multiline />
