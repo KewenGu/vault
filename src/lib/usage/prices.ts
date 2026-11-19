@@ -43,7 +43,7 @@ export const OPENAI_ASR_COUNT_KEY = "asr_openai_sec";
 /** 按次 / 按秒计价的调用（美元）。键就是 recordCall 用的计数键。 */
 export const UNIT_USD: Record<string, number> = {
   jina_fetch: 0.0005,
-  apify_douyin_post: 0.008,
+  apify_douyin_post: 0.01,
   apify_instagram_post: 0.003,
   apify_youtube_video: 0.004,
   [ASR_COUNT_KEY]: cnyToUsd(4.5 / 3600),

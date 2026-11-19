@@ -65,6 +65,8 @@ export type RemoteFile = {
 export type FetchedPost = {
   platform: SourcePlatform;
   externalId: string;
+  /** 读完才知道的规范链接（抖音：链接看不出是视频还是图文，读到了才知道），和存的不一样时换掉；没有就不动 */
+  url?: string;
   kind: PostKind;
   title: string;
   text: string;
