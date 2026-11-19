@@ -6,6 +6,7 @@ import type { LinkRef } from "./link";
 import { downloadRemote } from "@/lib/media/files";
 import { SourceFetchError, emptyStats, type FetchedPost, type RemoteFile } from "./types";
 import { mapYtdlpInfo, ytdlpInfo } from "./ytdlp";
+import type { PageCapture } from "@/lib/vault/page-capture";
 
 /**
  * 读「别的链接」：不是那六个平台的，一律按网页读——博文、新闻、公众号文章、别的视频站。
@@ -17,6 +18,9 @@ import { mapYtdlpInfo, ytdlpInfo } from "./ytdlp";
  *    - 还不行就自己抓网页，从 HTML 里取标题、简介、题图和正文（纯前端渲染的页面这条路读不出正文）。
  *
  * 网页没有点赞、评论这些数字：拆解时只能从内容本身判断它好在哪。
+ *
+ * 服务器读不到、但手机的 Safari 里能看的网页（微信公众号：对服务器和机房 IP 要求先过验证），
+ * 用快捷指令在 Safari 里读（lib/vault/page-capture.ts），读到的内容走 mapCapture，不再来这里抓。
  */
 
 /** 正文最多留这么多字（一篇长文足够；再长的后面多半是评论、推荐） */
@@ -36,7 +40,8 @@ export type PageRead = {
   author: string;
   site: string;
   publishedAt: string | null;
-  via: "jina" | "direct";
+  /** browser = 用户在手机的 Safari 里读的（见 lib/vault/page-capture.ts） */
+  via: "jina" | "direct" | "browser";
 };
 
 const str = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
@@ -106,7 +111,8 @@ export function mapJinaData(data: unknown, url: string): PageRead | null {
   const d = (data && typeof data === "object" ? data : {}) as JinaData;
   if (typeof d.content !== "string") return null;
   // 目标网页本身打不开（403 / 404 / 验证页）时 Jina 照样返回 200，只在 warning 里说
-  if (/returned error|error \d{3}/i.test(str(d.warning))) return null;
+  // 要过验证码的页面（微信公众号对机房 IP 就是这样）也一样：读到的是验证页，不是正文
+  if (/returned error|error \d{3}|captcha/i.test(str(d.warning))) return null;
   const meta = (d.metadata && typeof d.metadata === "object" ? d.metadata : {}) as Record<string, unknown>;
   const author = [meta.author, meta["article:author"], meta["twitter:creator"]].map(str).find((a) => a && !/^https?:\/\//i.test(a)) ?? "";
   const images = d.images && typeof d.images === "object" ? Object.values(d.images as Record<string, unknown>) : [];
@@ -238,6 +244,23 @@ export function looksLikeLoginWall(page: Pick<PageRead, "title" | "text">): bool
   return /\b(log ?in|sign ?in)\b|登录|登入|ログイン/i.test(page.title) && page.text.length < 3000;
 }
 
+/** 读到的是不是「先过验证」的页面（微信公众号对服务器和机房 IP 给的「环境异常，完成验证后即可继续访问」、各家的人机验证）。 */
+export function looksLikeVerifyWall(page: Pick<PageRead, "title" | "text">): boolean {
+  return /环境异常|完成验证|安全验证|人机验证|captcha|verify you are (a )?human|are you a robot/i.test(`${page.title}\n${page.text.slice(0, 500)}`) && page.text.length < 1500;
+}
+
+const isWeixin = (url: string) => {
+  try {
+    return new URL(url).hostname === "mp.weixin.qq.com";
+  } catch {
+    return false;
+  }
+};
+
+/** 微信公众号的文章服务器读不了时给用户的话：告诉他能走哪条路。 */
+export const WEIXIN_BLOCKED =
+  "微信公众号的文章服务器读不了（微信要求先过验证）。在 Safari 里打开这篇文章，从分享菜单选「存入 Vault（网页）」（「手机」页上有做法），或者把正文复制下来贴进来";
+
 /** 读到的网页 → 帖子（类型是「文章」）。 */
 export function mapPage(page: PageRead, ref: LinkRef): FetchedPost {
   const host = new URL(ref.url).hostname.replace(/^www\./, "");
@@ -245,6 +268,7 @@ export function mapPage(page: PageRead, ref: LinkRef): FetchedPost {
   const notes = ["网页没有点赞、评论这些数字，只能从内容本身判断它好在哪"];
   if (chars.length > WEB_TEXT_MAX) notes.push(`文章很长，只读了前 ${WEB_TEXT_MAX / 10_000} 万字`);
   if (page.via === "direct") notes.push("正文是直接从网页里取的，可能夹着导航、广告的文字");
+  if (page.via === "browser") notes.push("服务器读不到这个网页，内容是在手机的 Safari 里读的：正文和配图是当时页面上显示的");
   const urls = [...new Set([page.cover, ...page.images].filter((u): u is string => !!u))].slice(0, WEB_MAX_IMAGES);
   const images: RemoteFile[] = urls.map((url) => ({ url }));
   return {
@@ -275,7 +299,30 @@ export async function fetchWebPage(ref: LinkRef): Promise<FetchedPost> {
     return { ...post, title: post.title || new URL(ref.url).hostname };
   }
   const page = await readPage(ref.url);
+  const blocked = !page || looksLikeVerifyWall(page);
+  if (blocked && isWeixin(ref.url)) throw new SourceFetchError(WEIXIN_BLOCKED);
   if (!page) throw new SourceFetchError("这个网页没读出正文：可能要登录才能看，或者内容是脚本加载的。把内容复制下来贴进来直接分析");
+  if (blocked) throw new SourceFetchError("这个网页要先过人机验证，服务器读不了。把内容复制下来贴进来直接分析");
   if (looksLikeLoginWall(page)) throw new SourceFetchError("这个网页要登录才能看（读到的是登录页）。把内容复制下来贴进来直接分析");
   return mapPage(page, ref);
+}
+
+/** 在手机的 Safari 里读到的网页（快捷指令带来的）→ 帖子。配图按服务器自己读网页时一样挑过（去掉图标、头像、动图）。 */
+export function mapCapture(capture: PageCapture, ref: LinkRef): FetchedPost {
+  const images = capture.images.map((u) => usableImage(u)).filter((u): u is string => u !== null);
+  const text = capture.text || capture.description;
+  return mapPage(
+    {
+      title: capture.title,
+      description: capture.description,
+      text,
+      cover: capture.cover ? usableImage(capture.cover) : null,
+      images,
+      author: capture.author,
+      site: capture.site,
+      publishedAt: capture.publishedAt,
+      via: "browser",
+    },
+    ref
+  );
 }

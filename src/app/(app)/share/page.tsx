@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { decodeSharedText } from "@/lib/vault/shortcut";
+import { CaptureForm } from "./capture-form";
 import { ShareForm } from "./share-form";
 
 export const metadata: Metadata = { title: "存入" };
@@ -10,6 +11,7 @@ export const metadata: Metadata = { title: "存入" };
  * iPhone 上没有这个分享入口，用快捷指令打开同一个地址，内容放在 b64 参数里（为什么是 Base64 见 lib/vault/shortcut.ts）。
  * 不直接存，先让用户确认一下：这是个带参数就能打开的地址，别的网站可以放一个指向它的链接，
  * 自动存的话等于谁都能往你的库里塞东西。顺便也是写「为什么存」的时机。
+ * 快捷指令「存入 Vault（网页）」带来的是在 Safari 里读到的整个网页，放在 # 片段里（服务器看不到），由 CaptureForm 在浏览器里解开。
  */
 export default async function SharePage({ searchParams }: { searchParams: Promise<{ title?: string; text?: string; url?: string; b64?: string }> }) {
   const raw = await searchParams;
@@ -24,14 +26,22 @@ export default async function SharePage({ searchParams }: { searchParams: Promis
       <h1 className="text-xl font-semibold tracking-tight">存入 Vault</h1>
       {input ? (
         <ShareForm input={input} title={sp.title ?? ""} />
+      ) : unreadable ? (
+        <Nothing>收到了内容，但没能解开：快捷指令里 Base64 Encode 的 Line Breaks 要选 None。</Nothing>
       ) : (
-        <p className="panel px-5 py-10 text-center text-sm text-ink-muted">
-          {unreadable ? "收到了内容，但没能解开：快捷指令里 Base64 Encode 的 Line Breaks 要选 None。" : "没有收到要存的内容。"}
-          <Link href="/" className="ml-1 text-accent hover:underline">
-            回收藏库
-          </Link>
-        </p>
+        <CaptureForm fallback={<Nothing>没有收到要存的内容。</Nothing>} />
       )}
     </div>
+  );
+}
+
+function Nothing({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="panel px-5 py-10 text-center text-sm text-ink-muted">
+      {children}
+      <Link href="/" className="ml-1 text-accent hover:underline">
+        回收藏库
+      </Link>
+    </p>
   );
 }

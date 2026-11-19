@@ -5,6 +5,8 @@
  * 读取器（xhs.ts、douyin.ts…）最初来自 SM-Intelligence 的收藏夹，那边修了平台改版的问题要同步过来。
  */
 
+import { readCapture, type PageCapture } from "@/lib/vault/page-capture";
+
 export const SOURCE_PLATFORMS = ["xiaohongshu", "douyin", "tiktok", "instagram", "youtube", "x", "web"] as const;
 export type SourcePlatform = (typeof SOURCE_PLATFORMS)[number];
 export const SOURCE_PLATFORM_LABEL: Record<SourcePlatform, string> = {
@@ -100,6 +102,11 @@ export type PostSnapshot = Pick<FetchedPost, "text" | "publishedAt" | "stats" | 
   transcriptFrom: "captions" | "asr" | null;
   /** 画面切换的时间点（秒，0.1 秒精度，按时间排；抽帧时 ffmpeg 测的）。没测 / 一刀没切是空 */
   cuts: number[];
+  /**
+   * 网页是在手机的 Safari 里读的（服务器读不到，见 lib/vault/page-capture.ts）：读取这一步用它，不去抓网页。
+   * 一直留着，重新读取时还用这一份。
+   */
+  capture?: PageCapture;
 };
 
 /** 读取 + 抽帧转写两步留下的所有情况（页面上列出来，也告诉模型）。 */
@@ -181,6 +188,7 @@ export function readPost(raw: unknown): PostSnapshot {
   const o = (raw && typeof raw === "object" ? raw : {}) as Partial<PostSnapshot>;
   const s = (o.stats && typeof o.stats === "object" ? o.stats : {}) as Partial<PostStats>;
   const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+  const capture = o.capture ? readCapture(o.capture) : null;
   const strings = (v: unknown) => (Array.isArray(v) ? v.filter((t): t is string => typeof t === "string") : []);
   return {
     text: typeof o.text === "string" ? o.text : "",
@@ -197,6 +205,7 @@ export function readPost(raw: unknown): PostSnapshot {
     digestNotes: strings(o.digestNotes),
     transcriptFrom: o.transcriptFrom === "captions" || o.transcriptFrom === "asr" ? o.transcriptFrom : null,
     cuts: Array.isArray(o.cuts) ? o.cuts.filter((t): t is number => typeof t === "number" && Number.isFinite(t) && t >= 0) : [],
+    ...(capture ? { capture } : {}),
   };
 }
 

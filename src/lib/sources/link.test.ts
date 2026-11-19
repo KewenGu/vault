@@ -123,6 +123,17 @@ describe("收藏夹：链接识别", () => {
     expect(parseLink("https://x.com/i/status/1")).toBeNull();
   });
 
+  it("微信公众号文章：长链接只留认文章的四个参数，短链接不要参数，分享场合不同也是同一条", () => {
+    const long = parseLink("https://mp.weixin.qq.com/s?__biz=MzA5&mid=2650&idx=1&sn=abc123&chksm=8b3e&scene=21&sharer_shareid=9#wechat_redirect");
+    expect(long).toMatchObject({ platform: "web", url: "https://mp.weixin.qq.com/s?__biz=MzA5&mid=2650&idx=1&sn=abc123" });
+    expect(parseLink("https://mp.weixin.qq.com/s?scene=1&__biz=MzA5&mid=2650&idx=1&sn=abc123&chksm=ffff")?.externalId).toBe(long?.externalId);
+    expect(parseLink("https://mp.weixin.qq.com/s?__biz=MzA5&mid=2650&idx=2&sn=zzz")?.externalId).not.toBe(long?.externalId);
+    const short = parseLink("https://mp.weixin.qq.com/s/icMS29rjuUeKiPdiJyzJAg?scene=1&from=timeline#rd");
+    expect(short).toMatchObject({ platform: "web", url: "https://mp.weixin.qq.com/s/icMS29rjuUeKiPdiJyzJAg" });
+    // 公众号的别的页面不动
+    expect(parseLink("https://mp.weixin.qq.com/mp/appmsgalbum?__biz=MzA5&album_id=1")?.url).toBe("https://mp.weixin.qq.com/mp/appmsgalbum?__biz=MzA5&album_id=1");
+  });
+
   it("别的站都算网页：去掉 #片段和追踪参数，同一个地址是同一条；指向本机 / 内网的不收", async () => {
     const a = parseLink("https://simonwillison.net/2024/Dec/31/llms-in-2024/?utm_source=x&id=3&fbclid=abc#section");
     expect(a).toMatchObject({ platform: "web", url: "https://simonwillison.net/2024/Dec/31/llms-in-2024/?id=3" });

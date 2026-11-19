@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { safeNext } from "@/lib/auth/gate";
 import { signIn, signUp } from "./actions";
+import { NextField } from "./next-field";
 
 export const metadata: Metadata = { title: "登录" };
 
@@ -27,7 +28,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
       <h1 className="text-2xl font-semibold tracking-tight">Vault</h1>
       <p className="mt-1 text-sm text-ink-muted">存下看到的任何内容，以后搜得到、用得上。</p>
       <form className="mt-8 flex flex-col gap-4">
-        <input type="hidden" name="next" value={next} />
+        <NextField next={next} />
         <label className="flex flex-col gap-1.5">
           <span className="label">邮箱</span>
           <input className="field" type="email" name="email" autoComplete="email" required defaultValue={sp.email ?? ""} />

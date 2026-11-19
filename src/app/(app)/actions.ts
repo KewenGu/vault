@@ -2,7 +2,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireSession } from "@/lib/auth/user";
-import { removeItem, reprocess, saveInput, VaultError } from "@/lib/vault/service";
+import { removeItem, reprocess, saveInput, savePage, VaultError } from "@/lib/vault/service";
 import { updateItemMeta } from "@/lib/vault/store";
 import { parseTagInput } from "@/lib/vault/taxonomy";
 
@@ -28,6 +28,24 @@ export async function saveAction(_prev: ActionState, formData: FormData): Promis
   if (saved.existing || formData.get("then") === "open") redirect(`/items/${saved.id}`);
   revalidatePath("/");
   return { error: null };
+}
+
+/** 存一个在手机的 Safari 里读到的网页（确认页 /share#page=… 提交过来，page 是 JSON）。存好后去看那条。 */
+export async function savePageAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  const session = await requireSession();
+  let saved;
+  try {
+    let page: unknown = null;
+    try {
+      page = JSON.parse(String(formData.get("page") ?? ""));
+    } catch {
+      // 下面按「没收到」报
+    }
+    saved = await savePage(session, page, String(formData.get("note") ?? ""));
+  } catch (e) {
+    return fail(e);
+  }
+  redirect(`/items/${saved.id}`);
 }
 
 export async function reprocessAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
