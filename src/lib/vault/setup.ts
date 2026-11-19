@@ -105,7 +105,7 @@ export function setupChecks(f: SetupFacts): SetupCheck[] {
       state: f.ytdlp ? "ok" : "optional",
       detail: f.ytdlp ?? "没装",
       effect: "没有它，B 站、Vimeo 这类链接只按网页读文字；YouTube 的播放接口不给读时只能走 Apify（没有画面）。",
-      fix: "macOS：brew install yt-dlp。",
+      fix: "macOS：brew install yt-dlp。Docker 部署的镜像里自带，不用另装。",
     },
     {
       key: "jina",
