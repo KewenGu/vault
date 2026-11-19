@@ -6,9 +6,10 @@ import { SourceFetchError, emptyStats, hashtagsIn, titleFromText, toCount, type 
  * 读一条 X 帖子，不用登录、不花钱。两条路，前一条不通再走后一条：
  *
  * 1. FxTwitter 的公开接口（api.fxtwitter.com/i/status/<id>，给聊天软件做链接预览用的开源服务）：正文（长帖是全文）、
- *    作者、回复 / 转发 / 点赞 / 书签 / 浏览数、图片、视频的各档 mp4 地址、引用的帖子、链接卡片。
+ *    作者、回复 / 转发 / 点赞 / 书签 / 浏览数、图片、视频的各档 mp4 地址、引用的帖子、链接卡片，
+ *    还有 X 长文（Articles，x.com/i/article/…）的全文和配图。
  * 2. X 官方的嵌入接口（cdn.syndication.twimg.com/tweet-result，网页里嵌一条帖子时用的）：正文、作者、点赞数、回复数、
- *    图片 / 视频；没有转发、书签、浏览数，敏感内容和部分老帖不给。
+ *    图片 / 视频；没有转发、书签、浏览数，敏感内容和部分老帖不给；长文只有标题、开头一段和题图。
  *
  * 两条路都读不到回复的内容（只有回复数）。帖子不存在 / 私密抛 SourceFetchError；网络错误原样抛（可以重试）。
  */
@@ -39,6 +40,113 @@ const mp4Variants = (raw: unknown): Variant[] =>
     .filter((v) => str(v.content_type) === "video/mp4" && str(v.url).startsWith("https://"))
     .map((v) => ({ url: str(v.url), bitrate: posNum(v.bitrate) }));
 
+/** 长文的字数和配图上限：和网页文章一样（web.ts 的 WEB_TEXT_MAX / WEB_MAX_IMAGES）。 */
+const ARTICLE_TEXT_MAX = 30_000;
+const ARTICLE_MAX_IMAGES = 6;
+
+/** 正文太长时截到上限，并记一条。 */
+function capText(text: string, notes: string[]): string {
+  const chars = Array.from(text);
+  if (chars.length <= ARTICLE_TEXT_MAX) return text;
+  notes.push(`长文很长，只读了前 ${ARTICLE_TEXT_MAX / 10_000} 万字`);
+  return chars.slice(0, ARTICLE_TEXT_MAX).join("");
+}
+
+const BLOCK_PREFIX: Record<string, string> = { "header-one": "# ", "header-two": "## ", "header-three": "### ", blockquote: "> ", "unordered-list-item": "- " };
+
+/**
+ * FxTwitter 给的 X 长文（tweet.article）→ 标题 + 正文 + 配图。正文是 Draft.js 的块：段落、标题、列表、引用照 Markdown 写；
+ * atomic 块看它指向的实体：MARKDOWN（代码块、表格）原样放，MEDIA 是配图（正文里留「[配图 N]」，图按顺序存），
+ * DIVIDER 是分割线，TWEET 是嵌进来的别的帖子（只记链接）。段里的链接放在段尾（X 算位置的字数和 JS 对 emoji 不一样）。
+ * 没有标题也没有正文返回 null。
+ */
+export function readFxArticle(raw: unknown): { title: string; body: string; images: RemoteFile[]; notes: string[] } | null {
+  const a = obj(raw);
+  const title = str(a.title).trim();
+  const content = obj(a.content);
+  const blocks = arr(content.blocks).map((b) => obj(b));
+  if (!title && blocks.length === 0) return null;
+
+  // entityMap：FxTwitter 给的是 [{ key, value }]，原样的 Draft.js 是 { key: value }
+  const entities = new Map<string, Obj>();
+  if (Array.isArray(content.entityMap)) for (const e of content.entityMap) entities.set(String(obj(e).key), obj(obj(e).value));
+  else for (const [k, v] of Object.entries(obj(content.entityMap))) entities.set(k, obj(v));
+  const entityOf = (range: unknown) => entities.get(String(obj(range).key)) ?? {};
+
+  const mediaFile = (m: Obj): RemoteFile | null => {
+    const info = obj(m.media_info);
+    return str(info.original_img_url) ? { url: str(info.original_img_url), width: posNum(info.original_img_width), height: posNum(info.original_img_height) } : null;
+  };
+  const media = new Map<string, RemoteFile | null>(arr(a.media_entities).map((m) => [str(obj(m).media_id), mediaFile(obj(m))]));
+
+  const images: RemoteFile[] = [];
+  const cover = mediaFile(obj(a.cover_media));
+  if (cover) images.push(cover);
+  let figures = 0;
+  let unsaved = 0;
+  let unreadMedia = 0;
+  let tweets = 0;
+  const unknown = new Set<string>();
+
+  const atomic = (e: Obj): string | null => {
+    const type = str(e.type);
+    const data = obj(e.data);
+    if (type === "MARKDOWN") return str(data.markdown).trim() || null;
+    if (type === "DIVIDER") return "---";
+    if (type === "TWEET") {
+      tweets++;
+      return str(data.tweetId) ? `【嵌入的帖子】https://x.com/i/status/${str(data.tweetId)}` : null;
+    }
+    if (type === "MEDIA") {
+      return arr(data.mediaItems)
+        .map((item) => {
+          const file = media.get(str(obj(item).mediaId));
+          if (!file) {
+            unreadMedia++;
+            return "[媒体，没读到]";
+          }
+          figures++;
+          if (images.some((i) => i.url === file.url)) return `[配图 ${figures}]`;
+          if (images.length >= ARTICLE_MAX_IMAGES) {
+            unsaved++;
+            return `[配图 ${figures}，没存]`;
+          }
+          images.push(file);
+          return `[配图 ${figures}]`;
+        })
+        .join("\n");
+    }
+    if (type) unknown.add(type);
+    return null;
+  };
+
+  const parts: { text: string; list: boolean }[] = [];
+  let ordered = 0;
+  for (const b of blocks) {
+    const type = str(b.type);
+    ordered = type === "ordered-list-item" ? ordered + 1 : 0;
+    if (type === "atomic") {
+      const text = atomic(entityOf(arr(b.entityRanges)[0]));
+      if (text) parts.push({ text, list: false });
+      continue;
+    }
+    const links = [...new Set(arr(b.entityRanges).map((r) => entityOf(r)).filter((e) => str(e.type) === "LINK").map((e) => str(obj(e.data).url)).filter(Boolean))];
+    const text = str(b.text).trim();
+    if (!text) continue;
+    const prefix = type === "ordered-list-item" ? `${ordered}. ` : (BLOCK_PREFIX[type] ?? "");
+    parts.push({ text: `${prefix}${text}${links.length > 0 ? `（链接：${links.join(" ")}）` : ""}`, list: type.endsWith("list-item") });
+  }
+  const body = parts.map((p, i) => (i === 0 ? "" : p.list && parts[i - 1].list ? "\n" : "\n\n") + p.text).join("");
+
+  const notes: string[] = [];
+  if (unsaved > 0) notes.push(`长文里有 ${figures} 张配图，只存了前 ${figures - unsaved} 张（正文里标了「没存」的没看到）`);
+  if (unreadMedia > 0) notes.push(`长文里有 ${unreadMedia} 个图片 / 视频没读到`);
+  if (tweets > 0) notes.push(`长文里嵌了 ${tweets} 条别的帖子，只记了链接，没读内容`);
+  if (unknown.size > 0) notes.push(`长文里有读不出的内容块（${[...unknown].join("、")}），跳过了`);
+  if (blocks.length === 0) notes.push("长文只读到了标题，没读到正文");
+  return { title, body, images, notes };
+}
+
 /** 作者显示成「名字 @账号」（X 上认人靠 @账号）。 */
 const authorName = (name: string, handle: string) => [name, handle ? `@${handle}` : ""].filter(Boolean).join(" ");
 
@@ -53,11 +161,14 @@ export function mapFxTweet(raw: unknown, maxVideoBytes = 50 * 1024 * 1024): Fetc
   const videos = arr(media.videos).map((v) => obj(v));
   const quote = obj(t.quote);
   const card = obj(t.card);
-  const notes: string[] = ["读不到回复的内容，只有回复数"];
+  const article = readFxArticle(t.article);
+  const notes: string[] = ["读不到回复的内容，只有回复数", ...(article?.notes ?? [])];
 
   let text = str(t.text).trim();
   if (str(quote.text)) text += `\n\n【引用 @${str(obj(quote.author).screen_name)} 的帖子】\n${str(quote.text).trim()}`;
-  if (str(card.title)) text += `\n\n【链接卡片】${str(card.title)}${str(card.description) ? `\n${str(card.description)}` : ""}${str(card.domain) ? `（${str(card.domain)}）` : ""}`;
+  if (article) text = capText(`${text}\n\n【X 长文】${article.title}${article.body ? `\n\n${article.body}` : ""}`, notes);
+  // 长文的链接卡片就是长文本身，不重复
+  else if (str(card.title)) text += `\n\n【链接卡片】${str(card.title)}${str(card.description) ? `\n${str(card.description)}` : ""}${str(card.domain) ? `（${str(card.domain)}）` : ""}`;
   if (str(t.replying_to)) notes.push(`这是回 @${str(t.replying_to)} 的一条回复，上文没读到`);
   const communityNote = str(obj(t.community_note).text);
   if (communityNote) notes.push(`帖子下有社区备注：${communityNote.replace(/\s+/g, " ").slice(0, 200)}`);
@@ -69,7 +180,9 @@ export function mapFxTweet(raw: unknown, maxVideoBytes = 50 * 1024 * 1024): Fetc
   if (first && !picked) notes.push("没有拿到视频地址，只读到了封面");
 
   const images: RemoteFile[] =
-    photos.length > 0
+    article && article.images.length > 0
+      ? article.images
+      : photos.length > 0
       ? photos.filter((p) => str(p.url)).map((p) => ({ url: str(p.url), width: posNum(p.width), height: posNum(p.height) }))
       : first && str(first.thumbnail_url)
         ? [{ url: str(first.thumbnail_url), width: posNum(first.width), height: posNum(first.height) }]
@@ -83,8 +196,8 @@ export function mapFxTweet(raw: unknown, maxVideoBytes = 50 * 1024 * 1024): Fetc
   return {
     platform: "x",
     externalId: id,
-    kind: first ? "video" : photos.length > 0 ? "image" : "text",
-    title: titleFromText(str(t.text)),
+    kind: first ? "video" : article ? "article" : photos.length > 0 ? "image" : "text",
+    title: article?.title || titleFromText(str(t.text)),
     text,
     author: { id: str(author.id) || null, name: authorName(str(author.name), str(author.screen_name)) },
     publishedAt: ts ? new Date(ts * 1000).toISOString() : null,
@@ -115,6 +228,14 @@ export function mapSyndicationTweet(raw: unknown, maxVideoBytes = 50 * 1024 * 10
   const quoted = obj(t.quoted_tweet);
   let text = body;
   if (str(quoted.text)) text += `\n\n【引用 @${str(obj(quoted.user).screen_name)} 的帖子】\n${str(quoted.text).trim()}`;
+  // 长文：这个接口只给标题、开头一段（preview_text）和题图
+  const article = obj(t.article);
+  const articleTitle = str(article.title).trim();
+  if (articleTitle) {
+    text += `\n\n【X 长文】${articleTitle}${str(article.preview_text).trim() ? `\n\n${str(article.preview_text).trim()}……` : ""}`;
+    notes.push("这是一条 X 长文，备用接口只读到了标题和开头一段，后面的正文和配图没读到");
+  }
+  const articleCover = obj(obj(article.cover_media).media_info);
 
   const details = arr(t.mediaDetails).map((m) => obj(m));
   const photos = details.filter((m) => str(m.type) === "photo" && str(m.media_url_https));
@@ -125,13 +246,19 @@ export function mapSyndicationTweet(raw: unknown, maxVideoBytes = 50 * 1024 * 10
   if (clip && !picked) notes.push("没有拿到视频地址，只读到了封面");
   const dims = (m: Obj) => ({ width: posNum(obj(m.original_info).width), height: posNum(obj(m.original_info).height) });
   const images: RemoteFile[] =
-    photos.length > 0 ? photos.map((m) => ({ url: str(m.media_url_https), ...dims(m) })) : clip && str(clip.media_url_https) ? [{ url: str(clip.media_url_https), ...dims(clip) }] : [];
+    photos.length > 0
+      ? photos.map((m) => ({ url: str(m.media_url_https), ...dims(m) }))
+      : clip && str(clip.media_url_https)
+        ? [{ url: str(clip.media_url_https), ...dims(clip) }]
+        : str(articleCover.original_img_url)
+          ? [{ url: str(articleCover.original_img_url), width: posNum(articleCover.original_img_width), height: posNum(articleCover.original_img_height) }]
+          : [];
   const created = Date.parse(str(t.created_at));
   return {
     platform: "x",
     externalId: id,
-    kind: clip ? "video" : photos.length > 0 ? "image" : "text",
-    title: titleFromText(body),
+    kind: clip ? "video" : articleTitle ? "article" : photos.length > 0 ? "image" : "text",
+    title: articleTitle || titleFromText(body),
     text,
     author: { id: str(user.id_str) || null, name: authorName(str(user.name), str(user.screen_name)) },
     publishedAt: Number.isFinite(created) ? new Date(created).toISOString() : null,

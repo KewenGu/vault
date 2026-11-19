@@ -81,6 +81,107 @@ describe("收藏夹：读 X 帖子", () => {
     expect(post.notes).toEqual(["读不到回复的内容，只有回复数", "这是回 @other 的一条回复，上文没读到", "帖子下有社区备注：原文数据 有误"]);
   });
 
+  it("X 长文（Articles）：标题用长文的；正文照 Markdown 写（标题、列表、引用、代码块、分割线），配图按顺序存到上限，没存的、嵌进来的帖子记一句", () => {
+    const img = (id: string) => ({ media_id: id, media_info: { __typename: "ApiImage", original_img_url: `https://pbs.twimg.com/media/${id}.jpg`, original_img_width: 1280, original_img_height: 720 } });
+    const block = (type: string, text: string, entityRanges: unknown[] = []) => ({ type, text, entityRanges, inlineStyleRanges: [], data: {} });
+    const atomic = (key: number) => block("atomic", " ", [{ key, offset: 0, length: 1 }]);
+    const entity = (key: number, type: string, data: Record<string, unknown>) => ({ key: String(key), value: { type, mutability: "Immutable", data } });
+    const post = mapFxTweet(
+      fx({
+        text: "怎么搭一支 AI 开发团队，7 步：https://x.com/i/article/2109705772569423873",
+        card: { title: "长文的卡片", domain: "x.com" },
+        article: {
+          id: "2109705772569423873",
+          title: "用 Opus 搭开发团队（完整教程）",
+          cover_media: img("cover"),
+          media_entities: ["m1", "m2", "m3", "m4", "m5", "m6", "m7"].map(img),
+          content: {
+            blocks: [
+              block("unstyled", "从一个 issue 出发。"),
+              block("blockquote", "并行越多，越要协调。"),
+              atomic(0),
+              block("header-one", "1. 准备"),
+              block("ordered-list-item", "装 git"),
+              block("ordered-list-item", "装 gh", [{ key: 4, offset: 2, length: 2 }]),
+              block("unordered-list-item", "架构师"),
+              block("unordered-list-item", "测试"),
+              atomic(1),
+              block("unstyled", ""),
+              atomic(2),
+              atomic(3),
+              atomic(5),
+              block("header-two", "收尾"),
+            ],
+            entityMap: [
+              entity(0, "TWEET", { tweetId: "2102435511222890900" }),
+              entity(1, "MARKDOWN", { markdown: "```bash\ngh auth login\n```\n" }),
+              entity(2, "DIVIDER", {}),
+              entity(3, "MEDIA", { mediaItems: ["m1", "m2", "m3", "m4", "m5", "m6", "m7", "gone"].map((mediaId) => ({ mediaId })) }),
+              entity(4, "LINK", { url: "https://cli.github.com" }),
+              entity(5, "POLL", {}),
+            ],
+          },
+        },
+      })
+    );
+    expect(post.kind).toBe("article");
+    expect(post.title).toBe("用 Opus 搭开发团队（完整教程）");
+    expect(post.text).toBe(
+      [
+        "怎么搭一支 AI 开发团队，7 步：https://x.com/i/article/2109705772569423873",
+        "【X 长文】用 Opus 搭开发团队（完整教程）",
+        "从一个 issue 出发。",
+        "> 并行越多，越要协调。",
+        "【嵌入的帖子】https://x.com/i/status/2102435511222890900",
+        "# 1. 准备",
+        "1. 装 git\n2. 装 gh（链接：https://cli.github.com）\n- 架构师\n- 测试",
+        "```bash\ngh auth login\n```",
+        "---",
+        "[配图 1]\n[配图 2]\n[配图 3]\n[配图 4]\n[配图 5]\n[配图 6，没存]\n[配图 7，没存]\n[媒体，没读到]",
+        "## 收尾",
+      ].join("\n\n")
+    );
+    // 题图 + 前 5 张配图（一共 6 张，和网页文章一样）
+    expect(post.images.map((i) => i.url)).toEqual(["cover", "m1", "m2", "m3", "m4", "m5"].map((id) => `https://pbs.twimg.com/media/${id}.jpg`));
+    expect(post.images[0]).toEqual({ url: "https://pbs.twimg.com/media/cover.jpg", width: 1280, height: 720 });
+    expect(post.notes).toEqual([
+      "读不到回复的内容，只有回复数",
+      "长文里有 7 张配图，只存了前 5 张（正文里标了「没存」的没看到）",
+      "长文里有 1 个图片 / 视频没读到",
+      "长文里嵌了 1 条别的帖子，只记了链接，没读内容",
+      "长文里有读不出的内容块（POLL），跳过了",
+    ]);
+    // 互动数照旧是帖子的
+    expect(post.stats).toEqual({ views: 51000, likes: 400, collects: 220, comments: 12, shares: 35 });
+
+    // entityMap 是原样 Draft.js 的 { key: value } 也认；太长截到 3 万字
+    const long = mapFxTweet(fx({ article: { title: "长", content: { blocks: [block("unstyled", "字".repeat(40_000))], entityMap: {} } } }));
+    expect(Array.from(long.text)).toHaveLength(30_000);
+    expect(long.notes).toContain("长文很长，只读了前 3 万字");
+    const keyed = mapFxTweet(fx({ article: { title: "T", content: { blocks: [atomic(7)], entityMap: { 7: { type: "DIVIDER", data: {} } } } } }));
+    expect(keyed.text.endsWith("【X 长文】T\n\n---")).toBe(true);
+    // 只有标题
+    expect(mapFxTweet(fx({ article: { title: "只有标题" } })).notes).toContain("长文只读到了标题，没读到正文");
+  });
+
+  it("备用接口读到长文：只有标题、开头一段和题图，记一句后面没读到", () => {
+    const post = mapSyndicationTweet({
+      __typename: "Tweet",
+      id_str: "2109980695787454803",
+      text: "7 步搭团队：https://t.co/7jiKhDNMB9",
+      entities: { urls: [{ url: "https://t.co/7jiKhDNMB9", expanded_url: "http://x.com/i/article/2109705772569423873" }] },
+      user: { screen_name: "a" },
+      article: {
+        title: "用 Opus 搭开发团队",
+        preview_text: "从一个 issue 出发。\n并行越多",
+        cover_media: { media_info: { original_img_url: "https://pbs.twimg.com/media/cover.jpg", original_img_width: 1278, original_img_height: 511 } },
+      },
+    });
+    expect(post).toMatchObject({ kind: "article", title: "用 Opus 搭开发团队", images: [{ url: "https://pbs.twimg.com/media/cover.jpg", width: 1278, height: 511 }] });
+    expect(post.text).toBe("7 步搭团队：http://x.com/i/article/2109705772569423873\n\n【X 长文】用 Opus 搭开发团队\n\n从一个 issue 出发。\n并行越多……");
+    expect(post.notes).toContain("这是一条 X 长文，备用接口只读到了标题和开头一段，后面的正文和配图没读到");
+  });
+
   it("备用接口（官方嵌入）：t.co 短链换回原链接、图片占位短链去掉；没有转发 / 书签 / 浏览量并记一句", () => {
     const post = mapSyndicationTweet({
       __typename: "Tweet",
