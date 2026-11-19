@@ -11,7 +11,7 @@ const subscribe = (onChange: () => void) => {
 };
 
 /**
- * 快捷指令「存入 Vault」在 Safari 里分享时打开的是 `/share#page=…`：内容在 # 片段里，服务器看不到，只能在这里解开（见 lib/vault/page-capture.ts）。
+ * 快捷指令「存入 Vault（网页）」打开的是 `/share#page=…`：内容在 # 片段里，服务器看不到，只能在这里解开（见 lib/vault/page-capture.ts）。
  * 片段里没有网页内容时显示 fallback（「没有收到要存的内容」）。
  */
 export function CaptureForm({ fallback }: { fallback: ReactNode }) {
