@@ -11,7 +11,7 @@ let fake: FakeSupabase;
 vi.mock("@/lib/supabase/service", () => ({ getServiceClient: () => fake.db }));
 vi.mock("@/lib/sources/fetch-post", () => ({ fetchPost: vi.fn() }));
 vi.mock("@/lib/sources/ytdlp", async (orig) => ({ ...(await orig<object>()), ytdlpDownload: vi.fn() }));
-vi.mock("@/lib/media/files", async (orig) => ({ ...(await orig<object>()), downloadRemote: vi.fn(), downloadRemoteToFile: vi.fn(), normalizeImage: vi.fn(), visionImage: vi.fn(async (data: Uint8Array) => data) }));
+vi.mock("@/lib/media/files", async (orig) => ({ ...(await orig<object>()), downloadRemote: vi.fn(), downloadRemoteToFile: vi.fn(), archiveImage: vi.fn(), visionImage: vi.fn(async (data: Uint8Array) => data), visionSlices: vi.fn(async (data: Uint8Array) => ({ slices: [data], total: 1 })) }));
 vi.mock("@/lib/media/frames", async (orig) => ({ ...(await orig<object>()), canDigestVideo: vi.fn(), digestVideo: vi.fn(), digestVideoFile: vi.fn(), contactSheets: vi.fn() }));
 vi.mock("@/lib/asr/volc", async (orig) => ({ ...(await orig<object>()), asrConfig: vi.fn(), transcribe: vi.fn() }));
 vi.mock("@/lib/asr/openai", async (orig) => ({ ...(await orig<object>()), openaiAsrConfig: vi.fn(), transcribeWithOpenAI: vi.fn() }));
@@ -23,7 +23,7 @@ import { openaiAsrConfig, transcribeWithOpenAI } from "@/lib/asr/openai";
 import { asrConfig } from "@/lib/asr/volc";
 import { localWhisper, whisperSetupHint } from "@/lib/asr/whisper-local";
 import { linkItemEntities } from "@/lib/graph/merge";
-import { TooLargeError, VIDEO_MAX_BYTES, downloadRemote, downloadRemoteToFile, normalizeImage } from "@/lib/media/files";
+import { TooLargeError, VIDEO_MAX_BYTES, archiveImage, downloadRemote, downloadRemoteToFile, visionSlices } from "@/lib/media/files";
 import { canDigestVideo, contactSheets, digestVideo, digestVideoFile } from "@/lib/media/frames";
 import { fetchPost } from "@/lib/sources/fetch-post";
 import { understand } from "@/lib/vault/understand";
@@ -146,7 +146,7 @@ beforeEach(async () => {
   vi.clearAllMocks();
   fake = makeFakeSupabase({ items: [row()] }, { rpc: { tag_counts: () => [{ tag: "个人成长", n: 3 }], prune_orphan_entities: () => 0 } });
   vi.mocked(fetchPost).mockResolvedValue(post());
-  vi.mocked(normalizeImage).mockResolvedValue({ data: jpeg, mime: "image/jpeg", width: 1280, height: 720 });
+  vi.mocked(archiveImage).mockResolvedValue({ data: jpeg, mime: "image/jpeg", width: 1280, height: 720 });
   vi.mocked(canDigestVideo).mockReturnValue(true);
   vi.mocked(downloadRemote).mockResolvedValue(jpeg);
   vi.mocked(digestVideo).mockResolvedValue(digest() as never);
@@ -410,6 +410,15 @@ describe("what gets saved from the understanding", () => {
     expect(vi.mocked(understand).mock.calls[0][0].existingTags).toEqual(["个人成长"]);
     expect(vi.mocked(linkItemEntities).mock.calls[0][2]).toMatchObject({ userId: USER, itemId: ID, entities: [{ name: "Michael大麦哥" }] });
     expect(String(item().search_text)).toContain("第一，别人的评价只是信息");
+  });
+
+  it("shows a long image to the model in segments, and says which part it did not see", async () => {
+    const seg = (n: number) => new Uint8Array([n]);
+    vi.mocked(visionSlices).mockResolvedValueOnce({ slices: [seg(1), seg(2), seg(3)], total: 5 });
+    await processItem(ID);
+    const input = vi.mocked(understand).mock.calls[0][0];
+    expect(input.images.map((i) => i.caption)).toEqual([1, 2, 3].map((j) => `图片（长图，从上往下第 ${j}/5 段，相邻两段有一点重叠）`));
+    expect(input.gaps).toContain("图片是很长的长图，切成 5 段，只给模型看了前 3 段，后面的内容没读");
   });
 
   it("swaps in the canonical link once the reader knows what the post is (a Douyin link that turned out to be 图文)", async () => {

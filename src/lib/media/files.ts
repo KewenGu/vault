@@ -156,3 +156,62 @@ export async function normalizeImage(data: Uint8Array, maxEdge = 2160, quality =
 export async function visionImage(data: Uint8Array, maxEdge = 1024): Promise<Uint8Array> {
   return (await normalizeImage(data, maxEdge, 80)).data;
 }
+
+/**
+ * 长图：高是宽的这么多倍以上（手机的长截图、拼起来的公众号文章、小红书的长图）。
+ * 按长边缩的话宽度会缩到一两百像素、字全糊了：存档按宽度缩（archiveImage），给模型看时切成几段（visionSlices）。
+ * 普通的手机截图（约 2.17 倍）也算：按长边 1024 缩完只有 470 宽，中文小字读不清。
+ */
+export const TALL_RATIO = 1.8;
+/** 长图存档：宽最多这么多（iPhone 截图 1179–1320 宽，原样留着），高最多这么多 */
+const TALL_MAX_WIDTH = 1440;
+const TALL_MAX_HEIGHT = 30_000;
+
+/** 摆正（按 EXIF）之后的宽高；读不出来是 null */
+async function orientedSize(data: Uint8Array): Promise<{ width: number; height: number } | null> {
+  const m = await sharp(Buffer.from(data)).metadata();
+  if (!m.width || !m.height) return null;
+  // EXIF 方向 5–8 是转了 90 度的
+  return (m.orientation ?? 1) >= 5 ? { width: m.height, height: m.width } : { width: m.width, height: m.height };
+}
+
+const isTall = (s: { width: number; height: number } | null) => !!s && s.height / s.width >= TALL_RATIO;
+
+/** 存档用的图：普通图片同 normalizeImage（长边 2160）；长图按宽度缩（宽 ≤ 1440，高 ≤ 3 万）。读不出来的抛错。 */
+export async function archiveImage(data: Uint8Array): Promise<StoredImage> {
+  if (!isTall(await orientedSize(data))) return normalizeImage(data);
+  const { data: out, info } = await sharp(Buffer.from(data))
+    .rotate()
+    .resize({ width: TALL_MAX_WIDTH, height: TALL_MAX_HEIGHT, fit: "inside", withoutEnlargement: true })
+    .flatten({ background: "#ffffff" })
+    .jpeg({ quality: 88, mozjpeg: true })
+    .toBuffer({ resolveWithObject: true });
+  return { data: new Uint8Array(out), mime: "image/jpeg", width: info.width, height: info.height };
+}
+
+export type VisionSlices = { slices: Uint8Array[]; total: number };
+
+/**
+ * 给模型看的一张图，长图切成几段：先缩到宽 `width`，再从上往下每 `sliceHeight` 切一段（相邻两段重叠 `overlap`，
+ * 切在一行字中间时另一段里有完整的那一行）。一段约 2000 tokens。
+ * 最多给 `maxSlices` 段；total 是一共切成了几段（比 slices 多 = 后面的没给模型看，调用方要记下来）。
+ * 不是长图的照旧 visionImage 一张。
+ */
+export async function visionSlices(data: Uint8Array, opts: { width?: number; sliceHeight?: number; overlap?: number; maxSlices?: number } = {}): Promise<VisionSlices> {
+  const { width = 1024, sliceHeight = 1536, overlap = 96, maxSlices = 16 } = opts;
+  if (!isTall(await orientedSize(data))) return { slices: [await visionImage(data)], total: 1 };
+  // 先整张缩好（之后每段从这份里切，不用每段都解一次原图）
+  const scaled = await sharp(Buffer.from(data)).rotate().resize({ width, withoutEnlargement: true }).flatten({ background: "#ffffff" }).jpeg({ quality: 92 }).toBuffer({ resolveWithObject: true });
+  const { width: w, height: h } = scaled.info;
+  if (h <= sliceHeight) return { slices: [await visionImage(data)], total: 1 };
+  const step = sliceHeight - overlap;
+  const total = Math.ceil((h - overlap) / step);
+  const slices: Uint8Array[] = [];
+  for (let i = 0; i < Math.min(total, maxSlices); i++) {
+    // 最后一段贴着底边取满一段高
+    const top = Math.min(i * step, h - sliceHeight);
+    const out = await sharp(scaled.data).extract({ left: 0, top, width: w, height: sliceHeight }).jpeg({ quality: 80, mozjpeg: true }).toBuffer();
+    slices.push(new Uint8Array(out));
+  }
+  return { slices, total };
+}

@@ -124,7 +124,7 @@ export default async function MobilePage() {
         <div className="flex flex-col gap-1.5">
           <h2 className="text-[15px] font-medium">iPhone：服务器读不到的网页（微信公众号）</h2>
           <p className="text-sm leading-relaxed text-ink-muted">
-            公众号文章对服务器要求先过验证，Vault 自己读不了，但在 Safari 里能看。再做一个快捷指令，在 Safari 里把正在看的公众号文章（标题、正文、配图、发布时间）读下来交给 Vault。在别的网站上用它只交链接，和上面那个一样：小红书、抖音这些照常按链接读。
+            公众号文章对服务器要求先过验证，Vault 自己读不了，但在 Safari 里能看。再做一个快捷指令，在 Safari 里把正在看的公众号文章（标题、正文、配图、发布时间）读下来交给 Vault。在别的网站上用它只交链接，和上面那个一样：小红书、抖音这些照常按链接读。不能和上面那个合成一个：快捷指令只要还接收网页以外的类型，Safari 交进来的就只是链接，在页面上跑不了脚本。
           </p>
         </div>
         <ol className="flex list-decimal flex-col gap-3 pl-5 text-sm leading-relaxed text-ink-secondary marker:text-ink-faint">

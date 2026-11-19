@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import sharp from "sharp";
-import { TooLargeError, downloadRemote, downloadRemoteToFile, normalizeImage, visionImage } from "./files";
+import { TooLargeError, archiveImage, downloadRemote, downloadRemoteToFile, normalizeImage, visionImage, visionSlices } from "./files";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -118,6 +118,52 @@ describe("收藏夹：文件处理", () => {
     const vision = await sharp(Buffer.from(await visionImage(png))).metadata();
     expect([vision.width, vision.height]).toEqual([1024, 512]);
     await expect(normalizeImage(new Uint8Array([1, 2, 3]))).rejects.toThrow();
+  });
+
+  /** 白底、最下面 120 像素是红色的长图（看切段有没有切到底） */
+  const tallPng = async (width: number, height: number) =>
+    new Uint8Array(
+      await sharp({ create: { width, height, channels: 3, background: "#ffffff" } })
+        .composite([{ input: { create: { width, height: 120, channels: 3, background: "#ff0000" } }, top: height - 120, left: 0 }])
+        .png()
+        .toBuffer()
+    );
+
+  it("长图存档按宽度缩：宽不超过 1440，高不按 2160 截；普通图片照旧按长边", async () => {
+    // 一张 iPhone 长截图：原样留着（以前会缩成 212 × 2160）
+    expect(await archiveImage(await tallPng(1179, 12_000))).toMatchObject({ mime: "image/jpeg", width: 1179, height: 12_000 });
+    expect(await archiveImage(await tallPng(3000, 20_000))).toMatchObject({ width: 1440, height: 9600 });
+    // 普通图片同 normalizeImage
+    const wide = new Uint8Array(await sharp({ create: { width: 3000, height: 1500, channels: 3, background: "#fff" } }).png().toBuffer());
+    expect(await archiveImage(wide)).toMatchObject({ width: 2160, height: 1080 });
+    await expect(archiveImage(new Uint8Array([1, 2, 3]))).rejects.toThrow();
+  });
+
+  it("给模型看的长图切成几段：缩到宽 1024，每段 1536 高、相邻重叠，最后一段贴着底边；段数有上限", async () => {
+    const tall = await tallPng(1179, 12_000);
+    const cut = await visionSlices(tall);
+    // 缩到 1024 × 10422，每段往下 1440：一共 8 段
+    expect(cut.total).toBe(8);
+    expect(cut.slices).toHaveLength(8);
+    for (const s of cut.slices) expect(await sharp(Buffer.from(s)).metadata()).toMatchObject({ format: "jpeg", width: 1024, height: 1536 });
+    // 最后一段的最底下是红色的那一条
+    const last = await sharp(Buffer.from(cut.slices[7])).extract({ left: 500, top: 1520, width: 1, height: 1 }).raw().toBuffer();
+    expect(last[0]).toBeGreaterThan(200);
+    expect(last[1]).toBeLessThan(60);
+    // 第一段没有红色
+    const first = await sharp(Buffer.from(cut.slices[0])).stats();
+    expect(first.channels[1].min).toBeGreaterThan(200);
+
+    const capped = await visionSlices(tall, { maxSlices: 3 });
+    expect([capped.slices.length, capped.total]).toEqual([3, 8]);
+
+    // 普通手机截图（约 2.17 倍）切成两段
+    expect((await visionSlices(await tallPng(1179, 2556))).total).toBe(2);
+    // 不是长图：一张，同 visionImage
+    const photo = new Uint8Array(await sharp({ create: { width: 3000, height: 2000, channels: 3, background: "#fff" } }).png().toBuffer());
+    const one = await visionSlices(photo);
+    expect(one.total).toBe(1);
+    expect(await sharp(Buffer.from(one.slices[0])).metadata()).toMatchObject({ width: 1024, height: 683 });
   });
 });
 
