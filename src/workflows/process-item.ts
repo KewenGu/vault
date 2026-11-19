@@ -218,7 +218,7 @@ async function fetchLink(db: Db, item: Item, counts: Counts): Promise<boolean> {
   const stored = await storeMedia(db, itemDir(item.userId, item.id), post);
   let media = stored.media;
   let transcript: string | null = post.captions || null;
-  let durationS = post.video?.durationS ?? null;
+  let durationS = post.video?.durationS ?? post.durationS ?? null;
   let digestNotes: string[] = [];
   let cuts: number[] = [];
   let digested = false;

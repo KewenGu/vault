@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-# Vault 的运行镜像：Next.js 服务 + 读视频要用的 ffmpeg。构建和运行的说明见 deploy/README.md。
+# Vault 的运行镜像：Next.js 服务 + 读视频要用的 ffmpeg 和 yt-dlp。构建和运行的说明见 deploy/README.md。
 
 # 静态编译的 ffmpeg（带 libx264）。应用要求 8.1.3 以上或 9.0.2 以上，发行版自带的不够新。
 FROM mwader/static-ffmpeg:9.0.2 AS ffmpeg
@@ -24,10 +24,18 @@ RUN test -n "$NEXT_PUBLIC_SUPABASE_URL" && test -n "$NEXT_PUBLIC_SUPABASE_ANON_K
 RUN npm run build && npm prune --omit=dev
 
 FROM node:24-bookworm-slim AS run
-# fontconfig + fonts-noto-cjk：视频帧格上的中文字要有字体才画得出来；tini：当 1 号进程，回收 ffmpeg 留下的子进程
+# fontconfig + fonts-noto-cjk：视频帧格上的中文字要有字体才画得出来；tini：当 1 号进程，回收 ffmpeg 留下的子进程；
+# python3：yt-dlp 要用
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates fontconfig fonts-noto-cjk tini \
+    && apt-get install -y --no-install-recommends ca-certificates fontconfig fonts-noto-cjk tini python3 python3-venv \
     && rm -rf /var/lib/apt/lists/*
+# yt-dlp：认 B 站、Vimeo 这类别的视频站。装在自己的 venv 里，版本写死；视频站改版读不到了，把版本号改成最新的重新构建
+# （docker compose build --build-arg YTDLP_VERSION=… 也行）。
+ARG YTDLP_VERSION=2026.10.26
+RUN python3 -m venv /opt/yt-dlp \
+    && /opt/yt-dlp/bin/pip install --no-cache-dir --disable-pip-version-check "yt-dlp[default]==${YTDLP_VERSION}" \
+    && ln -s /opt/yt-dlp/bin/yt-dlp /usr/local/bin/yt-dlp \
+    && yt-dlp --version
 COPY --from=ffmpeg /ffmpeg /usr/local/bin/ffmpeg
 WORKDIR /app
 ENV NODE_ENV=production \
@@ -35,6 +43,7 @@ ENV NODE_ENV=production \
     PORT=3000 \
     HOSTNAME=0.0.0.0 \
     FFMPEG_PATH=/usr/local/bin/ffmpeg \
+    YTDLP_PATH=/usr/local/bin/yt-dlp \
     WORKFLOW_TARGET_WORLD=local \
     WORKFLOW_LOCAL_DATA_DIR=/data/workflow
 COPY --from=build /app/package.json /app/next.config.ts ./
