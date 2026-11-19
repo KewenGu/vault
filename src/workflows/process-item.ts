@@ -9,7 +9,7 @@ import { embedTexts } from "@/lib/embeddings";
 import { defaultGraphDeps, linkItemEntities } from "@/lib/graph/merge";
 import { extractSpeechAudio } from "@/lib/media/audio";
 import { withTempDir } from "@/lib/media/ffmpeg";
-import { IMAGE_MAX_BYTES, MAX_IMAGES, VIDEO_MAX_BYTES, TooLargeError, downloadRemote, downloadRemoteToFile, normalizeImage, visionImage } from "@/lib/media/files";
+import { IMAGE_MAX_BYTES, MAX_IMAGES, VIDEO_MAX_BYTES, TooLargeError, archiveImage, downloadRemote, downloadRemoteToFile, visionImage, visionSlices } from "@/lib/media/files";
 import { canDigestVideo, contactSheets, digestVideo, digestVideoFile, sheetLayout } from "@/lib/media/frames";
 import { keepLocalFile, localFileSize, localMediaPath, removeLocalItemFiles } from "@/lib/media/local-store";
 import { clockTenths, cuesToText, frameNote, likelyChinese, parseTranscript, speechAt, speechLabel, type Cue } from "@/lib/media/transcript";
@@ -139,7 +139,7 @@ async function storeMedia(db: Db, dir: string, post: FetchedPost, tmp: string): 
   let failed = 0;
   for (const [i, file] of images.entries()) {
     try {
-      const img = await normalizeImage(await downloadRemote(file, IMAGE_MAX_BYTES, 30_000));
+      const img = await archiveImage(await downloadRemote(file, IMAGE_MAX_BYTES, 30_000));
       if (post.platform === "web" && Math.min(img.width, img.height) < WEB_IMAGE_MIN_EDGE) continue;
       const path = `${dir}/img-${String(media.length + 1).padStart(2, "0")}.jpg`;
       await upload(db, path, img.data, img.mime);
@@ -292,7 +292,7 @@ async function fetchLink(db: Db, item: Item, counts: Counts): Promise<boolean> {
 
 /**
  * ① 上传的文件：浏览器直传到 `<目录>/upload.<扩展名>`（items.media 里登记着），这里把它变成能用的样子——
- * 图片统一成 JPEG（摆正、长边 ≤ 2160，原文件删掉）；视频 / 音频原样留着；文字文件读成正文（文件删掉）。
+ * 图片统一成 JPEG（摆正、长边 ≤ 2160；长图按宽度缩，宽 ≤ 1440，见 archiveImage；原文件删掉）；视频 / 音频原样留着；文字文件读成正文（文件删掉）。
  * 已经处理过的（重新读取）不用再动。
  */
 async function fetchUpload(db: Db, item: Item): Promise<void> {
@@ -309,7 +309,7 @@ async function fetchUpload(db: Db, item: Item): Promise<void> {
     } else {
       let img;
       try {
-        img = await normalizeImage(data);
+        img = await archiveImage(data);
       } catch {
         throw new Error("这张图片读不出来（格式不支持或文件坏了）。HEIC 照片请先转成 JPEG 再传");
       }
@@ -532,11 +532,15 @@ async function digestItemStep(itemId: string): Promise<{ counts: Counts }> {
   return { counts };
 }
 
+/** 给模型看的长图一共最多切这么多段（一段约 2000 tokens）；单张最多 16 段（visionSlices） */
+const VISION_SLICES_MAX = 40;
+
 /**
- * 给模型看的图：图文 / 文章 / 上传的图是每一张图；视频是封面 + 帧格（全片一览，每格下面是时间和那一刻说的话）+ 抽的每一帧
- * （说明里带时间、是不是刚切镜、那一刻说到的词；没抽成就只有封面）。
+ * 给模型看的图：图文 / 文章 / 上传的图是每一张图（长图切成几段，见 visionSlices）；视频是封面 + 帧格（全片一览，每格下面是时间和那一刻说的话）
+ * + 抽的每一帧（说明里带时间、是不是刚切镜、那一刻说到的词；没抽成就只有封面）。
+ * gaps：没给模型看到的（读不出来的图、长图后面没给的段），理解时告诉模型、页面上列出来。
  */
-async function visionImages(db: Db, item: Item): Promise<{ caption: string; data: Uint8Array }[]> {
+async function visionImages(db: Db, item: Item): Promise<{ images: { caption: string; data: Uint8Array }[]; gaps: string[] }> {
   const frames = framesOf(item);
   const sheets = sheetsOf(item);
   const images = imagesOf(item);
@@ -545,23 +549,42 @@ async function visionImages(db: Db, item: Item): Promise<{ caption: string; data
     const range = s.at !== undefined && s.to !== undefined ? `（${clockTenths(s.at)}–${clockTenths(s.to)}）` : "";
     return `帧格 ${i + 1}/${sheets.length}${range}：全片画面一览，每格下面是时间和那一刻说的话`;
   };
-  const picks: { caption: string; path: string }[] =
-    item.kind === "video"
-      ? [
-          ...images.slice(0, 1).map((m) => ({ caption: "封面", path: m.path })),
-          ...sheets.map((m, i) => ({ caption: sheetCaption(i), path: m.path })),
-          ...frames.map((m) => ({ caption: frameNote({ at: m.at ?? 0, cut: m.cut, words: m.words }), path: m.path })),
-        ]
-      : images.map((m, i) => ({ caption: images.length > 1 ? `第 ${i + 1} 张图${i === 0 ? "（封面）" : ""}` : "图片", path: m.path }));
   const out: { caption: string; data: Uint8Array }[] = [];
-  for (const p of picks) {
-    try {
-      out.push({ caption: p.caption, data: await visionImage(await download(db, p.path)) });
-    } catch {
-      // 这张读不出来：不给模型看
+  const gaps: string[] = [];
+  if (item.kind === "video") {
+    const picks = [
+      ...images.slice(0, 1).map((m) => ({ caption: "封面", path: m.path })),
+      ...sheets.map((m, i) => ({ caption: sheetCaption(i), path: m.path })),
+      ...frames.map((m) => ({ caption: frameNote({ at: m.at ?? 0, cut: m.cut, words: m.words }), path: m.path })),
+    ];
+    for (const p of picks) {
+      try {
+        out.push({ caption: p.caption, data: await visionImage(await download(db, p.path)) });
+      } catch {
+        // 这张读不出来：不给模型看
+      }
     }
+    return { images: out, gaps };
   }
-  return out;
+  let slicesLeft = VISION_SLICES_MAX;
+  for (const [i, m] of images.entries()) {
+    const name = images.length > 1 ? `第 ${i + 1} 张图${i === 0 ? "（封面）" : ""}` : "图片";
+    let cut;
+    try {
+      cut = await visionSlices(await download(db, m.path), { maxSlices: Math.max(1, Math.min(16, slicesLeft)) });
+    } catch {
+      gaps.push(`${name}读不出来，没给模型看`);
+      continue;
+    }
+    if (cut.total === 1) {
+      out.push({ caption: name, data: cut.slices[0] });
+      continue;
+    }
+    slicesLeft -= cut.slices.length;
+    cut.slices.forEach((data, j) => out.push({ caption: `${name}（长图，从上往下第 ${j + 1}/${cut.total} 段，相邻两段有一点重叠）`, data }));
+    if (cut.slices.length < cut.total) gaps.push(`${name}是很长的长图，切成 ${cut.total} 段，只给模型看了前 ${cut.slices.length} 段，后面的内容没读`);
+  }
+  return { images: out, gaps };
 }
 
 /** ③ 理解。 */
@@ -572,14 +595,14 @@ async function understandItemStep(itemId: string): Promise<StepResult> {
   if (!item) return { ok: false, error: "这条内容不在了", counts };
   if (item.status !== "analyzing") return { ok: false, error: `状态是 ${item.status}，不再分析`, counts };
   try {
-    const images = await visionImages(db, item);
+    const { images, gaps: unseen } = await visionImages(db, item);
     // 上传的文件的标题只是文件名，不算内容：画面和声音都没读到时不让模型对着文件名编
     const text = item.userText?.trim() || item.post.text || (item.source === "link" ? item.title : "");
     if (!text && images.length === 0 && !item.transcript) {
       const why = item.post.digestNotes.join("；");
       throw new Error(`没有读到任何内容（文字、画面、声音都没有），没法理解${why ? `：${why}` : ""}`);
     }
-    const gaps: string[] = [];
+    const gaps: string[] = [...unseen];
     if (item.source === "link" && item.userText?.trim() && item.media.length === 0) gaps.push("链接本身没读到：只有用户手动贴的文字，没有图片 / 视频");
     const existingTags = (await tagCounts(db, item.userId)).map((t) => t.tag);
     const understanding = await meterInto(counts, () =>
