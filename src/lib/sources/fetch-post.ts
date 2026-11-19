@@ -1,13 +1,14 @@
 import "server-only";
 import { fetchDouyinVideo } from "./douyin";
 import { fetchInstagramPost } from "./instagram";
-import type { LinkRef } from "./link";
+import { followMentions } from "./follow";
+import { resolveLink, type LinkRef } from "./link";
 import { VIDEO_MAX_BYTES } from "@/lib/media/files";
 import { fetchTikTokVideo } from "./tiktok";
 import { SourceFetchError, type SourcePlatform, type FetchedPost } from "./types";
 import { fetchWebPage } from "./web";
 import { fetchXhsNote } from "./xhs";
-import { fetchXPost } from "./x";
+import { readXPost } from "./x";
 import { YouTubeBlockedError, fetchYouTubeVideo } from "./youtube";
 import { fetchYouTubeViaApify } from "./youtube-apify";
 import { mapYtdlpInfo, ytdlpInfo, ytdlpPath } from "./ytdlp";
@@ -22,7 +23,7 @@ import { mapYtdlpInfo, ytdlpInfo, ytdlpPath } from "./ytdlp";
  * | TikTok | 直接读视频页 | 免费 |
  * | Instagram | Apify 官方 actor | 约 $0.003 / 条 |
  * | YouTube | App 的播放接口（字幕 + 360p 视频）；被拦时（云服务器上）走 Apify，只有字幕 | 免费；走 Apify 时约 $0.004 / 条 |
- * | X | FxTwitter 公开接口 → 官方嵌入接口 | 免费 |
+ * | X | FxTwitter 公开接口 → 官方嵌入接口；提到的帖子和链接跟着读（见 follow.ts） | 免费 |
  * | 网页 | Jina Reader → 自己抓；本机有 yt-dlp 时认别的视频站 | Jina 带密钥时 $0.0005 |
  */
 
@@ -51,7 +52,7 @@ const FETCHERS: Record<SourcePlatform, (ref: LinkRef) => Promise<FetchedPost>> =
   tiktok: (ref) => fetchTikTokVideo(ref, VIDEO_MAX_BYTES),
   instagram: (ref) => fetchInstagramPost(ref),
   youtube: fetchYouTube,
-  x: (ref) => fetchXPost(ref, VIDEO_MAX_BYTES),
+  x: async (ref) => followMentions(await readXPost(ref, VIDEO_MAX_BYTES), { readX: (r) => readXPost(r, VIDEO_MAX_BYTES), readOther: (r) => FETCHERS[r.platform](r), resolve: (url) => resolveLink(url) }),
   web: (ref) => fetchWebPage(ref),
 };
 
