@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CAPTURE_TEXT_MAX, captureScript, decodeCaptureHash, readCapture } from "./page-capture";
+import { decodeSharedText } from "./shortcut";
 
 const b64url = (s: string) => Buffer.from(s, "utf-8").toString("base64url");
 
@@ -120,23 +121,19 @@ describe("captureScript", () => {
     expect(decodeCaptureHash(url.slice(url.indexOf("#")))).toMatchObject({ kind: "page", capture: { publishedAt: "2026-11-10T10:19:00.000Z" } });
   });
 
-  it("别的网页：正文取 <article>，标题、站点取 meta", () => {
-    const page = fakePage({
-      host: "example.com",
-      href: "https://example.com/post?id=1",
-      title: "页面标题",
-      metas: { "p:og:site_name": "Example", "p:article:published_time": "2026-01-02T03:04:05Z" },
-      byId: { js_content: "不该用这个" },
-      tags: { article: "文章正文" },
-      images: [],
-      scripts: [],
-    });
-    const url = run(captureScript(origin), page);
-    expect(decodeCaptureHash(url.slice(url.indexOf("#")))).toMatchObject({ kind: "page", capture: { title: "页面标题", text: "文章正文", site: "Example", publishedAt: "2026-01-02T03:04:05.000Z" } });
+  it("别的网站（小红书、普通网页…）：不读页面，只交链接，走普通分享那条路", () => {
+    for (const href of ["https://www.xiaohongshu.com/explore/66aa?xsec_token=AB_c-d", "https://example.com/文章?id=1"]) {
+      const host = new URL(href).hostname;
+      const page = fakePage({ host, href, title: "页面标题", metas: {}, byId: {}, tags: { article: "正文" }, images: [], scripts: [] });
+      const url = run(captureScript(origin), page);
+      const prefix = "https://vault.example.com/share?b64=";
+      expect(url.startsWith(prefix)).toBe(true);
+      expect(decodeSharedText(url.slice(prefix.length))).toBe(href);
+    }
   });
 
   it("出错时把原因带到确认页", () => {
-    const url = run(captureScript(origin), { document: null, location: { hostname: "a.com", href: "https://a.com" } } as unknown as ReturnType<typeof fakePage>);
+    const url = run(captureScript(origin), { document: null, location: { hostname: "mp.weixin.qq.com", href: "https://mp.weixin.qq.com/s/x" } } as unknown as ReturnType<typeof fakePage>);
     expect(url.startsWith("https://vault.example.com/share#error=")).toBe(true);
     expect(decodeCaptureHash(url.slice(url.indexOf("#")))).toMatchObject({ kind: "error" });
   });
