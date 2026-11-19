@@ -26,7 +26,7 @@
 | 抖音 | Apify actor | 约 $0.008 / 条 |
 | TikTok | 直接读视频页 | 免费 |
 | Instagram | Apify 官方 actor | 约 $0.003 / 条 |
-| YouTube | App 的播放接口（字幕 + 360p 视频） | 免费 |
+| YouTube | App 的播放接口（字幕 + 360p 视频）；被拦时（云服务器上）走 Apify，只有字幕、没有画面 | 免费；走 Apify 时约 $0.004 / 条 |
 | X | FxTwitter 公开接口 → 官方嵌入接口 | 免费 |
 | 其他网页（博客、新闻、商品页、Reddit…） | Jina Reader → 自己抓；本机有 yt-dlp 时认别的视频站 | Jina 带密钥时 $0.0005 |
 | 上传 | 图片 / 截图、视频、音频、`.txt` / `.md`，单个最多 50 MB（可调，见「存档上限」） | — |
@@ -49,7 +49,7 @@
 
 - 小红书、TikTok、Instagram、X 的真实读取。抖音只试过上面那一条。
 - 上传的视频和音频文件（链接里的视频试过，上传的没试）。
-- YouTube：从云端机房 IP 读会被要求验证（「Sign in to confirm you're not a bot」），失败提示和贴文字的补救流程验证过；在家用网络下应当能读，没测。
+- YouTube：从云端机房 IP 读会被要求验证（「Sign in to confirm you're not a bot」）。配了 `APIFY_TOKEN` 时自动改走 Apify（2026-11-19 在云端容器里实测：一条 15 分钟的视频约 17 秒读到标题、简介、互动数和完整字幕；拿不到视频本体，所以没有画面）。没配时的失败提示和贴文字的补救流程验证过。在家用网络下直接读应当能行，没测。
 - 部署到服务器：Docker 镜像在本地构建并跑通过（见 deploy/README.md），真实服务器上还没跑过。
 
 处理一条内容的花费（Claude Opus 5.5 + Voyage）：实测一段短文字约 $0.04，一张截图约 $0.05，一篇短文约 $0.06。带十几帧画面的视频会更高。每条的花费记在 `items.cost_usd`，详情页底部显示。想省钱可以把 `VAULT_MODEL` 换成 `claude-sonnet-5-5`。

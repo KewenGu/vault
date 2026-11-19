@@ -1,11 +1,12 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { SourceFetchError, emptyStats, type FetchedPost } from "./types";
 
 vi.mock("./xhs", () => ({ fetchXhsNote: vi.fn() }));
 vi.mock("./douyin", () => ({ fetchDouyinVideo: vi.fn() }));
 vi.mock("./tiktok", () => ({ fetchTikTokVideo: vi.fn() }));
 vi.mock("./instagram", () => ({ fetchInstagramPost: vi.fn() }));
-vi.mock("./youtube", () => ({ fetchYouTubeVideo: vi.fn() }));
+vi.mock("./youtube", async (orig) => ({ ...(await orig<object>()), fetchYouTubeVideo: vi.fn() }));
+vi.mock("./youtube-apify", () => ({ fetchYouTubeViaApify: vi.fn() }));
 vi.mock("./x", () => ({ fetchXPost: vi.fn() }));
 vi.mock("./web", () => ({ fetchWebPage: vi.fn() }));
 vi.mock("./ytdlp", async (orig) => ({ ...(await orig<object>()), ytdlpPath: vi.fn(), ytdlpInfo: vi.fn() }));
@@ -18,7 +19,8 @@ import { fetchTikTokVideo } from "./tiktok";
 import { fetchWebPage } from "./web";
 import { fetchXPost } from "./x";
 import { fetchXhsNote } from "./xhs";
-import { fetchYouTubeVideo } from "./youtube";
+import { YouTubeBlockedError, fetchYouTubeVideo } from "./youtube";
+import { fetchYouTubeViaApify } from "./youtube-apify";
 import { ytdlpInfo, ytdlpPath } from "./ytdlp";
 
 const post = (platform: FetchedPost["platform"]): FetchedPost => ({ platform, externalId: "1", kind: "video", title: platform, text: "", author: { id: null, name: "" }, publishedAt: null, stats: emptyStats(), hashtags: [], topComments: [], images: [], video: null, music: null, notes: [] });
@@ -35,6 +37,12 @@ beforeEach(() => {
   vi.mocked(fetchWebPage).mockReset().mockResolvedValue(post("web"));
   vi.mocked(ytdlpPath).mockReset().mockReturnValue(null);
   vi.mocked(ytdlpInfo).mockReset().mockResolvedValue(null);
+  vi.mocked(fetchYouTubeViaApify).mockReset().mockResolvedValue({ ...post("youtube"), title: "Apify 读到的" });
+  vi.stubEnv("APIFY_TOKEN", "");
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
 });
 
 describe("收藏夹：按平台读帖子", () => {
@@ -64,6 +72,32 @@ describe("收藏夹：按平台读帖子", () => {
     // 网络错误（不是「读不到」）原样抛，留给重试
     vi.mocked(fetchYouTubeVideo).mockRejectedValue(new Error("YouTube 500"));
     await expect(fetchPost(ref("youtube"))).rejects.toThrow("YouTube 500");
+  });
+
+  it("YouTube 不给这台机器读（机房 IP）：配了 APIFY_TOKEN 就走 Apify；没配、视频本来就没了、yt-dlp 读到了都不走", async () => {
+    const blocked = new YouTubeBlockedError("YouTube 不让读这个视频（Sign in to confirm you’re not a bot）");
+    vi.mocked(fetchYouTubeVideo).mockRejectedValue(blocked);
+    await expect(fetchPost(ref("youtube"))).rejects.toBe(blocked);
+    expect(vi.mocked(fetchYouTubeViaApify)).not.toHaveBeenCalled();
+
+    vi.stubEnv("APIFY_TOKEN", "t");
+    expect((await fetchPost(ref("youtube"))).title).toBe("Apify 读到的");
+    expect(vi.mocked(fetchYouTubeViaApify)).toHaveBeenCalledWith(ref("youtube"));
+    // Apify 也没读到：报它的错
+    vi.mocked(fetchYouTubeViaApify).mockRejectedValueOnce(new SourceFetchError("改走 Apify 也没读到"));
+    await expect(fetchPost(ref("youtube"))).rejects.toThrow("改走 Apify 也没读到");
+
+    // yt-dlp 读到了：不花这笔钱
+    vi.mocked(fetchYouTubeViaApify).mockClear();
+    vi.mocked(ytdlpPath).mockReturnValue("/usr/local/bin/yt-dlp");
+    vi.mocked(ytdlpInfo).mockResolvedValue(info);
+    expect((await fetchPost(ref("youtube"))).title).toBe("yt-dlp 读到的");
+    // 视频被删了（不是被拦）：不走 Apify
+    vi.mocked(ytdlpPath).mockReturnValue(null);
+    const gone = new SourceFetchError("这个 YouTube 视频读不到");
+    vi.mocked(fetchYouTubeVideo).mockRejectedValue(gone);
+    await expect(fetchPost(ref("youtube"))).rejects.toBe(gone);
+    expect(vi.mocked(fetchYouTubeViaApify)).not.toHaveBeenCalled();
   });
 });
 

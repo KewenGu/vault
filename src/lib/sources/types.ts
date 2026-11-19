@@ -69,6 +69,8 @@ export type FetchedPost = {
   images: RemoteFile[];
   /** via = "ytdlp"：没有能直接下的地址，url 是视频页面，要用本机的 yt-dlp 下（见 ytdlp.ts） */
   video: (RemoteFile & { durationS: number | null; via?: "ytdlp" }) | null;
+  /** 没拿到视频本体、但知道时长时填（YouTube 走 Apify 那条路）；有 video 时以 video.durationS 为准 */
+  durationS?: number | null;
   /** 背景音乐（抖音、TikTok、Instagram） */
   music: string | null;
   /** 平台自带的字幕（YouTube）：有它就不用再做语音识别 */
