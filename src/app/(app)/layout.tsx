@@ -2,25 +2,29 @@ import Link from "next/link";
 import { requireSession } from "@/lib/auth/user";
 import { signOut } from "../(public)/login/actions";
 
+/**
+ * 顶栏的链接不预取：处理中的页面每隔几秒刷新一次，每次刷新都会把这几页重新预取一遍（「状态」页还要起 ffmpeg、扫磁盘），
+ * 正好压在处理视频的那台机器上。代价是点进这几页时慢一点。
+ */
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const { user } = await requireSession();
   return (
     <div className="mx-auto flex min-h-dvh w-full max-w-6xl flex-col px-4 sm:px-6">
       <header className="flex h-14 items-center gap-5 border-b border-edge">
-        <Link href="/" className="text-base font-semibold tracking-tight">
+        <Link href="/" prefetch={false} className="text-base font-semibold tracking-tight">
           Vault
         </Link>
         <nav className="flex gap-4 text-sm text-ink-muted" aria-label="主导航">
-          <Link href="/" className="hover:text-ink">
+          <Link href="/" prefetch={false} className="hover:text-ink">
             收藏库
           </Link>
-          <Link href="/graph" className="hover:text-ink">
+          <Link href="/graph" prefetch={false} className="hover:text-ink">
             图谱
           </Link>
-          <Link href="/status" className="hover:text-ink">
+          <Link href="/status" prefetch={false} className="hover:text-ink">
             状态
           </Link>
-          <Link href="/mobile" className="hover:text-ink">
+          <Link href="/mobile" prefetch={false} className="hover:text-ink">
             手机
           </Link>
         </nav>

@@ -116,7 +116,8 @@ export default async function ItemPage({ params }: Props) {
       <div className="flex min-w-0 flex-col gap-7">
         <header className="flex flex-col gap-2.5">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-muted">
-            <Link href="/" className="hover:text-ink">
+            {/* 不预取，原因见 (app)/layout.tsx */}
+            <Link href="/" prefetch={false} className="hover:text-ink">
               ← 收藏库
             </Link>
             <span>{sourceLabel(item)}</span>
