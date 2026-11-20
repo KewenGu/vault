@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { AutoRefresh } from "@/components/auto-refresh";
+import { ImageCarousel } from "@/components/image-carousel";
 import { LocalDate } from "@/components/local-date";
 import { PLAYER_ID, SeekTime } from "@/components/seek-time";
 import { requireSession } from "@/lib/auth/user";
@@ -91,11 +92,12 @@ export default async function ItemPage({ params }: Props) {
             <source src={itemFileUrl(item, audio)} type={audio.mime} />
           </audio>
         )}
-        {!video &&
-          images.map((m, i) => (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img key={m.path} src={itemFileUrl(item, m)} alt={`第 ${i + 1} 张图`} loading={i === 0 ? "eager" : "lazy"} width={m.width ?? undefined} height={m.height ?? undefined} className="w-full rounded-lg border border-edge" />
-          ))}
+        {!video && images.length === 1 && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={itemFileUrl(item, images[0])} alt="图" width={images[0].width ?? undefined} height={images[0].height ?? undefined} className="w-full rounded-lg border border-edge" />
+        )}
+        {/* 多张图不往下铺开，做成左右滑的轮播，不然图多时要滑很久才到正文 */}
+        {!video && images.length > 1 && <ImageCarousel images={images.map((m) => ({ src: itemFileUrl(item, m), width: m.width ?? null, height: m.height ?? null }))} />}
         {video && sheets.length > 0 && (
           <details>
             <summary className="cursor-pointer text-sm text-ink-muted hover:text-ink">全片画面一览（{sheetSummary(sheets)}）</summary>
