@@ -134,6 +134,8 @@ export type ItemMedia = {
   at?: number;
   /** sheet：这张帧格到哪一秒（全片一览，2026-10-13 起有） */
   to?: number;
+  /** sheet：这张帧格里有几格（2026-11-20 起有；页面上数的是格数，不是帧格的张数） */
+  tiles?: number;
   /** frame：这一帧是不是一个新镜头的开头（切点后面 0.3 秒内） */
   cut?: boolean;
   /** frame：那一刻正在说的话（speechLabel 的写法：【】里是正说到的词，｜是停顿）；没有口播是空 */
