@@ -34,7 +34,7 @@ export function parseQuery(q: string): string[] {
 /** ilike 里的通配符按字面找 */
 export const escapeLike = (term: string) => term.replace(/[\\%_]/g, (c) => `\\${c}`);
 
-export type Snippet = { text: string; at: number | null; where: "口播" | "正文" | "图中文字" | "要点" };
+export type Snippet = { text: string; at: number | null; where: "口播" | "正文" | "图中文字" | "要点" | "大纲" };
 
 /** 一段文字里命中处前后各留一点（纯函数）。 */
 function around(text: string, index: number, length: number, radius = 60): string {
@@ -46,7 +46,7 @@ function around(text: string, index: number, length: number, radius = 60): strin
 
 /**
  * 关键词具体落在这条内容的哪里（纯函数）：标题 / 概括已经显示在卡片上，这里找卡片上看不到的地方——
- * 口播（带时间，点了能跳到那一秒）、要点、图里的字、正文。都没有返回 null（多半是语义命中的）。
+ * 口播（带时间，点了能跳到那一秒）、要点、大纲（思维导图的节点）、图里的字、正文。都没有返回 null（多半是语义命中的）。
  */
 export function findSnippet(item: Pick<Item, "transcript" | "understanding" | "userText" | "post">, terms: string[]): Snippet | null {
   const lower = terms.map((t) => t.toLowerCase());
@@ -67,6 +67,10 @@ export function findSnippet(item: Pick<Item, "transcript" | "understanding" | "u
   for (const p of item.understanding?.points ?? []) {
     const h = hit(p.text);
     if (h) return { text: around(p.text, h.i, h.n), at: p.at, where: "要点" };
+  }
+  for (const n of item.understanding?.outline ?? []) {
+    const h = hit(n.text);
+    if (h) return { text: around(n.text, h.i, h.n), at: n.at, where: "大纲" };
   }
   const ocr = item.understanding?.ocr ?? "";
   const o = ocr ? hit(ocr) : null;

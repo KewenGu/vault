@@ -28,6 +28,11 @@ describe("findSnippet", () => {
     expect(findSnippet(item, ["艾迪逊"])).toEqual({ text: "第二家是三亚的艾迪逊酒店，泳池很大", at: 65, where: "口播" });
   });
 
+  it("finds a node of the outline, after the points", () => {
+    const understanding = { points: [{ at: null, text: "三家酒店各有侧重" }], outline: [{ depth: 2, at: 80, text: "艾迪逊：泳池最大" }], ocr: "" } as never;
+    expect(findSnippet({ transcript: null, understanding, userText: null, post }, ["艾迪逊"])).toEqual({ text: "艾迪逊：泳池最大", at: 80, where: "大纲" });
+  });
+
   it("falls back to text on images, then the body; null when nothing matches", () => {
     const understanding = { points: [], ocr: "订单号 A1234\n金额 ¥299" } as never;
     expect(findSnippet({ transcript: null, understanding, userText: null, post }, ["a1234"])).toEqual({ text: "订单号 A1234 金额 ¥299", at: null, where: "图中文字" });

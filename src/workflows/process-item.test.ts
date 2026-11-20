@@ -40,6 +40,7 @@ const understanding = (over: Partial<Understanding> = {}): Understanding => ({
   language: "zh",
   summary: "九个方法，逐条讲了做法。",
   points: [{ at: 65, text: "第一，别人的评价只是信息" }],
+  outline: [],
   card: [],
   quotes: [],
   tags: ["精神内耗", "情绪管理"],
