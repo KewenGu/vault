@@ -111,6 +111,7 @@ describe("收藏夹：读 X 帖子", () => {
               atomic(2),
               atomic(3),
               atomic(5),
+              atomic(6),
               block("header-two", "收尾"),
             ],
             entityMap: [
@@ -120,6 +121,7 @@ describe("收藏夹：读 X 帖子", () => {
               entity(3, "MEDIA", { mediaItems: [...ms, "gone"].map((mediaId) => ({ mediaId })) }),
               entity(4, "LINK", { url: "https://cli.github.com" }),
               entity(5, "POLL", {}),
+              entity(6, "LINK", { url: "https://x.ai/bot/abc" }),
             ],
           },
         },
@@ -139,6 +141,7 @@ describe("收藏夹：读 X 帖子", () => {
         "```bash\ngh auth login\n```",
         "---",
         [...Array.from({ length: 11 }, (_, i) => `[配图 ${i + 1}]`), "[配图 12，没存]", "[配图 13，没存]", "[媒体，没读到]"].join("\n"),
+        "链接：https://x.ai/bot/abc",
         "## 收尾",
       ].join("\n\n")
     );
@@ -176,10 +179,12 @@ describe("收藏夹：读 X 帖子", () => {
             blocks: [
               { type: "atomic", text: " ", entityRanges: [{ key: 0 }] },
               { type: "unstyled", text: "见文档", entityRanges: [{ key: 1 }] },
+              { type: "atomic", text: " ", entityRanges: [{ key: 2 }] },
             ],
             entityMap: [
               { key: "0", value: { type: "TWEET", data: { tweetId: "555555" } } },
               { key: "1", value: { type: "LINK", data: { url: "https://docs.example.com/guide" } } },
+              { key: "2", value: { type: "LINK", data: { url: "https://x.ai/bot/abc" } } },
             ],
           },
         },
@@ -193,6 +198,7 @@ describe("收藏夹：读 X 帖子", () => {
       ["link", expect.stringMatching(/^web:/), ""],
       ["link", "http://xhslink.com/o/abc", ""],
       ["link", "https://x.com/i/article/999999", "这是 X 长文本身的链接，查不到是哪条帖子发的"],
+      ["link", expect.stringMatching(/^web:/), ""],
       ["link", expect.stringMatching(/^web:/), ""],
       ["embed", "x:555555", ""],
     ]);

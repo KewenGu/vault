@@ -126,6 +126,19 @@ describe("收藏夹：跟着读帖子提到的东西", () => {
     expect(got).toMatchObject({ externalId: "1", author: { name: "作者1" }, title: "标题1" });
   });
 
+  it("直接引用的帖子放到 3 万字（转发长文配一句话时，长文才是正文）；再往下引用的还是 1 万字", async () => {
+    const d = deps({
+      "2": { post: post("x", "2", { text: "长".repeat(12_000) }), mentions: [to("x", "3", "quote")] },
+      "3": { post: post("x", "3", { text: "深".repeat(12_000) }), mentions: [] },
+    });
+    const got = await followMentions({ post: post("x", "1"), mentions: [to("x", "2", "quote")] }, d);
+    expect(got.text).toContain("长".repeat(12_000));
+    expect(got.text).not.toContain("深".repeat(10_001));
+    expect(got.notes).toEqual(["引用的帖子里引用的帖子（作者3）太长，只放了前 10,000 字"]);
+    const huge = deps({ "2": { post: post("x", "2", { text: "长".repeat(40_000) }), mentions: [] } });
+    expect((await followMentions({ post: post("x", "1"), mentions: [to("x", "2", "quote")] }, huge)).notes).toEqual(["引用的帖子（作者2）太长，只放了前 30,000 字"]);
+  });
+
   it("自己没字的（只贴了一条链接）：标题用读到的；文字帖引用了图片帖算图文", async () => {
     const d = deps({ "2": { post: post("x", "2", { images: img(1, "q") }), mentions: [] } });
     const got = await followMentions({ post: post("x", "1", { title: "" }), mentions: [to("x", "2", "quote")] }, d);

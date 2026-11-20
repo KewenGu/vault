@@ -67,7 +67,8 @@ const BLOCK_PREFIX: Record<string, string> = { "header-one": "# ", "header-two":
 /**
  * FxTwitter 给的 X 长文（tweet.article）→ 标题 + 正文 + 配图。正文是 Draft.js 的块：段落、标题、列表、引用照 Markdown 写；
  * atomic 块看它指向的实体：MARKDOWN（代码块、表格）原样放，MEDIA 是配图（正文里留「[配图 N]」，图按顺序存），
- * DIVIDER 是分割线，TWEET 是嵌进来的别的帖子（先留「【嵌入的帖子】链接」占位，读到了再换成内容，见 follow.ts）。
+ * DIVIDER 是分割线，TWEET 是嵌进来的别的帖子（先留「【嵌入的帖子】链接」占位，读到了再换成内容，见 follow.ts），
+ * LINK 是单独占一块的链接卡片（写成「链接：网址」，也要跟着读）。
  * 段里的链接放在段尾（X 算位置的字数和 JS 对 emoji 不一样），也列在 links 里（要跟着读）。没有标题也没有正文返回 null。
  */
 export function readFxArticle(raw: unknown): { title: string; body: string; images: RemoteFile[]; tweetIds: string[]; links: string[]; notes: string[] } | null {
@@ -97,12 +98,19 @@ export function readFxArticle(raw: unknown): { title: string; body: string; imag
   let unreadMedia = 0;
   const tweetIds: string[] = [];
   const unknown = new Set<string>();
+  const allLinks: string[] = [];
 
   const atomic = (e: Obj): string | null => {
     const type = str(e.type);
     const data = obj(e.data);
     if (type === "MARKDOWN") return str(data.markdown).trim() || null;
     if (type === "DIVIDER") return "---";
+    if (type === "LINK") {
+      const url = str(data.url);
+      if (!/^https?:\/\//i.test(url)) return null;
+      allLinks.push(url);
+      return `链接：${url}`;
+    }
     if (type === "TWEET") {
       if (!/^\d+$/.test(str(data.tweetId))) return null;
       tweetIds.push(str(data.tweetId));
@@ -132,7 +140,6 @@ export function readFxArticle(raw: unknown): { title: string; body: string; imag
   };
 
   const parts: { text: string; list: boolean }[] = [];
-  const allLinks: string[] = [];
   let ordered = 0;
   for (const b of blocks) {
     const type = str(b.type);
