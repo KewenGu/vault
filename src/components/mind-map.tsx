@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent, type ReactNode } from "react";
 import { clock } from "@/lib/media/transcript";
 import { buildOutlineTree, outlineToText, type OutlineNode, type OutlineTreeNode } from "@/lib/vault/outline";
 import { seekPlayer } from "./seek-time";
@@ -13,6 +13,7 @@ import { seekPlayer } from "./seek-time";
  * - 有下一层的节点右边有个小圆点，点了收起 / 展开。节点多（超过 36 个）时一开始只展开到第二层，免得一上来铺满几屏。
  * - 视频 / 音频的节点带时间，点了跳到那一刻。
  * - 窄屏（手机竖着拿）上中心主题放在上面、分支从它下面往右长，节点也窄一些：一屏里能看到两层，更深的横向滑。
+ * - 用鼠标可以按住拖着看（PanBox）；触屏上是原生的滑动。
  * - 页面里只横向滚动（不套一个上下滚的框，手机上会卡住页面的滚动）；「全屏」里两个方向都能滚。
  */
 
@@ -170,6 +171,51 @@ function Canvas({ title, tree, collapsed, onToggle, onSeek }: CanvasProps) {
   );
 }
 
+/** 按住之后移动超过这么多像素才算拖（不然点一下也会被当成拖） */
+const DRAG_START_PX = 4;
+
+/**
+ * 装导图的那个能滚动的框：用鼠标按住空白处或节点的字拖动，就是滚动它（页面里只有横向，全屏里两个方向）。
+ * 只管鼠标：触屏上手指滑动本来就是滚动。按在按钮上（时间、收起 / 展开）不算拖。
+ * 有鼠标的设备上框里的字不能拖选了（拖是用来挪图的），要字用「复制大纲」。
+ */
+function PanBox({ className, children }: { className: string; children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const drag = useRef<{ x: number; y: number; left: number; top: number; moving: boolean } | null>(null);
+
+  const onPointerDown = (e: PointerEvent<HTMLDivElement>) => {
+    const box = ref.current;
+    if (!box || e.pointerType !== "mouse" || e.button !== 0 || (e.target as Element).closest("button")) return;
+    drag.current = { x: e.clientX, y: e.clientY, left: box.scrollLeft, top: box.scrollTop, moving: false };
+  };
+  const onPointerMove = (e: PointerEvent<HTMLDivElement>) => {
+    const box = ref.current;
+    const d = drag.current;
+    if (!box || !d) return;
+    const dx = e.clientX - d.x;
+    const dy = e.clientY - d.y;
+    if (!d.moving) {
+      if (Math.hypot(dx, dy) < DRAG_START_PX) return;
+      d.moving = true;
+      // 拖出框外也接着收到移动和松开
+      box.setPointerCapture(e.pointerId);
+      box.style.cursor = "grabbing";
+    }
+    box.scrollLeft = d.left - dx;
+    box.scrollTop = d.top - dy;
+  };
+  const end = () => {
+    drag.current = null;
+    if (ref.current) ref.current.style.cursor = "";
+  };
+
+  return (
+    <div ref={ref} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={end} onPointerCancel={end} onLostPointerCapture={end} className={`${className} pointer-fine:cursor-grab pointer-fine:select-none`}>
+      {children}
+    </div>
+  );
+}
+
 const ACTION = "cursor-pointer rounded-sm text-xs text-ink-muted hover:text-ink";
 
 export function MindMap({ title, nodes, canSeek }: { title: string; nodes: OutlineNode[]; canSeek: boolean }) {
@@ -236,7 +282,7 @@ export function MindMap({ title, nodes, canSeek }: { title: string; nodes: Outli
           </button>
         </div>
       </div>
-      <div className="panel overflow-x-auto overscroll-x-contain">{canvas}</div>
+      <PanBox className="panel overflow-x-auto overscroll-x-contain">{canvas}</PanBox>
       <dialog ref={dialogRef} onClose={() => setFull(false)} aria-label={`思维导图：${title}`} className="fixed inset-0 m-0 h-dvh max-h-none w-dvw max-w-none bg-canvas p-0 text-ink backdrop:bg-black/40">
         {full && (
           <div className="flex h-full flex-col">
@@ -249,7 +295,7 @@ export function MindMap({ title, nodes, canSeek }: { title: string; nodes: Outli
                 </button>
               </div>
             </div>
-            <div className="min-h-0 flex-1 overflow-auto overscroll-contain">{canvas}</div>
+            <PanBox className="min-h-0 flex-1 overflow-auto overscroll-contain">{canvas}</PanBox>
           </div>
         )}
       </dialog>
