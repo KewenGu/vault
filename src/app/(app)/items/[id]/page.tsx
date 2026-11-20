@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { ImageCarousel } from "@/components/image-carousel";
 import { LocalDate } from "@/components/local-date";
+import { MindMap } from "@/components/mind-map";
 import { PLAYER_ID, SeekTime } from "@/components/seek-time";
 import { requireSession } from "@/lib/auth/user";
 import { entitiesOfItem } from "@/lib/graph/data";
@@ -218,6 +219,9 @@ export default async function ItemPage({ params }: Props) {
                 </dl>
               </Section>
             )}
+
+            {/* 换了一份大纲（重新分析）就整个重来，不留着旧大纲的折叠状态 */}
+            {u.outline.length > 0 && <MindMap key={item.processedAt} title={displayTitle(item)} nodes={u.outline} canSeek={canSeek} />}
 
             {u.points.length > 0 && (
               <Section title="内容要点">

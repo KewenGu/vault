@@ -47,6 +47,13 @@ const OUTPUT = `<title>三亚带娃住哪里：三家亲子酒店</title>
 </summary>
 <point><at>0:20</at><text>亚特兰蒂斯：水世界和水族馆，房价约 2500 元起</text></point>
 <point><text>海棠湾比亚龙湾人少</text></point>
+<outline>
+- [0:20] 亚特兰蒂斯
+  - 水世界和水族馆
+  - 约 2500 元起
+- 选哪个湾
+  - 海棠湾人少
+</outline>
 <field><label>目的地</label><value>三亚</value></field>
 <field><label>住宿</label><value>亚特兰蒂斯
 艾迪逊</value></field>
@@ -79,6 +86,20 @@ describe("parseUnderstanding", () => {
       { at: 20, text: "亚特兰蒂斯：水世界和水族馆，房价约 2500 元起" },
       { at: null, text: "海棠湾比亚龙湾人少" },
     ]);
+  });
+
+  it("reads the outline with its indentation intact", () => {
+    expect(parsed.outline).toEqual([
+      { depth: 1, at: 20, text: "亚特兰蒂斯" },
+      { depth: 2, at: null, text: "水世界和水族馆" },
+      { depth: 2, at: null, text: "约 2500 元起" },
+      { depth: 1, at: null, text: "选哪个湾" },
+      { depth: 2, at: null, text: "海棠湾人少" },
+    ]);
+    // 没写这个标签（内容没有层次）= 没有大纲，不算不合格
+    const none = parseUnderstanding("<summary>x</summary>");
+    expect(none.outline).toEqual([]);
+    expect(understandingSchema.safeParse({ ...none, gaps: [], model: "m" }).success).toBe(true);
   });
 
   it("keeps multi-line card values and drops empty fields", () => {
@@ -129,6 +150,14 @@ describe("readUnderstanding", () => {
     expect(readUnderstanding({ summary: "只有概括" })).toBeNull();
     expect(readUnderstanding({ ...parseUnderstanding(OUTPUT), gaps: ["a"], model: "claude" })?.gaps).toEqual(["a"]);
   });
+
+  it("still reads rows saved before there was an outline", () => {
+    const { outline, ...old } = { ...parseUnderstanding(OUTPUT), gaps: [], model: "claude" };
+    expect(outline.length).toBeGreaterThan(0);
+    const read = readUnderstanding(old);
+    expect(read?.summary).toBe(old.summary);
+    expect(read?.outline).toEqual([]);
+  });
 });
 
 describe("buildUnderstandPrompt", () => {
@@ -143,6 +172,8 @@ describe("buildUnderstandPrompt", () => {
     expect(prompt).toContain("语音识别，可能有错字");
     expect(prompt).toContain("每段开头方括号里是这段开始的时间");
     expect(prompt).toContain("其余全部用简体中文写");
+    expect(prompt).toContain("<outline>");
+    expect(prompt).toContain("只有一层意思的不写这个标签");
     expect(gaps).toEqual([]);
   });
 

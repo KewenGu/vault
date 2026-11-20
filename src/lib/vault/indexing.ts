@@ -44,6 +44,7 @@ export function buildSearchText(input: IndexInput): string {
     input.post.hashtags.join(" "),
     u?.summary ?? "",
     u?.points.map((p) => p.text).join("\n") ?? "",
+    u?.outline.map((n) => n.text).join("\n") ?? "",
     u?.card.map((f) => `${f.label}：${f.value}`).join("\n") ?? "",
     u?.quotes.join("\n") ?? "",
     u?.entities.map((e) => e.name).join(" ") ?? "",

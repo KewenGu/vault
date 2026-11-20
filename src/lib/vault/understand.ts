@@ -2,6 +2,7 @@ import { z } from "zod";
 import { askClaude, type VisionImage } from "@/lib/ai/claude";
 import { clock, parseClock } from "@/lib/media/transcript";
 import { POST_KIND_LABEL, POST_STAT_KEYS, SOURCE_PLATFORM_LABEL, formatCount, postNotes, statLabel, type PostKind, type PostSnapshot, type SourcePlatform } from "@/lib/sources/types";
+import { OUTLINE_MAX, outlineNodeSchema, parseOutline } from "./outline";
 import {
   CATEGORIES,
   CATEGORY_LABEL,
@@ -24,8 +25,8 @@ import {
 /**
  * 理解一条存进来的内容：一次 Claude 调用（带图），读文字（正文、口播 / 字幕、评论）+ 看画面（图片、截图、视频帧），产出
  *
- *   标题 · 内容类型 · 领域 · 概括 · 内容要点（视频的带时间）· 按类型提取的卡片字段（食材 / 地址 / 价格…）
- *   · 值得记的原话 · 标签 · 图里的文字 · 实体和它们之间的关系（知识图谱的原料）
+ *   标题 · 内容类型 · 领域 · 概括 · 内容要点（视频的带时间）· 大纲（思维导图的数据，内容有层次时才有）
+ *   · 按类型提取的卡片字段（食材 / 地址 / 价格…）· 值得记的原话 · 标签 · 图里的文字 · 实体和它们之间的关系（知识图谱的原料）
  *
  * 一次调用做完而不是拆成几次：这些东西都要「先读懂内容」才写得出来，拆开等于把同样的图和文字付几遍钱。
  *
@@ -43,6 +44,8 @@ export const understandingSchema = z.object({
   language: z.string().max(12),
   summary: z.string().min(1).max(1200),
   points: z.array(z.object({ at: z.number().nullable(), text: z.string().min(1).max(600) })).max(MAX.points),
+  /** 大纲（思维导图）：见 outline.ts。内容没有层次时是空；2026-11-20 以前处理的内容没有这一项，读出来也是空 */
+  outline: z.array(outlineNodeSchema).max(OUTLINE_MAX.nodes).default([]),
   card: z.array(z.object({ label: z.string().min(1).max(24), value: z.string().min(1).max(2000) })).max(MAX.card),
   quotes: z.array(z.string().min(1).max(500)).max(MAX.quotes),
   tags: z.array(z.string().min(1).max(24)).max(MAX.tags),
@@ -112,12 +115,26 @@ const OUTPUT_FORMAT = `按下面的格式输出（标签名不要改；标了「
 <lang>原内容的主要语言：zh、en、ja、ko…</lang>
 <summary>2–4 句话概括：这条讲了什么、最有用的信息是什么。直接写内容，不要以「这条视频」「本文」开头</summary>
 <point><at>视频 / 音频里这一点开始的时间，如 1:05；没有时间就不写这个标签</at><text>一个内容要点，写具体说法</text></point>（可重复，最多 ${MAX.points} 条；按原内容的顺序；原内容列了几点就写几点，短内容一两条也行）
+<outline>
+思维导图用的大纲，一行一个节点：行首写「- 」，每深一层多缩进两个空格，如
+- 第一层的一个分支
+  - 它下面的一点
+    - 再细一层
+- 第一层的另一个分支
+</outline>（只写一次；内容有层次、值得看结构时才写，见下面「大纲」）
 <field><label>字段名</label><value>字段内容；多项的每项一行</value></field>（可重复，最多 ${MAX.card} 条；按内容类型提取结构化的信息，字段参考类型列表；内容里没有的字段不写）
 <quote>值得原样记下来的一句原话（保留原文语言，不翻译）</quote>（可重复，最多 ${MAX.quotes} 条；没有特别值得记的就不写）
 <tag>标签</tag>（可重复，3–${MAX.tags} 个；具体的主题词，2–8 个字，不带 #；不要「视频」「分享」「干货」这种放在哪条上都成立的词，也不要重复类型和领域）
 <entity><type>实体类型的英文键</type><name>规范名称</name><about>一句话说明它是什么、在这条内容里的角色</about></entity>（可重复，最多 ${MAX.entities} 个）
 <relation><from>实体名称</from><rel>关系的英文键</rel><to>实体名称</to></relation>（可重复，最多 ${MAX.relations} 条；from 和 to 必须是上面 entity 里写过的名称）
 <ocr>图片 / 截图 / 视频画面上的文字，原样抄下来（保留原文语言和换行；装饰性的水印、界面按钮不抄）。没有图或图上没字就不写这个标签</ocr>
+
+大纲：把这条内容的结构整理成一棵树，让人一眼看出它分了几部分、每部分讲了哪几点、每点下面有什么（理由、例子、步骤、数字）。
+- 什么时候写：长视频、长文、教程、盘点、对比、讲了好几个方面的内容。只有一层意思的不写这个标签：一两句话、一个地点、一件商品、一张小票，或者卡片和要点已经把它说完了的短内容。
+- 中心主题就是标题，不要写；直接从第一层分支写起，第一层 2–7 个分支，最多 ${OUTLINE_MAX.depth} 层、${OUTLINE_MAX.nodes} 个节点。
+- 节点写短语，不写整句（一般不超过 20 个字）；具体的名字、数字留在节点里。
+- 按内容自己的结构分，不是把要点再抄一遍。原内容没有明说的层次可以归纳，但节点里的东西必须是内容里有的。
+- 视频 / 音频里知道时间的节点，在「- 」后面写方括号的时间，如「- [1:05] 第一家：亚特兰蒂斯」。
 
 内容类型：
 ${typeList}
@@ -242,6 +259,8 @@ export function parseUnderstanding(raw: string): Omit<Understanding, "gaps" | "m
       .map((b) => ({ at: parseClock(one(b, "at")), text: cap(one(b, "text") || (b.includes("<at>") ? "" : clean(b)), 600) }))
       .filter((p) => p.text)
       .slice(0, MAX.points),
+    // 层级靠缩进：不能过 clean()（它会把每行开头的空白去掉）
+    outline: parseOutline(all(raw, "outline")[0] ?? ""),
     card: all(raw, "field")
       .map((b) => ({ label: cap(one(b, "label"), 24), value: cap(one(b, "value"), 2000) }))
       .filter((f) => f.label && f.value)
