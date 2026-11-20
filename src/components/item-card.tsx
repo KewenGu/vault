@@ -14,7 +14,7 @@ export function ItemCard({ hit }: { hit: SearchHit }) {
   const failed = item.status === "failed" || isStuck(item);
   const duration = (videoOf(item) ?? audioOf(item))?.durationS ?? null;
   return (
-    <article className="panel mb-4 break-inside-avoid overflow-hidden transition-colors hover:border-edge-strong">
+    <article className="panel overflow-hidden transition-colors hover:border-edge-strong">
       <Link href={`/items/${item.id}`} className="block">
         {cover && (
           <div className="relative bg-sunken">
