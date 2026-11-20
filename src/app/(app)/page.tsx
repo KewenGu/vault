@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { CaptureBox } from "@/components/capture-box";
-import { ItemCard } from "@/components/item-card";
+import { ItemGrid } from "@/components/item-grid";
 import { requireSession } from "@/lib/auth/user";
 import { SOURCE_PLATFORMS, SOURCE_PLATFORM_LABEL, type SourcePlatform } from "@/lib/sources/types";
 import { loadFacets } from "@/lib/vault/facets";
@@ -117,11 +117,7 @@ export default async function VaultPage({ searchParams }: { searchParams: Promis
             {filtered ? "没有符合的内容。换个说法，或者去掉几个筛选条件。" : "还没有内容。在上面贴一条链接、一段文字，或者拖一张截图进来试试。"}
           </p>
         ) : (
-          <div className="grid grid-cols-1 items-start gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {result.hits.map((hit) => (
-              <ItemCard key={hit.item.id} hit={hit} />
-            ))}
-          </div>
+          <ItemGrid hits={result.hits} />
         )}
       </section>
     </div>
