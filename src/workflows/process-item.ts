@@ -465,7 +465,7 @@ async function digestVideoSource(
     for (const [i, sheet] of (await contactSheets(overview.length ? overview : tiles, portrait)).entries()) {
       const path = `${dir}/sheet-${String(i + 1).padStart(2, "0")}.jpg`;
       await upload(db, path, sheet.data, "image/jpeg");
-      sheets.push({ role: "sheet", path, mime: "image/jpeg", width: sheet.width, height: sheet.height, bytes: sheet.data.byteLength, at: sheet.from, to: sheet.to });
+      sheets.push({ role: "sheet", path, mime: "image/jpeg", width: sheet.width, height: sheet.height, bytes: sheet.data.byteLength, at: sheet.from, to: sheet.to, tiles: sheet.tiles });
     }
   } catch (e) {
     // 帧格拼不出来（字体 / 内存）：没有帧格也能理解，每帧的说明里有同样的时间和词

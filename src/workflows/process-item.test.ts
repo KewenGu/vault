@@ -185,6 +185,8 @@ describe("a video too large to archive", () => {
     expect(vi.mocked(digestVideoFile).mock.calls[0][1]).toMatchObject({ detectCuts: false });
     // 存储桶里：封面、抽的帧、帧格。视频不进存储桶，登记成「在本机磁盘上」，时长、尺寸用探测到的
     expect(roles()).toEqual(["image", "video", "frame", "frame", "sheet"]);
+    // 帧格记着它有几格、盖哪一段（页面标题写格数，不写帧格的张数）
+    expect(item().media.find((m) => m.role === "sheet")).toMatchObject({ at: 19.5, to: 19.5, tiles: 1 });
     expect([...fake.files.keys()].some((k) => k.endsWith("video.mp4"))).toBe(false);
     expect(item().media.find((m) => m.role === "video")).toEqual({ role: "video", path: `${USER}/${ID}/video.mp4`, mime: "video/mp4", width: 1920, height: 1080, bytes: VIDEO_MAX_BYTES + 10 * MB, durationS: 2318, local: true });
     expect(item().transcript).toBe("[1:05] 第一，别人的评价只是信息");

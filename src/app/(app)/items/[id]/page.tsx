@@ -7,7 +7,7 @@ import { PLAYER_ID, SeekTime } from "@/components/seek-time";
 import { requireSession } from "@/lib/auth/user";
 import { entitiesOfItem } from "@/lib/graph/data";
 import { clock, parseTranscript } from "@/lib/media/transcript";
-import { POST_STAT_KEYS, formatCount, postNotes, statLabel } from "@/lib/sources/types";
+import { POST_STAT_KEYS, formatCount, postNotes, statLabel, type ItemMedia } from "@/lib/sources/types";
 import { audioOf, displayTitle, getItem, imagesOf, inProgress, isStuck, itemFileUrl, sheetsOf, sourceLabel, videoOf } from "@/lib/vault/store";
 import { CATEGORY_LABEL, CONTENT_TYPE_INFO, ENTITY_TYPE_INFO } from "@/lib/vault/taxonomy";
 import { DeleteButton, MetaForm, PasteTextForm, ReprocessButton } from "./item-actions";
@@ -35,6 +35,18 @@ function Section({ title, children }: { title: string; children: React.ReactNode
       {children}
     </section>
   );
+}
+
+/**
+ * 全片画面一览的标题里写几格、盖哪一段（「13 格，0:00–0:12」）：用户看到的是一格一格的画面，不是拼成的几张帧格图。
+ * 2026-11-20 以前存的帧格没记格数：只写有几张帧格（重新处理就有了）。
+ */
+function sheetSummary(sheets: ItemMedia[]): string {
+  const first = sheets[0]?.at;
+  const last = sheets[sheets.length - 1]?.to;
+  const range = first !== undefined && last !== undefined ? `，${clock(first)}–${clock(last)}` : "";
+  const tiles = sheets.every((s) => typeof s.tiles === "number") ? sheets.reduce((n, s) => n + (s.tiles ?? 0), 0) : null;
+  return tiles !== null ? `${tiles} 格${range}` : `${sheets.length} 张帧格${range}`;
 }
 
 export default async function ItemPage({ params }: Props) {
@@ -86,7 +98,7 @@ export default async function ItemPage({ params }: Props) {
           ))}
         {video && sheets.length > 0 && (
           <details>
-            <summary className="cursor-pointer text-sm text-ink-muted hover:text-ink">全片画面一览（{sheets.length} 张）</summary>
+            <summary className="cursor-pointer text-sm text-ink-muted hover:text-ink">全片画面一览（{sheetSummary(sheets)}）</summary>
             <div className="mt-3 flex flex-col gap-3">
               {sheets.map((m) => (
                 // eslint-disable-next-line @next/next/no-img-element
