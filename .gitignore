@@ -52,3 +52,6 @@ next-env.d.ts
 
 # 部署用的真实配置
 /deploy/.env
+
+# 自动更新的状态（deploy/auto-update.sh）
+/deploy/.auto-update/

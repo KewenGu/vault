@@ -106,6 +106,41 @@ docker compose down
 
 改了 `deploy/.env` 之后要重新 `docker compose up -d`；改的是 `NEXT_PUBLIC_` 开头的变量还要加 `--build`（它们是构建时写进去的）。
 
+### 自动更新
+
+装一个 systemd 定时器，main 上有新提交就自动拉下来、重新构建、重启应用，不用每次登上去手动更新：
+
+```bash
+sudo bash deploy/install-auto-update.sh
+```
+
+它以拉代码的那个用户的身份跑（git 和部署密钥都是它的），这个用户要能用 docker；不能的话脚本会告诉你怎么加。装的时候当作现在跑的就是服务器上这份代码，不会马上重新构建一遍。
+
+- **多快**：每次检查完隔两分钟再查一次。有新提交就构建，1 核的机器要十到十五分钟；构建期间旧版本照常跑，好了才换。
+- **构建失败**：旧版本照常跑，这个提交不会反复构建，等下一个提交。修好了不想等，手动跑 `bash deploy/auto-update.sh --force`。
+- **新版本起不来**（健康检查五分钟内没通过）：自动换回上一个版本。
+- **数据库迁移不会自动推**：新提交里有 `supabase/migrations` 的改动时，日志里会提醒，要自己推到 Supabase。
+- **只快进**：服务器上改过被 git 管着的文件，或者本地有别的提交，就不动、在日志里报错，处理好之后自动接着更新。`deploy/.env` 不归 git 管，随便改。
+- **旧镜像**：每次成功后清掉没用了的，只留现在的和上一个。
+
+看它在做什么：
+
+```bash
+journalctl -u vault-auto-update -f
+```
+
+下次什么时候查：
+
+```bash
+systemctl list-timers vault-auto-update
+```
+
+卸掉：
+
+```bash
+sudo bash deploy/install-auto-update.sh --uninstall
+```
+
 ## 这套部署里的几个决定
 
 - **大视频的原片也在这个卷里**（`vault-data` 的 `/data/media`）。`docker compose down` 不会删卷，`down -v` 会连原片一起删。要腾地方：`docker compose exec vault sh -c 'du -sh /data/media/*/*'` 看哪条占得多，删掉对应的目录（`<用户>/<内容 id>`），那条内容还在，只是不能播放。

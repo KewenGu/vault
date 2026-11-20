@@ -10,4 +10,5 @@ src/app/.well-known
 supabase/.temp
 supabase/.branches
 deploy/.env
+deploy/.auto-update
 *.tsbuildinfo
