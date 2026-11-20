@@ -33,6 +33,11 @@ export type FollowDeps = {
 export const MAX_FOLLOW = 30;
 /** 每一条读到的东西最多放多少字进正文（一个长网页不把别的挤掉；整条的上限在理解那一步） */
 export const SECTION_MAX = 10_000;
+/**
+ * 这条帖子直接引用的帖子放得多一些（和帖子自己的长文一样 3 万字，见 x.ts 的 TEXT_MAX）：转发一篇长文、只配一句话的帖子很常见，
+ * 那时引用的长文才是正文。只有一条，挤不掉别的。
+ */
+export const QUOTE_MAX = 30_000;
 /** 各平台读的时候都会说的话，并进来时不重复 */
 const BOILERPLATE = new Set(["读不到回复的内容，只有回复数", "这次走的是备用接口：没有转发数、书签数、浏览量", "网页没有点赞、评论这些数字，只能从内容本身判断它好在哪"]);
 
@@ -129,7 +134,7 @@ export function mergeFollowed(main: FetchedPost, nodes: FollowNode[], skipped = 
   const notes = [...main.notes];
   let title = main.title;
 
-  const visit = (n: FollowNode) => {
+  const visit = (n: FollowNode, depth: number) => {
     if (n.duplicate) return;
     const { mention: m, chain } = n;
     if (!n.read) {
@@ -142,10 +147,11 @@ export function mergeFollowed(main: FetchedPost, nodes: FollowNode[], skipped = 
     const who = `${chain}（${name}）`;
     const adopt = !!sub.video && !video;
     let body = sub.text;
-    const capped = capChars(body, SECTION_MAX);
+    const cap = depth === 0 && m.how === "quote" ? QUOTE_MAX : SECTION_MAX;
+    const capped = capChars(body, cap);
     if (capped !== null) {
       body = capped;
-      notes.push(`${who}太长，只放了前 ${SECTION_MAX.toLocaleString("en-US")} 字`);
+      notes.push(`${who}太长，只放了前 ${cap.toLocaleString("en-US")} 字`);
     }
     if (sub.captions && !adopt) body += `\n\n【字幕】\n${capChars(sub.captions, SECTION_MAX) ?? sub.captions}`;
     const heading = `【${chain}：${name}】${sub.platform !== "x" && sub.title ? `《${sub.title}》` : ""}`;
@@ -166,9 +172,9 @@ export function mergeFollowed(main: FetchedPost, nodes: FollowNode[], skipped = 
     } else if (sub.video) notes.push(`${who}里也有视频，没存${sub.captions ? "（字幕放进了正文）" : ""}`);
 
     for (const note of sub.notes) if (!BOILERPLATE.has(note)) notes.push(`${who}：${note}`);
-    n.children.forEach(visit);
+    n.children.forEach((c) => visit(c, depth + 1));
   };
-  nodes.forEach(visit);
+  nodes.forEach((n) => visit(n, 0));
   if (skipped > 0) notes.push(`还有 ${skipped} 条提到的帖子 / 链接没读（一条收藏最多跟着读 ${max} 条）`);
   const kind = main.kind !== "text" ? main.kind : video ? "video" : images.length > main.images.length ? "image" : "text";
   return { ...main, kind, title, text, images, video, captions, notes };
