@@ -80,7 +80,7 @@ describe.skipIf(!pg)("migrations — isolated PostgreSQL", () => {
   const search = (user: string, args: string) => as(user, `select string_agg(i.dedupe_key, ',' order by s.score desc, i.created_at desc) from search_items('${user}'${args ? `, ${args}` : ""}) s join items i on i.id = s.id`);
 
   beforeEach(() => {
-    query("truncate items, entities, maps cascade");
+    query("truncate items, entities, maps, journal_entries, journal_media cascade");
   });
 
   it("migrations can be applied twice", () => {
@@ -117,6 +117,52 @@ describe.skipIf(!pg)("migrations — isolated PostgreSQL", () => {
     expect(query(`select user_id || ' ' || nodes::text || ' ' || sources::text || ' ' || chat::text from maps where title = '默认是我的'`)).toBe(`${alice} [] {} []`);
     // 后台（service_role）读得到，代码里自己带 user_id
     expect(query(`begin; set local role service_role; select count(*) from maps where user_id = '${bob}'; commit;`)).toBe("1");
+  });
+
+  it("journal entries and their files are private to their owner", () => {
+    const [mine, theirs] = query(`insert into journal_entries (user_id, day, title) values ('${alice}', '2026-11-21', 'alice 的日记'), ('${bob}', '2026-11-21', 'bob 的日记') returning id`).split("\n");
+    query(`insert into journal_media (user_id, entry_id, kind, path) values ('${alice}', '${mine}', 'audio', 'a/1.m4a'), ('${bob}', '${theirs}', 'image', 'b/1.jpg')`);
+    expect(as(alice, "select string_agg(title, ',') from journal_entries")).toBe("alice 的日记");
+    expect(as(bob, "select string_agg(title, ',') from journal_entries")).toBe("bob 的日记");
+    expect(as(alice, "select string_agg(path, ',') from journal_media")).toBe("a/1.m4a");
+    expect(as(bob, "select string_agg(path, ',') from journal_media")).toBe("b/1.jpg");
+    // 不能替别人写一篇、不能替别人登记文件
+    expect(() => as(alice, `insert into journal_entries (user_id, day) values ('${bob}', '2026-11-21')`)).toThrow(/row-level security/);
+    expect(() => as(alice, `insert into journal_media (user_id, entry_id, kind, path) values ('${bob}', '${theirs}', 'image', 'x')`)).toThrow(/row-level security/);
+    // 也不能把自己的文件挂到别人的日记上（外键带着 user_id）
+    expect(() => as(alice, `insert into journal_media (entry_id, kind, path) values ('${theirs}', 'image', 'x')`)).toThrow(/foreign key/);
+    // 改 / 删别人的：行级安全让它一行都碰不到
+    expect(as(alice, `update journal_entries set title = '抢' where user_id = '${bob}' returning id`)).toBe("");
+    expect(as(alice, `delete from journal_entries where user_id = '${bob}' returning id`)).toBe("");
+    expect(as(alice, `update journal_media set path = '抢' where user_id = '${bob}' returning id`)).toBe("");
+    expect(as(alice, `delete from journal_media where user_id = '${bob}' returning id`)).toBe("");
+    expect(query(`select title from journal_entries where user_id = '${bob}'`)).toBe("bob 的日记");
+    expect(query(`select path from journal_media where user_id = '${bob}'`)).toBe("b/1.jpg");
+    // 默认填当前用户；内容默认是空的一页，版本号从 0 开始
+    as(alice, "insert into journal_entries (day, title) values ('2026-11-22', '默认是我的')");
+    expect(query(`select user_id || ' ' || style || ' ' || rev || ' ' || (doc->'blocks')::text || ' ' || (doc->'decos')::text from journal_entries where title = '默认是我的'`)).toBe(`${alice} fresh 0 [] []`);
+    as(alice, `insert into journal_media (entry_id, kind, path) values ('${mine}', 'image', 'a/2.jpg')`);
+    expect(query(`select user_id || ' ' || status || ' ' || notes::text from journal_media where path = 'a/2.jpg'`)).toBe(`${alice} uploading {}`);
+    // 只收照片和录音，状态只有那四种
+    expect(() => query(`insert into journal_media (user_id, entry_id, kind, path) values ('${alice}', '${mine}', 'video', 'x')`)).toThrow(/journal_media_kind_check/);
+    expect(() => query(`update journal_media set status = 'done' where path = 'a/1.m4a'`)).toThrow(/journal_media_status_check/);
+    // 后台（service_role）读得到、写得了，代码里自己带 user_id
+    expect(query(`begin; set local role service_role; update journal_media set status = 'ready', transcript = '[0:02] 今天风特别大' where user_id = '${alice}' and path = 'a/1.m4a' returning status; commit;`)).toBe("ready");
+    // 删一篇日记，它的文件的登记跟着删
+    as(alice, `delete from journal_entries where id = '${mine}'`);
+    expect(query(`select count(*) from journal_media where user_id = '${alice}'`)).toBe("0");
+    expect(query(`select count(*) from journal_media where user_id = '${bob}'`)).toBe("1");
+  });
+
+  it("journal search finds Chinese text with ilike, and saving bumps updated_at", () => {
+    const id = query(`insert into journal_entries (user_id, day, search_text, updated_at) values ('${alice}', '2026-11-21', '去了趟江边\n买了一杯热的桂花拿铁 100% 好喝', now() - interval '1 hour') returning id`);
+    expect(as(alice, `select count(*) from journal_entries where search_text ilike '%桂花拿铁%'`)).toBe("1");
+    expect(as(alice, `select count(*) from journal_entries where search_text ilike '%100\\%%'`)).toBe("1");
+    expect(as(alice, `select count(*) from journal_entries where search_text ilike '%没写过%'`)).toBe("0");
+    // 带着版本号保存：对得上才写
+    expect(as(alice, `update journal_entries set title = '改', rev = 1 where id = '${id}' and rev = 0 returning rev`)).toBe("1");
+    expect(as(alice, `update journal_entries set title = '旧标签页', rev = 1 where id = '${id}' and rev = 0 returning rev`)).toBe("");
+    expect(query(`select title || ' ' || (updated_at > now() - interval '1 minute') from journal_entries where id = '${id}'`)).toBe("改 true");
   });
 
   it("the same content is stored once per user", () => {

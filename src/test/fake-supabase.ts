@@ -120,6 +120,7 @@ export function makeFakeSupabase(
       gte: (c: string, v: unknown) => (conds.push((r) => String(get(r, c)) >= String(v)), chain),
       lte: (c: string, v: unknown) => (conds.push((r) => String(get(r, c)) <= String(v)), chain),
       lt: (c: string, v: unknown) => (conds.push((r) => String(get(r, c)) < String(v)), chain),
+      gt: (c: string, v: unknown) => (conds.push((r) => String(get(r, c)) > String(v)), chain),
       is: (c: string, v: unknown) => (conds.push((r) => (get(r, c) ?? null) === v), chain),
       not: (c: string, op: string, v: unknown) =>
         (conds.push((r) => (op === "is" ? (get(r, c) ?? null) !== v : get(r, c) !== v)), chain),

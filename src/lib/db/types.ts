@@ -68,6 +68,44 @@ type MapRow = {
   updated_at: string;
 };
 
+type JournalEntryRow = {
+  id: string;
+  user_id: string;
+  /** 这一篇写的是哪一天：YYYY-MM-DD（写的人当地的日期） */
+  day: string;
+  title: string;
+  style: string;
+  mood: string;
+  weather: string;
+  doc: Json;
+  rev: number;
+  search_text: string;
+  created_at: string;
+  updated_at: string;
+};
+
+type JournalMediaRow = {
+  id: string;
+  user_id: string;
+  entry_id: string;
+  kind: string;
+  status: string;
+  error: string | null;
+  path: string;
+  mime: string;
+  bytes: number;
+  width: number | null;
+  height: number | null;
+  duration_s: number | null;
+  transcript: string | null;
+  notes: string[];
+  usage: Json;
+  cost_usd: number;
+  started_at: string;
+  created_at: string;
+  updated_at: string;
+};
+
 type Table<Row, Required extends keyof Row> = {
   Row: Row;
   Insert: Pick<Row, Required> & Partial<Omit<Row, Required>>;
@@ -83,6 +121,8 @@ export type Database = {
       item_entities: Table<ItemEntityRow, "item_id" | "entity_id" | "user_id">;
       entity_edges: Table<EntityEdgeRow, "item_id" | "src_id" | "dst_id" | "relation" | "user_id">;
       maps: Table<MapRow, "user_id">;
+      journal_entries: Table<JournalEntryRow, "user_id" | "day">;
+      journal_media: Table<JournalMediaRow, "user_id" | "entry_id" | "kind" | "path">;
     };
     Views: { [_ in never]: never };
     Functions: {
@@ -118,3 +158,5 @@ export type Database = {
 export type ItemRecord = ItemRow;
 export type EntityRecord = EntityRow;
 export type MapRecord = MapRow;
+export type JournalEntryRecord = JournalEntryRow;
+export type JournalMediaRecord = JournalMediaRow;
