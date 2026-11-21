@@ -65,7 +65,7 @@ log "更新到 $short：$(git log -1 --format=%s)"
 if [ -n "$built" ] && git cat-file -e "$built^{commit}" 2>/dev/null; then
   migrations="$(git diff --name-only "$built" "$head" -- supabase/migrations)"
   if [ -n "$migrations" ]; then
-    log "注意：这次更新里有数据库迁移，要自己推到 Supabase（npx supabase db push，或者在 SQL Editor 里运行）："
+    log "注意：这次更新里有数据库迁移，要自己推到 Supabase（在 SQL Editor 里运行，或者 npx supabase link 之后 npx supabase db push --remote）："
     printf '  %s\n' $migrations
   fi
 fi

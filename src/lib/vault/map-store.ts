@@ -47,7 +47,7 @@ export type MapSummary = Pick<VaultMap, "id" | "title" | "updatedAt"> & { nodeCo
  */
 function fail(what: string, error: { message: string; code?: string }): never {
   if (error.code === "42P01" || error.code === "PGRST205") {
-    throw new VaultError("数据库里还没有导图用的那张表：把迁移 supabase/migrations/20261121000001_maps.sql 推到 Supabase（npx supabase db push，或者把文件内容贴进控制台的 SQL Editor 运行）", 503);
+    throw new VaultError("数据库里还没有导图用的那张表：把迁移 supabase/migrations/20261121000001_maps.sql 推到 Supabase（把文件内容贴进控制台的 SQL Editor 运行；或者 npx supabase link 之后 npx supabase db push --remote）", 503);
   }
   throw new Error(`${what}: ${error.message}`);
 }

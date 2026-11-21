@@ -103,7 +103,7 @@ npm run dev
 
 打开 <http://localhost:3000>，用邮箱和密码注册（本地的 Supabase 不要求确认邮件）。
 
-用云端的 Supabase 项目：建好项目后把迁移推上去（`npx supabase link` 再 `npx supabase db push`，或者把迁移文件的内容贴进控制台的 SQL Editor 运行），三个变量换成项目的（控制台 **Settings → API Keys**）。账号可以在 **Authentication → Users → Add user** 里直接建，勾上 Auto Confirm User 就不用等确认邮件。部署到公网时配上 `VAULT_ALLOWED_EMAILS`，或者在 Supabase 的 Auth 设置里关掉注册。
+用云端的 Supabase 项目：建好项目后把迁移推上去：把迁移文件的内容贴进控制台的 SQL Editor 运行（最省事）；或者 `npx supabase link` 再 `npx supabase db push --remote`。Supabase CLI 3 起 `db push` 不带 `--remote` 推的是本机的数据库（没起 Docker 就报连不上 127.0.0.1:54322）；之前的迁移如果是在 SQL Editor 里运行的，CLI 不知道，会把所有迁移再跑一遍（迁移都写成了可以重复执行的），可以先加 `--dry-run` 看它要跑哪些，三个变量换成项目的（控制台 **Settings → API Keys**）。账号可以在 **Authentication → Users → Add user** 里直接建，勾上 Auto Confirm User 就不用等确认邮件。部署到公网时配上 `VAULT_ALLOWED_EMAILS`，或者在 Supabase 的 Auth 设置里关掉注册。
 
 ### 部署到服务器
 
