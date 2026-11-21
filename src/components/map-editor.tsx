@@ -9,6 +9,7 @@ import { MAP_MAX, fixDepths, type MapNode } from "@/lib/vault/map-nodes";
 import type { MapDetail, MapEdit, MapSource } from "@/lib/vault/map-service";
 import type { ChatMessage } from "@/lib/vault/map-store";
 import { ActionForm } from "./action-form";
+import { ChatDock } from "./chat-dock";
 import { LocalDate } from "./local-date";
 import { MindMap } from "./mind-map";
 import { OutlineEditor } from "./outline-editor";
@@ -17,8 +18,9 @@ import { OutlineEditor } from "./outline-editor";
  * 导图页：自己建的一张思维导图。三块东西——
  * - 大纲（OutlineEditor）：自己写、自己改，一行一个节点；
  * - 思维导图：跟着大纲实时变，点一个节点跳到大纲里那一行；
- * - 跟 AI 对话：说一句话让它改图 / 补内容 / 回答问题。它会带上这张图挂着的收藏，并按这句话去收藏库里找相关的内容。
- *   它改完直接生效，新出现的节点标出来，最近一次改动能撤销。
+ * - 跟 AI 对话：右下角一个圆按钮，点开是浮在页面上的对话面板（ChatDock），开着也能接着改大纲。说一句话让它改图 / 补内容 /
+ *   回答问题；它会带上这张图挂着的收藏，并按这句话去收藏库里找相关的内容。它改完直接生效，新出现的节点标出来，最近一次改动能撤销。
+ *   面板收着的时候：AI 在想，按钮旁边有一句话；回复来了，按钮上有红点；出错了，面板自己打开。
  *
  * 自己改的自动保存（停手不到一秒就存）。AI 在想的时候大纲锁住：它回来会把整张图换掉，这期间改的会丢。
  * 动作（保存、对话、起草、撤销）从页面传进来：都是 server action，逻辑在 lib/vault/map-service.ts。
@@ -81,13 +83,17 @@ export function MapEditor({ initial, api, autoDraft = false }: { initial: MapDet
   const [draftText, setDraftText] = useState("");
   const [thinking, setThinking] = useState<"chat" | "draft" | "undo" | null>(null);
   const [chatError, setChatError] = useState<string | null>(null);
+  // 新建时选了「让 AI 起草」：面板一开始就开着，看得到它在干什么
+  const [chatOpen, setChatOpen] = useState(autoDraft);
+  const [unread, setUnread] = useState(false);
+  const chatInput = useRef<HTMLTextAreaElement>(null);
   /** 自己改了多少次 / 存到了第几次：不相等就是有没存上的 */
   const [version, setVersion] = useState(0);
   const [savedVersion, setSavedVersion] = useState(0);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const latest = useRef({ title, rows, sources, version });
+  const latest = useRef({ title, rows, sources, version, chatOpen });
   useEffect(() => {
-    latest.current = { title, rows, sources, version };
+    latest.current = { title, rows, sources, version, chatOpen };
   });
   const chatEnd = useRef<HTMLLIElement>(null);
   const outlineRef = useRef<HTMLDivElement>(null);
@@ -114,9 +120,19 @@ export function MapEditor({ initial, api, autoDraft = false }: { initial: MapDet
     return () => window.removeEventListener("beforeunload", warn);
   }, [version, savedVersion]);
 
+  const openChat = (open: boolean) => {
+    setChatOpen(open);
+    if (open) setUnread(false);
+  };
+  // 面板打开：滚到最新的一条，光标放进输入框
+  useEffect(() => {
+    if (!chatOpen) return;
+    chatEnd.current?.scrollIntoView({ block: "nearest" });
+    chatInput.current?.focus({ preventScroll: true });
+  }, [chatOpen]);
   useEffect(() => {
     chatEnd.current?.scrollIntoView({ block: "nearest" });
-  }, [chat.length, thinking]);
+  }, [chat.length, thinking, chatError]);
 
   /** 服务器回来的整张图换上去。prevTexts 给了 = AI 改的：原来没有的节点标出来 */
   const apply = (detail: MapDetail, prevTexts: Set<string> | null) => {
@@ -151,9 +167,12 @@ export function MapEditor({ initial, api, autoDraft = false }: { initial: MapDet
     }
     setThinking(null);
     if ("error" in res) {
+      // 面板收着的时候出错：打开它，不然不知道为什么没动静
       setChatError(res.error);
+      setChatOpen(true);
       return;
     }
+    if (!latest.current.chatOpen && kind !== "undo") setUnread(true);
     const last = res.detail.map.chat[res.detail.map.chat.length - 1];
     apply(res.detail, kind !== "undo" && last?.role === "assistant" && last.changed ? prevTexts : null);
     if (kind === "chat") setDraftText("");
@@ -202,7 +221,8 @@ export function MapEditor({ initial, api, autoDraft = false }: { initial: MapDet
   const locked = thinking !== null;
 
   return (
-    <div className="flex flex-col gap-5">
+    // 底下留出右下角那个对话按钮的位置，最后一行内容不被它挡住
+    <div className="flex flex-col gap-5 pb-20">
       <header className="flex flex-col gap-2">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-muted">
           <Link href="/maps" className="hover:text-ink">
@@ -293,58 +313,71 @@ export function MapEditor({ initial, api, autoDraft = false }: { initial: MapDet
         </div>
 
         <div className="order-1 flex min-w-0 flex-col gap-6 lg:sticky lg:top-4 lg:order-2 lg:self-start">
-          <MindMap title={title || "没起名的导图"} nodes={mapNodes} boxClassName="max-h-[44dvh] overflow-auto overscroll-contain" onPick={pick} fresh={freshIds} activeId={activeId} recenter={layout} />
-
-          <section className="flex flex-col gap-2.5" aria-label="跟 AI 对话">
-            <h2 className="label">跟 AI 对话</h2>
-            {chat.length > 0 && (
-              <ol className="panel flex max-h-[30dvh] flex-col gap-3 overflow-y-auto overscroll-contain p-3.5">
-                {chat.map((m, i) => (
-                  <ChatLine key={`${m.at}-${i}`} message={m} canUndo={i === undoIndex} onUndo={() => void run("undo")} busy={locked} />
-                ))}
-                <li ref={chatEnd} aria-hidden />
-              </ol>
-            )}
-            {thinking && (
-              <p role="status" className="rounded-md bg-accent-soft px-3.5 py-2.5 text-sm text-accent">
-                {thinking === "undo" ? "正在撤销…" : thinking === "draft" ? "正在从你的收藏里找相关的内容、起草这张图…一般要十几秒到一分钟。" : "AI 在想…一般要十几秒到一分钟。这期间大纲先锁住。"}
-              </p>
-            )}
-            {chatError && (
-              <p role="alert" className="rounded-md bg-danger-soft px-3.5 py-2.5 text-sm text-danger">
-                {chatError}
-              </p>
-            )}
-            <div className="flex items-end gap-2">
-              <textarea
-                value={draftText}
-                rows={2}
-                maxLength={2000}
-                disabled={locked}
-                aria-label="对 AI 说的话"
-                placeholder="想怎么改这张图？比如「把第二个分支展开」「把我存的关于指数基金的内容并进来」"
-                onChange={(e) => setDraftText(e.target.value)}
-                onKeyDown={onChatKey}
-                className="field min-w-0 flex-1 resize-y"
-              />
-              <button type="button" className="btn btn-primary" disabled={locked || !draftText.trim()} onClick={send}>
-                发送
-              </button>
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              <button type="button" className="chip cursor-pointer" disabled={locked} onClick={() => void run("draft")} title="按标题去收藏库里找相关的内容，照着起一张图（会改掉现在的图，可以撤销）">
-                从我的收藏里起草
-              </button>
-              {SUGGESTIONS.map((s) => (
-                <button key={s} type="button" className="chip cursor-pointer" disabled={locked} onClick={() => void run("chat", s)}>
-                  {s}
-                </button>
-              ))}
-            </div>
-            <p className="text-xs text-ink-faint">AI 会看到现在的图和它挂着的收藏，并按你说的话去收藏库里找相关的内容。它改完直接生效，新出现的节点会标出来，最近一次改动可以撤销。</p>
-          </section>
+          <MindMap title={title || "没起名的导图"} nodes={mapNodes} boxClassName="max-h-[44dvh] overflow-auto overscroll-contain lg:max-h-[calc(100dvh-13rem)]" onPick={pick} fresh={freshIds} activeId={activeId} recenter={layout} />
         </div>
       </div>
+
+      <ChatDock
+        open={chatOpen}
+        onOpenChange={openChat}
+        title="跟 AI 对话"
+        busy={locked}
+        busyText={thinking === "undo" ? "正在撤销…" : thinking === "draft" ? "AI 在起草…" : "AI 在想…"}
+        unread={unread}
+      >
+        <ol className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain p-4">
+          {chat.length === 0 && !thinking && (
+            <li className="flex flex-col gap-3 text-sm leading-relaxed text-ink-muted">
+              <p>说一句话，让 AI 改这张图、补内容，或者回答问题。它看得到现在的图和它挂着的收藏，并按你说的话去收藏库里找相关的内容。</p>
+              <p>它改完直接生效，新出现的节点会标出来，最近一次改动可以撤销。</p>
+            </li>
+          )}
+          {chat.map((m, i) => (
+            <ChatLine key={`${m.at}-${i}`} message={m} canUndo={i === undoIndex} onUndo={() => void run("undo")} busy={locked} />
+          ))}
+          {thinking && (
+            <li role="status" className="rounded-md bg-accent-soft px-3.5 py-2.5 text-sm text-accent">
+              {thinking === "undo" ? "正在撤销…" : thinking === "draft" ? "正在从你的收藏里找相关的内容、起草这张图…一般要十几秒到一分钟。" : "AI 在想…一般要十几秒到一分钟。这期间大纲先锁住。"}
+            </li>
+          )}
+          {chatError && (
+            <li role="alert" className="rounded-md bg-danger-soft px-3.5 py-2.5 text-sm text-danger">
+              {chatError}
+            </li>
+          )}
+          <li ref={chatEnd} aria-hidden />
+        </ol>
+        <div className="flex shrink-0 flex-col gap-2 border-t border-edge p-3">
+          {/* 建议的话排成一行横着滑，不占对话的地方 */}
+          <div className="flex gap-1.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            <button type="button" className="chip cursor-pointer" disabled={locked} onClick={() => void run("draft")} title="按标题去收藏库里找相关的内容，照着起一张图（会改掉现在的图，可以撤销）">
+              从我的收藏里起草
+            </button>
+            {SUGGESTIONS.map((sug) => (
+              <button key={sug} type="button" className="chip cursor-pointer" disabled={locked} onClick={() => void run("chat", sug)}>
+                {sug}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-end gap-2">
+            <textarea
+              ref={chatInput}
+              value={draftText}
+              rows={2}
+              maxLength={2000}
+              disabled={locked}
+              aria-label="对 AI 说的话"
+              placeholder="想怎么改这张图？比如「把第二个分支展开」"
+              onChange={(e) => setDraftText(e.target.value)}
+              onKeyDown={onChatKey}
+              className="field max-h-40 min-w-0 flex-1 resize-none"
+            />
+            <button type="button" className="btn btn-primary" disabled={locked || !draftText.trim()} onClick={send}>
+              发送
+            </button>
+          </div>
+        </div>
+      </ChatDock>
     </div>
   );
 }
