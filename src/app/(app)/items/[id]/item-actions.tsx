@@ -1,5 +1,6 @@
 "use client";
 import { deleteAction, reprocessAction, updateMetaAction } from "@/app/(app)/actions";
+import { createMapFromItemAction } from "@/app/(app)/maps/actions";
 import { ActionForm } from "@/components/action-form";
 
 /** 备注和标签：用户自己的话，随时能改。标签改过之后重新分析不再覆盖。 */
@@ -75,6 +76,22 @@ export function DeleteButton({ id }: { id: string }) {
           <input type="hidden" name="id" value={id} />
           <button className="btn btn-danger" disabled={pending}>
             {pending ? "删除中…" : "删除"}
+          </button>
+        </>
+      )}
+    </ActionForm>
+  );
+}
+
+/** 从这条内容新建一张自己的导图：有大纲就抄过来当起点，并把这条挂成来源（跟 AI 对话时带上）。 */
+export function MakeMapButton({ id }: { id: string }) {
+  return (
+    <ActionForm action={createMapFromItemAction}>
+      {(pending) => (
+        <>
+          <input type="hidden" name="itemId" value={id} />
+          <button className="btn" disabled={pending} title="新建一张自己的思维导图，从这条内容开始：可以自己改，也可以跟 AI 说话让它帮着改">
+            {pending ? "新建中…" : "做成导图"}
           </button>
         </>
       )}

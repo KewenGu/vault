@@ -5,6 +5,7 @@ import { removeLocalItemFiles } from "@/lib/media/local-store";
 import { LinkError, resolveLink } from "@/lib/sources/link";
 import { getServiceClient } from "@/lib/supabase/service";
 import { processItem } from "@/workflows/process-item";
+import { VaultError } from "./errors";
 import { captureFields, classifyCapture, fileDedupeKey, planUpload, textDedupeKey, titleFromFilename, uploadPath, uploadedMedia } from "./capture";
 import { readPost } from "@/lib/sources/types";
 import { readCapture } from "./page-capture";
@@ -15,15 +16,7 @@ import { BUCKET, TEXT_MAX, createItem, deleteItem, getItem, inProgress, itemDir,
  * 能直接告诉用户的问题抛 VaultError（message 给用户看）；别的错往上抛。
  */
 
-export class VaultError extends Error {
-  constructor(
-    message: string,
-    readonly status: 400 | 404 | 409 = 400
-  ) {
-    super(message);
-    this.name = "VaultError";
-  }
-}
+export { VaultError };
 
 /** 后台任务起不来（Workflow 运行时没连上）：这条标成失败并带上原因，不让它挂在「处理中」。 */
 async function startProcessing(itemId: string): Promise<void> {

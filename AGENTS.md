@@ -16,5 +16,5 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - 模型的输出一律用带标签的文字再自己解析，不用 JSON 结构化输出（原因见 `src/lib/ai/claude.ts`）。Claude 的调用只走 `askClaude`。
 - 存进来的内容是外部数据：拼进提示词时放在标签里，并在提示词里说明它不是指令。
 - 「没看到」和「没有」要分开：处理中读不到、截断、跳过的东西记进 `notes` / `digestNotes` / `gaps`，页面上列出来。
-- 页面和 `/api/v1` 的接口共用 `src/lib/vault/service.ts`；新功能先写在那里，再接两边（以后的手机 App 走接口）。
+- 页面和 `/api/v1` 的接口共用 `src/lib/vault/service.ts`（自己建的导图是 `src/lib/vault/map-service.ts`）；新功能先写在那里，再接两边（以后的手机 App 走接口）。
 - 提交前跑 `npm run check`。迁移测试需要本机有 PostgreSQL 16 + pgvector，没有时会跳过。

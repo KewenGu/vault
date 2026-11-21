@@ -9,7 +9,8 @@ import { signOut } from "../(public)/login/actions";
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const { user } = await requireSession();
   return (
-    <div className="mx-auto flex min-h-dvh w-full max-w-6xl flex-col px-4 sm:px-6">
+    // 页面里有 data-wide 的（导图页的工作区）用更宽的版心，顶栏跟着一起宽，左右对得齐
+    <div className="mx-auto flex min-h-dvh w-full max-w-6xl flex-col px-4 has-[[data-wide]]:max-w-[112rem] sm:px-6">
       <header className="flex h-14 items-center gap-5 border-b border-edge">
         <Link href="/" prefetch={false} className="text-base font-semibold tracking-tight">
           Vault
@@ -17,6 +18,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         <nav className="flex gap-4 text-sm text-ink-muted" aria-label="主导航">
           <Link href="/" prefetch={false} className="hover:text-ink">
             收藏库
+          </Link>
+          <Link href="/maps" prefetch={false} className="hover:text-ink">
+            导图
           </Link>
           <Link href="/graph" prefetch={false} className="hover:text-ink">
             图谱
