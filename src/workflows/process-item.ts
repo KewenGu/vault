@@ -1,10 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { getServiceClient } from "@/lib/supabase/service";
-import { meterInto, recordCall } from "@/lib/usage/meter";
-import { OPENAI_ASR_COUNT_KEY, estimateUsd } from "@/lib/usage/prices";
-import { AsrNotEnabledError, asrConfig, transcribe } from "@/lib/asr/volc";
-import { openaiAsrConfig, transcribeWithOpenAI } from "@/lib/asr/openai";
-import { localWhisper, transcribeLocally, whisperSetupHint } from "@/lib/asr/whisper-local";
+import { meterInto } from "@/lib/usage/meter";
+import { estimateUsd } from "@/lib/usage/prices";
 import { embedTexts } from "@/lib/embeddings";
 import { defaultGraphDeps, linkItemEntities } from "@/lib/graph/merge";
 import { extractSpeechAudio } from "@/lib/media/audio";
@@ -12,12 +9,13 @@ import { withTempDir } from "@/lib/media/ffmpeg";
 import { IMAGE_MAX_BYTES, MAX_IMAGES, VIDEO_MAX_BYTES, TooLargeError, archiveImage, downloadRemote, downloadRemoteToFile, visionImage, visionSlices } from "@/lib/media/files";
 import { canDigestVideo, contactSheets, digestVideo, digestVideoFile, sheetLayout } from "@/lib/media/frames";
 import { keepLocalFile, localFileSize, localMediaPath, removeLocalItemFiles } from "@/lib/media/local-store";
-import { clockTenths, cuesToText, frameNote, likelyChinese, parseTranscript, speechAt, speechLabel, type Cue } from "@/lib/media/transcript";
+import { clockTenths, frameNote, likelyChinese, parseTranscript, speechAt, speechLabel, type Cue } from "@/lib/media/transcript";
 import { fetchPost } from "@/lib/sources/fetch-post";
 import { mapCapture } from "@/lib/sources/web";
 import { emptyStats, type FetchedPost, type ItemMedia, type PostSnapshot } from "@/lib/sources/types";
 import { ytdlpDownload } from "@/lib/sources/ytdlp";
 import { buildEmbeddingText, buildSearchText } from "@/lib/vault/indexing";
+import { SPEECH_MAX_SECONDS, transcribeSpeech } from "@/lib/vault/speech";
 import { BUCKET, audioOf, bucketFileLimit, framesOf, getItemById, imagesOf, itemDir, removeItemFiles, sheetsOf, tagCounts, videoOf, type Item } from "@/lib/vault/store";
 import { understand, type OutputLanguage } from "@/lib/vault/understand";
 import type { Json } from "@/lib/db/types";
@@ -46,8 +44,6 @@ type Db = ReturnType<typeof getServiceClient>;
 
 const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-/** 口播最多转写前这么多秒（60 分钟；48 kbps 单声道约 22 MB，在各家语音识别的单文件上限以内——最紧的是 OpenAI 的 25 MB） */
-const SPEECH_MAX_SECONDS = 3600;
 /**
  * 为了读懂内容，视频最多下载这么大（默认 600 MB，`VAULT_VIDEO_READ_MAX_MB` 可以改）。
  * 和「存档」的上限（VIDEO_MAX_BYTES）是两回事：超过存档上限的视频不进存储桶（原片留在这台服务器的磁盘上），
@@ -352,60 +348,6 @@ async function fetchItemStep(itemId: string): Promise<StepResult & { digested: b
     await markFailed(itemId, item.understanding ? `重新读取没成，留着上次的结果：${error}` : error, item.understanding !== null);
     return { ok: false, error, counts, digested: false, userId };
   }
-}
-
-/**
- * 把音轨转成带时间的文字。三条路按顺序试，前一条走不通才试下一条：豆包语音识别（配了密钥、控制台也开通了）
- * → OpenAI whisper-1（配了 OPENAI_API_KEY）→ 本机的 whisper（命令和模型文件都在，不花钱）。
- * 都走不通就不转，notes 里说清楚各差什么。转出来是空的（没人说话）不算走不通，不再往下试。
- */
-async function transcribeSpeech(counts: Counts, audio: { data: Uint8Array; seconds: number }, language: "zh" | null): Promise<{ transcript: string | null; cues: Cue[]; notes: string[] }> {
-  const done = (text: string, cues: Cue[] = []) => (text ? { transcript: text, cues, notes: [] } : { transcript: null, cues: [], notes: ["没有识别出说话（可能只有音乐）"] });
-  const why: string[] = [];
-  const volc = asrConfig();
-  if (!volc) {
-    why.push("没配 VOLC_SPEECH_API_KEY");
-  } else {
-    try {
-      const r = await meterInto(counts, async () => {
-        const r = await transcribe(volc, audio.data);
-        recordCall(r.countKey, Math.ceil(r.seconds ?? audio.seconds));
-        return r;
-      });
-      return done(r.cues.length > 0 ? cuesToText(r.cues) : r.text, r.cues);
-    } catch (e) {
-      why.push(e instanceof AsrNotEnabledError ? e.message : `豆包语音识别出错（${messageOf(e).slice(0, 100)}）`);
-      console.error(`口播：豆包语音识别没转成，换备用通道：${messageOf(e)}`);
-    }
-  }
-  const openai = openaiAsrConfig();
-  if (!openai) {
-    why.push("没配 OPENAI_API_KEY");
-  } else {
-    try {
-      const r = await meterInto(counts, async () => {
-        const r = await transcribeWithOpenAI(openai, audio.data, language);
-        recordCall(OPENAI_ASR_COUNT_KEY, Math.ceil(r.seconds ?? audio.seconds));
-        return r;
-      });
-      return done(cuesToText(r.cues), r.cues);
-    } catch (e) {
-      why.push(`OpenAI 的转写没成（${messageOf(e).slice(0, 100)}）`);
-    }
-  }
-  const whisper = localWhisper();
-  if (whisper) {
-    try {
-      const r = await transcribeLocally(whisper, audio.data, audio.seconds, language);
-      return done(cuesToText(r.cues), r.cues);
-    } catch (e) {
-      why.push(`本机的 whisper 没转出来（${messageOf(e).slice(0, 100)}）`);
-    }
-  } else {
-    const hint = whisperSetupHint();
-    if (hint) why.push(hint);
-  }
-  return { transcript: null, cues: [], notes: [`没有转写说的话：${why.join("；")}`] };
 }
 
 const extOf = (path: string) => path.split(".").pop() ?? "bin";
