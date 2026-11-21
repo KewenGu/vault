@@ -55,6 +55,19 @@ type EntityRow = {
 type ItemEntityRow = { item_id: string; entity_id: string; user_id: string; about: string };
 type EntityEdgeRow = { item_id: string; src_id: string; dst_id: string; relation: string; user_id: string };
 
+type MapRow = {
+  id: string;
+  user_id: string;
+  title: string;
+  nodes: Json;
+  sources: string[];
+  chat: Json;
+  usage: Json;
+  cost_usd: number;
+  created_at: string;
+  updated_at: string;
+};
+
 type Table<Row, Required extends keyof Row> = {
   Row: Row;
   Insert: Pick<Row, Required> & Partial<Omit<Row, Required>>;
@@ -69,6 +82,7 @@ export type Database = {
       entities: Table<EntityRow, "user_id" | "type" | "name">;
       item_entities: Table<ItemEntityRow, "item_id" | "entity_id" | "user_id">;
       entity_edges: Table<EntityEdgeRow, "item_id" | "src_id" | "dst_id" | "relation" | "user_id">;
+      maps: Table<MapRow, "user_id">;
     };
     Views: { [_ in never]: never };
     Functions: {
@@ -103,3 +117,4 @@ export type Database = {
 
 export type ItemRecord = ItemRow;
 export type EntityRecord = EntityRow;
+export type MapRecord = MapRow;

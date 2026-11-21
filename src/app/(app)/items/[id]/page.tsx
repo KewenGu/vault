@@ -12,7 +12,7 @@ import { clock, parseTranscript } from "@/lib/media/transcript";
 import { POST_STAT_KEYS, formatCount, postNotes, statLabel, type ItemMedia } from "@/lib/sources/types";
 import { audioOf, displayTitle, getItem, imagesOf, inProgress, isStuck, itemFileUrl, sheetsOf, sourceLabel, videoOf } from "@/lib/vault/store";
 import { CATEGORY_LABEL, CONTENT_TYPE_INFO, ENTITY_TYPE_INFO } from "@/lib/vault/taxonomy";
-import { DeleteButton, MetaForm, PasteTextForm, ReprocessButton } from "./item-actions";
+import { DeleteButton, MakeMapButton, MetaForm, PasteTextForm, ReprocessButton } from "./item-actions";
 
 type Props = { params: Promise<{ id: string }> };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -296,6 +296,7 @@ export default async function ItemPage({ params }: Props) {
           <footer className="flex flex-wrap items-center gap-2 border-t border-edge pt-5">
             <ReprocessButton id={item.id} from="analyze" label="重新分析" />
             {item.source === "link" && <ReprocessButton id={item.id} from="fetch" label="重新读取链接" />}
+            {u && <MakeMapButton id={item.id} />}
             <DeleteButton id={item.id} />
             {item.costUsd > 0 && <span className="ml-auto text-xs text-ink-faint">处理花费约 ${item.costUsd.toFixed(3)}</span>}
           </footer>

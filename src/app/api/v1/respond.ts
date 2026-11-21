@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { apiSession, type Session } from "@/lib/auth/user";
-import { VaultError } from "@/lib/vault/service";
+import { VaultError } from "@/lib/vault/errors";
 
 /**
  * /api/v1 的公共部分：鉴权（浏览器登录态或 `Authorization: Bearer <Supabase 访问令牌>`）和出错时的回包。

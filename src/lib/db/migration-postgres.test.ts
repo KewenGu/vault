@@ -80,7 +80,7 @@ describe.skipIf(!pg)("migrations — isolated PostgreSQL", () => {
   const search = (user: string, args: string) => as(user, `select string_agg(i.dedupe_key, ',' order by s.score desc, i.created_at desc) from search_items('${user}'${args ? `, ${args}` : ""}) s join items i on i.id = s.id`);
 
   beforeEach(() => {
-    query("truncate items, entities cascade");
+    query("truncate items, entities, maps cascade");
   });
 
   it("migrations can be applied twice", () => {
@@ -101,6 +101,22 @@ describe.skipIf(!pg)("migrations — isolated PostgreSQL", () => {
     // 默认填当前用户
     as(alice, "insert into items (source, dedupe_key) values ('text', 'mine')");
     expect(query(`select user_id from items where dedupe_key = 'mine'`)).toBe(alice);
+  });
+
+  it("maps are private to their owner", () => {
+    query(`insert into maps (user_id, title) values ('${alice}', 'alice 的图'), ('${bob}', 'bob 的图')`);
+    expect(as(alice, "select string_agg(title, ',') from maps")).toBe("alice 的图");
+    expect(as(bob, "select string_agg(title, ',') from maps")).toBe("bob 的图");
+    expect(() => as(alice, `insert into maps (user_id, title) values ('${bob}', 'x')`)).toThrow(/row-level security/);
+    // 改 / 删别人的：行级安全让它一行都碰不到
+    expect(as(alice, `update maps set title = '抢' where user_id = '${bob}' returning id`)).toBe("");
+    expect(as(alice, `delete from maps where user_id = '${bob}' returning id`)).toBe("");
+    expect(query(`select title from maps where user_id = '${bob}'`)).toBe("bob 的图");
+    // 默认填当前用户；节点、来源、对话默认是空的
+    as(alice, "insert into maps (title) values ('默认是我的')");
+    expect(query(`select user_id || ' ' || nodes::text || ' ' || sources::text || ' ' || chat::text from maps where title = '默认是我的'`)).toBe(`${alice} [] {} []`);
+    // 后台（service_role）读得到，代码里自己带 user_id
+    expect(query(`begin; set local role service_role; select count(*) from maps where user_id = '${bob}'; commit;`)).toBe("1");
   });
 
   it("the same content is stored once per user", () => {
