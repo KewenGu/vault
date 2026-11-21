@@ -107,4 +107,10 @@ body {
   .label {
     @apply text-xs font-medium tracking-wide text-ink-muted;
   }
+  /* 导图页的画布：一层淡淡的点阵，跟着内容一起滚（拖的时候像在挪一张纸） */
+  .canvas-dots {
+    background-image: radial-gradient(var(--color-edge) 1px, transparent 1px);
+    background-size: 22px 22px;
+    background-attachment: local;
+  }
 }

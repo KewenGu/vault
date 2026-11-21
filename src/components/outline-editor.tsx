@@ -152,8 +152,9 @@ export function OutlineEditor({ rows, onChange, newKey, activeKey, onActive, fre
     trail.push(r.item);
   }
   return (
-    <div className="flex flex-col gap-2">
-      <div className="sticky top-0 z-10 -mx-1 flex flex-wrap items-center gap-1.5 bg-canvas px-1 py-1.5">
+    <div className="flex flex-col">
+      {/* 工具栏粘在这一栏的顶上（手机上是屏幕顶上）：大纲再长，按钮也够得着 */}
+      <div className="sticky top-0 z-10 flex flex-wrap items-center gap-1.5 rounded-t-[9px] border-b border-edge bg-surface px-2.5 py-2 lg:rounded-none">
         <Tool label="＋ 加一条" title="在当前这一行下面加一条（回车）" enabled={!locked && !full} onRun={() => add(activeIndex >= 0 ? activeIndex : rows.length - 1)} />
         <Tool label="⇥" title="缩进：变成上一行的下一层（Tab）" enabled={has && indentRow(rows, activeIndex) !== null} onRun={() => indent(activeIndex)} />
         <Tool label="⇤" title="反缩进：往上提一层（Shift+Tab）" enabled={has && outdentRow(rows, activeIndex) !== null} onRun={() => outdent(activeIndex)} />
@@ -166,9 +167,9 @@ export function OutlineEditor({ rows, onChange, newKey, activeKey, onActive, fre
       </div>
 
       {rows.length === 0 ? (
-        <p className="panel px-3.5 py-6 text-center text-sm text-ink-muted">还是空的。点上面的「＋ 加一条」开始写，或者让旁边的 AI 从你的收藏里起草。</p>
+        <p className="px-4 py-10 text-center text-sm leading-relaxed text-ink-muted">还是空的。点上面的「＋ 加一条」开始写，或者点右下角的对话按钮，让 AI 从你的收藏里起草。</p>
       ) : (
-        <ol className="panel flex flex-col py-1.5" aria-label="大纲">
+        <ol className="flex flex-col py-1.5" aria-label="大纲">
           {rows.map((row, i) => {
             const color = BRANCH_COLORS[Math.max(0, branchOf[i]) % BRANCH_COLORS.length];
             const active = row.key === activeKey;

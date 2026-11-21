@@ -1,5 +1,6 @@
 "use client";
 
+import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import type { ActionState } from "@/app/(app)/actions";
@@ -10,14 +11,14 @@ import type { MapDetail, MapEdit, MapSource } from "@/lib/vault/map-service";
 import type { ChatMessage } from "@/lib/vault/map-store";
 import { ActionForm } from "./action-form";
 import { ChatDock } from "./chat-dock";
-import { LocalDate } from "./local-date";
 import { MindMap } from "./mind-map";
 import { OutlineEditor } from "./outline-editor";
 
 /**
- * 导图页：自己建的一张思维导图。三块东西——
+ * 导图页：自己建的一张思维导图。排成一个工作区——顶上一行是标题和状态，下面左边一栏大纲、右边一整块画布；
+ * 宽屏上正好占满一屏，大纲和画布各滚各的，大纲可以收起来把地方让给图；手机上用「导图 / 大纲」切换，一次看一样。
  * - 大纲（OutlineEditor）：自己写、自己改，一行一个节点；
- * - 思维导图：跟着大纲实时变，点一个节点跳到大纲里那一行；
+ * - 思维导图（画布）：跟着大纲实时变，点一个节点跳到大纲里那一行；
  * - 跟 AI 对话：右下角一个圆按钮，点开是浮在页面上的对话面板（ChatDock），开着也能接着改大纲。说一句话让它改图 / 补内容 /
  *   回答问题；它会带上这张图挂着的收藏，并按这句话去收藏库里找相关的内容。它改完直接生效，新出现的节点标出来，最近一次改动能撤销。
  *   面板收着的时候：AI 在想，按钮旁边有一句话；回复来了，按钮上有红点；出错了，面板自己打开。
@@ -86,6 +87,10 @@ export function MapEditor({ initial, api, autoDraft = false }: { initial: MapDet
   // 新建时选了「让 AI 起草」：面板一开始就开着，看得到它在干什么
   const [chatOpen, setChatOpen] = useState(autoDraft);
   const [unread, setUnread] = useState(false);
+  /** 手机上看哪一样：空白的图先写大纲，有内容的先看图。宽屏上两样并排，这个不起作用 */
+  const [tab, setTab] = useState<"map" | "outline">(initial.map.nodes.length === 0 && !autoDraft ? "outline" : "map");
+  /** 宽屏上大纲那一栏开着没有 */
+  const [outlineOpen, setOutlineOpen] = useState(true);
   const chatInput = useRef<HTMLTextAreaElement>(null);
   /** 自己改了多少次 / 存到了第几次：不相等就是有没存上的 */
   const [version, setVersion] = useState(0);
@@ -96,7 +101,7 @@ export function MapEditor({ initial, api, autoDraft = false }: { initial: MapDet
     latest.current = { title, rows, sources, version, chatOpen };
   });
   const chatEnd = useRef<HTMLLIElement>(null);
-  const outlineRef = useRef<HTMLDivElement>(null);
+  const outlineRef = useRef<HTMLElement>(null);
 
   const edited = () => setVersion((v) => v + 1);
 
@@ -210,10 +215,16 @@ export function MapEditor({ initial, api, autoDraft = false }: { initial: MapDet
   }, [visible, activeKey]);
   const pick = (i: number) => {
     const key = visible[i]?.key;
-    const el = key ? outlineRef.current?.querySelector<HTMLInputElement>(`[data-row="${key}"] input`) : null;
-    if (!el) return;
-    el.focus();
-    el.scrollIntoView({ block: "center", behavior: "smooth" });
+    if (!key) return;
+    // 大纲可能收着（宽屏）或在另一个标签里（手机）：先让它出来，等画出来了再把光标放过去
+    setOutlineOpen(true);
+    setTab("outline");
+    requestAnimationFrame(() => {
+      const el = outlineRef.current?.querySelector<HTMLInputElement>(`[data-row="${key}"] input`);
+      if (!el) return;
+      el.focus();
+      el.scrollIntoView({ block: "center", behavior: "smooth" });
+    });
   };
 
   const undoIndex = chat.findLastIndex((m) => m.role === "assistant" && m.before !== undefined);
@@ -221,21 +232,13 @@ export function MapEditor({ initial, api, autoDraft = false }: { initial: MapDet
   const locked = thinking !== null;
 
   return (
-    // 底下留出右下角那个对话按钮的位置，最后一行内容不被它挡住
-    <div className="flex flex-col gap-5 pb-20">
-      <header className="flex flex-col gap-2">
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-muted">
-          <Link href="/maps" className="hover:text-ink">
-            ← 导图
-          </Link>
-          <span>
-            建于 <LocalDate iso={initial.map.createdAt} />
-          </span>
-          <span role="status" className={saveError ? "text-danger" : ""}>
-            {saveError ? `没保存上：${saveError}` : unsaved ? "有改动，马上保存…" : "已保存"}
-          </span>
-          {costUsd > 0 && <span className="text-ink-faint">对话花费约 ${costUsd.toFixed(3)}</span>}
-        </div>
+    // data-wide：这一页用更宽的版心（见 (app)/layout.tsx）。宽屏上整个工作区正好占满一屏，大纲和画布各滚各的；
+    // 手机上是普通的一页（底下留出右下角对话按钮的位置）
+    <div data-wide className="flex flex-col gap-3 pb-20 lg:h-[calc(100dvh-6.5rem)] lg:min-h-[32rem] lg:pb-0">
+      <header className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+        <Link href="/maps" className="btn btn-quiet h-8 shrink-0 px-2">
+          ← 导图
+        </Link>
         <input
           value={title}
           readOnly={locked}
@@ -246,14 +249,52 @@ export function MapEditor({ initial, api, autoDraft = false }: { initial: MapDet
             setTitle(e.target.value);
             edited();
           }}
-          className="w-full bg-transparent text-2xl leading-tight font-semibold tracking-tight outline-none placeholder:text-ink-faint"
+          className="min-w-0 flex-1 basis-56 rounded-md bg-transparent px-1 text-xl leading-tight font-semibold tracking-tight outline-none placeholder:text-ink-faint focus:bg-surface"
         />
+        <div className="flex shrink-0 items-center gap-3 text-xs text-ink-muted">
+          <span role="status" className={saveError ? "text-danger" : ""}>
+            {saveError ? `没保存上：${saveError}` : unsaved ? "有改动，马上保存…" : "已保存"}
+          </span>
+          {costUsd > 0 && <span className="text-ink-faint">对话约 ${costUsd.toFixed(3)}</span>}
+          <ActionForm action={api.remove} confirm="删掉这张导图？和 AI 的对话也一起删，不能恢复。（收藏库里的内容不受影响）">
+            {(pending) => (
+              <>
+                <input type="hidden" name="id" value={id} />
+                <button className="btn btn-danger h-8 px-2 text-xs" disabled={pending || locked}>
+                  {pending ? "删除中…" : "删除"}
+                </button>
+              </>
+            )}
+          </ActionForm>
+        </div>
       </header>
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
-        <div ref={outlineRef} className="order-2 flex min-w-0 flex-col gap-6 lg:order-1">
-          <section className="flex flex-col gap-1">
+      {/* 手机上一次只看一样：导图或大纲 */}
+      <div role="tablist" aria-label="看导图还是大纲" className="flex rounded-lg border border-edge bg-sunken p-0.5 lg:hidden">
+        {(["map", "outline"] as const).map((t) => (
+          <button
+            key={t}
+            type="button"
+            role="tab"
+            aria-selected={tab === t}
+            onClick={() => setTab(t)}
+            className={`flex-1 cursor-pointer rounded-md py-1.5 text-sm ${tab === t ? "bg-surface font-medium shadow-sm" : "text-ink-muted"}`}
+          >
+            {t === "map" ? "导图" : `大纲（${rows.length}）`}
+          </button>
+        ))}
+      </div>
+
+      {/* grid-cols-1 = 一列、最小宽度 0：不然画布里那张比屏幕宽的图会把这一列撑到屏幕外面 */}
+      <div className={`grid min-h-0 flex-1 grid-cols-1 gap-3 ${outlineOpen ? "lg:grid-cols-[minmax(18rem,24rem)_minmax(0,1fr)]" : ""}`}>
+        <aside ref={outlineRef} aria-label="大纲" className={`panel min-h-0 flex-col lg:overflow-hidden ${tab === "outline" ? "flex" : "hidden"} ${outlineOpen ? "lg:flex" : "lg:hidden"}`}>
+          <div className="hidden shrink-0 items-center justify-between border-b border-edge py-1.5 pr-1.5 pl-3.5 lg:flex">
             <h2 className="label">大纲</h2>
+            <button type="button" className="btn btn-quiet size-7 px-0" aria-label="收起大纲" title="收起大纲，把地方让给导图" onClick={() => setOutlineOpen(false)}>
+              <PanelLeftClose aria-hidden className="size-4" />
+            </button>
+          </div>
+          <div className="min-h-0 flex-1 overscroll-contain lg:overflow-y-auto">
             <OutlineEditor
               rows={rows}
               onChange={(next) => {
@@ -266,54 +307,49 @@ export function MapEditor({ initial, api, autoDraft = false }: { initial: MapDet
               fresh={fresh}
               locked={locked}
             />
-            <p className="text-xs text-ink-faint">回车加一行，Tab / Shift+Tab 缩进和反缩进，Alt+↑↓ 挪动；贴进来好几行会按缩进变成好几个节点。</p>
-          </section>
+          </div>
+          <details className="shrink-0 border-t border-edge">
+            <summary className="cursor-pointer px-3.5 py-2 text-xs text-ink-muted hover:text-ink">挂着的收藏（{sources.length}）</summary>
+            <div className="max-h-44 overflow-y-auto px-3.5 pb-3">
+              {sources.length === 0 ? (
+                <p className="text-xs leading-relaxed text-ink-muted">还没有。AI 往图里加了来自哪条收藏的东西，那条就会挂在这里，之后每次对话都带上它。</p>
+              ) : (
+                <ul className="flex flex-col gap-1.5">
+                  {sources.map((s) => (
+                    <li key={s.id} className="flex items-baseline gap-2 text-sm">
+                      <Link href={`/items/${s.id}`} prefetch={false} title={s.origin || undefined} className="min-w-0 truncate text-accent hover:underline">
+                        {s.title}
+                      </Link>
+                      <button
+                        type="button"
+                        disabled={locked}
+                        title="不再挂在这张图上（图里已有的节点不动）"
+                        aria-label={`把「${s.title}」从这张图上拿掉`}
+                        onClick={() => {
+                          setSources((cur) => cur.filter((x) => x.id !== s.id));
+                          edited();
+                        }}
+                        className="ml-auto shrink-0 cursor-pointer rounded-sm px-1 text-xs text-ink-muted hover:text-danger disabled:opacity-50"
+                      >
+                        拿掉
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </details>
+          <p className="hidden shrink-0 border-t border-edge px-3.5 py-1.5 text-[11px] text-ink-faint lg:block">回车加一行 · Tab / Shift+Tab 缩进 · Alt+↑↓ 挪动 · 贴进多行变成节点</p>
+        </aside>
 
-          <section className="flex flex-col gap-2">
-            <h2 className="label">挂着的收藏</h2>
-            {sources.length === 0 ? (
-              <p className="text-sm text-ink-muted">还没有。AI 往图里加了来自哪条收藏的东西，那条就会挂在这里，之后每次对话都带上它。</p>
-            ) : (
-              <ul className="flex flex-col gap-1.5">
-                {sources.map((s) => (
-                  <li key={s.id} className="flex items-baseline gap-2 text-sm">
-                    <Link href={`/items/${s.id}`} prefetch={false} className="min-w-0 truncate text-accent hover:underline">
-                      {s.title}
-                    </Link>
-                    {s.origin && <span className="shrink-0 text-xs text-ink-faint">{s.origin}</span>}
-                    <button
-                      type="button"
-                      disabled={locked}
-                      title="不再挂在这张图上（图里已有的节点不动）"
-                      aria-label={`把「${s.title}」从这张图上拿掉`}
-                      onClick={() => {
-                        setSources((cur) => cur.filter((x) => x.id !== s.id));
-                        edited();
-                      }}
-                      className="ml-auto shrink-0 cursor-pointer rounded-sm px-1 text-xs text-ink-muted hover:text-danger disabled:opacity-50"
-                    >
-                      拿掉
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
-
-          <ActionForm action={api.remove} confirm="删掉这张导图？和 AI 的对话也一起删，不能恢复。（收藏库里的内容不受影响）">
-            {(pending) => (
-              <>
-                <input type="hidden" name="id" value={id} />
-                <button className="btn btn-danger" disabled={pending || locked}>
-                  {pending ? "删除中…" : "删除这张导图"}
-                </button>
-              </>
-            )}
-          </ActionForm>
-        </div>
-
-        <div className="order-1 flex min-w-0 flex-col gap-6 lg:sticky lg:top-4 lg:order-2 lg:self-start">
-          <MindMap title={title || "没起名的导图"} nodes={mapNodes} boxClassName="max-h-[44dvh] overflow-auto overscroll-contain lg:max-h-[calc(100dvh-13rem)]" onPick={pick} fresh={freshIds} activeId={activeId} recenter={layout} />
+        <div className={`relative h-[calc(100dvh-14rem)] min-h-80 lg:block lg:h-auto lg:min-h-0 ${tab === "map" ? "block" : "hidden"}`}>
+          <MindMap title={title || "没起名的导图"} nodes={mapNodes} fill onPick={pick} fresh={freshIds} activeId={activeId} recenter={`${layout}-${tab}-${outlineOpen}`} />
+          {!outlineOpen && (
+            <button type="button" className="btn absolute top-2.5 left-2.5 hidden h-8 gap-1.5 px-2.5 text-xs shadow-sm lg:inline-flex" onClick={() => setOutlineOpen(true)}>
+              <PanelLeftOpen aria-hidden className="size-4" />
+              大纲
+            </button>
+          )}
         </div>
       </div>
 

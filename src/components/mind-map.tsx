@@ -138,7 +138,7 @@ function Branch({ node, parent, parentItem, color, collapsed, onToggle, onSeek, 
   );
 }
 
-function Canvas({ title, tree, collapsed, onToggle, onSeek, onPick, fresh, activeId }: CanvasProps) {
+function Canvas({ title, tree, collapsed, onToggle, onSeek, onPick, fresh, activeId, loose = false }: CanvasProps & { /** 画布模式：不撑满框的宽度（由外面居中），四周多留一点；窄屏上顶上让出右上角那排操作的位置 */ loose?: boolean }) {
   const boxRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
 
@@ -180,7 +180,7 @@ function Canvas({ title, tree, collapsed, onToggle, onSeek, onPick, fresh, activ
   }, [tree, collapsed]);
 
   return (
-    <div ref={boxRef} className="relative w-max min-w-full p-4 sm:p-5">
+    <div ref={boxRef} className={loose ? "relative w-max px-5 pt-16 pb-6 sm:p-10" : "relative w-max min-w-full p-4 sm:p-5"}>
       <svg ref={svgRef} aria-hidden className="pointer-events-none absolute inset-0 h-full w-full" fill="none" strokeWidth={1.5} strokeLinecap="round" />
       <div className="relative flex flex-col items-start sm:flex-row sm:items-center">
         <div data-node={ROOT} className="max-w-[20em] shrink-0 rounded-lg bg-accent px-3 py-2 text-sm leading-snug font-semibold text-on-accent sm:max-w-[13em]">
@@ -250,8 +250,11 @@ type MindMapProps = {
   /** 这条内容有能跳的播放器：带时间的节点点了跳过去 */
   canSeek?: boolean;
   heading?: string;
-  /** 页面里装图的那个框怎么滚：默认只横向（见顶注）；导图页限高、两个方向都滚 */
-  boxClassName?: string;
+  /**
+   * 画布模式（导图页）：撑满外面给的高度，两个方向都能滚 / 拖，图比框小就摆在正中间，底上有点阵，
+   * 操作（展开、回到中心、复制、全屏）浮在右上角。不给就是详情页那样：一个小标题 + 只横向滚的框。
+   */
+  fill?: boolean;
   onPick?: (id: number) => void;
   fresh?: ReadonlySet<number>;
   activeId?: number | null;
@@ -259,7 +262,7 @@ type MindMapProps = {
   recenter?: unknown;
 };
 
-export function MindMap({ title, nodes, canSeek = false, heading = "思维导图", boxClassName = "overflow-x-auto overscroll-x-contain", onPick, fresh, activeId = null, recenter }: MindMapProps) {
+export function MindMap({ title, nodes, canSeek = false, heading = "思维导图", fill = false, onPick, fresh, activeId = null, recenter }: MindMapProps) {
   const tree = useMemo(() => buildOutlineTree(nodes), [nodes]);
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => (nodes.length > EXPAND_ALL_UNDER ? parentsFrom(tree, 2) : new Set()));
   const [full, setFull] = useState(false);
@@ -267,14 +270,18 @@ export function MindMap({ title, nodes, canSeek = false, heading = "思维导图
   const dialogRef = useRef<HTMLDialogElement>(null);
   const boxRef = useRef<HTMLDivElement>(null);
 
-  // 限了高的框（导图页）里图比框高：中心主题竖着居中在整张图的中间，一开始会在框外面——把它滚到框的中间。
-  // 不限高的框（详情页）没有可滚的，这里什么也不会发生
-  useLayoutEffect(() => {
+  // 画布里图比框高时，中心主题一开始可能在框外面（宽屏上它竖着居中在整张图的中间）——把它滚到框的中间；
+  // 窄屏上它在图的最上面，滚不到中间就停在顶上。不限高的框（详情页）没有可滚的，这里什么也不会发生
+  const center = () => {
     const box = boxRef.current;
-    if (!box) return;
-    box.scrollTop = Math.max(0, (box.scrollHeight - box.clientHeight) / 2);
+    const root = box?.querySelector<HTMLElement>(`[data-node="${ROOT}"]`);
+    if (!box || !root) return;
+    const frame = box.getBoundingClientRect();
+    const at = root.getBoundingClientRect();
+    box.scrollTop += at.top + at.height / 2 - (frame.top + frame.height / 2);
     box.scrollLeft = 0;
-  }, [recenter]);
+  };
+  useLayoutEffect(center, [recenter]);
 
   // 大纲里光标到了哪一行，图上那个节点不在框里就滚过去（只滚这个框，不动页面）
   useEffect(() => {
@@ -324,7 +331,7 @@ export function MindMap({ title, nodes, canSeek = false, heading = "思维导图
         onPick(id);
       }
     : undefined;
-  const canvas = <Canvas title={title} tree={tree} collapsed={collapsed} onToggle={toggle} onSeek={seek} onPick={pick} fresh={fresh} activeId={activeId} />;
+  const canvas = <Canvas title={title} tree={tree} collapsed={collapsed} onToggle={toggle} onSeek={seek} onPick={pick} fresh={fresh} activeId={activeId} loose={fill} />;
   const foldAction =
     collapsed.size > 0 ? (
       <button type="button" className={ACTION} onClick={() => setCollapsed(new Set())}>
@@ -336,23 +343,48 @@ export function MindMap({ title, nodes, canSeek = false, heading = "思维导图
       </button>
     );
 
+  const copyAction = (
+    <button type="button" className={ACTION} onClick={() => void copy()} title="复制成缩进的大纲，可以贴进别的大纲 / 导图工具">
+      {copied === "done" ? "已复制" : copied === "failed" ? "没复制成" : "复制大纲"}
+    </button>
+  );
+  const fullAction = (
+    <button type="button" className={ACTION} onClick={() => setFull(true)}>
+      全屏
+    </button>
+  );
+
   return (
-    <section className="flex flex-col gap-2.5">
-      <div className="flex items-center justify-between gap-3">
-        <h2 className="label">{heading}</h2>
-        <div className="flex items-center gap-3.5">
-          {foldAction}
-          <button type="button" className={ACTION} onClick={() => void copy()} title="复制成缩进的大纲，可以贴进别的大纲 / 导图工具">
-            {copied === "done" ? "已复制" : copied === "failed" ? "没复制成" : "复制大纲"}
-          </button>
-          <button type="button" className={ACTION} onClick={() => setFull(true)}>
-            全屏
-          </button>
-        </div>
-      </div>
-      <PanBox boxRef={boxRef} className={`panel ${boxClassName}`}>
-        {canvas}
-      </PanBox>
+    <section aria-label={fill ? heading : undefined} className={fill ? "relative h-full min-h-0" : "flex flex-col gap-2.5"}>
+      {fill ? (
+        <>
+          <PanBox boxRef={boxRef} className="canvas-dots h-full overflow-auto overscroll-contain rounded-lg border border-edge bg-surface">
+            <div className="flex min-h-full w-max min-w-full items-center justify-center">{canvas}</div>
+          </PanBox>
+          <div className="absolute top-2.5 right-2.5 flex items-center gap-3.5 rounded-full border border-edge bg-surface/90 px-3.5 py-1.5 shadow-sm backdrop-blur-sm">
+            {foldAction}
+            <button type="button" className={ACTION} onClick={center} title="把中心主题摆回画布中间">
+              回到中心
+            </button>
+            {copyAction}
+            {fullAction}
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="label">{heading}</h2>
+            <div className="flex items-center gap-3.5">
+              {foldAction}
+              {copyAction}
+              {fullAction}
+            </div>
+          </div>
+          <PanBox boxRef={boxRef} className="panel overflow-x-auto overscroll-x-contain">
+            {canvas}
+          </PanBox>
+        </>
+      )}
       <dialog ref={dialogRef} onClose={() => setFull(false)} aria-label={`思维导图：${title}`} className="fixed inset-0 m-0 h-dvh max-h-none w-dvw max-w-none bg-canvas p-0 text-ink backdrop:bg-black/40">
         {full && (
           <div className="flex h-full flex-col">
