@@ -11,16 +11,20 @@ import {
   finishStickerUpload,
   listEntryMedia,
   listMyStickers,
+  lookBack,
   removeEntry,
   removeMedia,
   removeSticker,
   retryMedia,
   saveEntry,
+  tidyTranscript,
   type EntryEdit,
+  type LookBack,
   type MediaTicket,
   type MediaView,
   type StickerTicket,
   type StickerView,
+  type Tidied,
 } from "@/lib/vault/journal-service";
 import type { ActionState } from "../actions";
 
@@ -58,6 +62,19 @@ export async function createEntryAction(_prev: ActionState, formData: FormData):
   redirect(`/journal/${id}`);
 }
 
+/** 月历上点一个没写过的日子：开一篇那一天的（补记）。日期是月历自己给的，不会不对；真出了错让页面报出来。 */
+export async function openDayAction(formData: FormData): Promise<void> {
+  const session = await requireSession();
+  const id = await createEntryFor(session, { day: String(formData.get("day") ?? "") });
+  redirect(`/journal/${id}`);
+}
+
+/** 「那年今日」。today 是浏览器算的当地日期。 */
+export async function lookBackAction(today: string): Promise<Result<{ items: LookBack[] }>> {
+  const session = await requireSession();
+  return attempt(async () => ({ items: await lookBack(session, today) }));
+}
+
 export async function deleteEntryAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
   const session = await requireSession();
   try {
@@ -92,6 +109,12 @@ export async function finishMediaAction(mediaId: string): Promise<Result<{ media
 export async function retryMediaAction(mediaId: string): Promise<Result<{ media: MediaView }>> {
   const session = await requireSession();
   return attempt(async () => ({ media: await retryMedia(session, mediaId) }));
+}
+
+/** 「AI 整理」：把这段录音的文字发给 Claude 理顺（只在用户点了按钮时调）。 */
+export async function tidyMediaAction(mediaId: string): Promise<Result<Tidied>> {
+  const session = await requireSession();
+  return attempt(() => tidyTranscript(session, mediaId));
 }
 
 export async function removeMediaAction(mediaId: string): Promise<{ error: string | null }> {

@@ -146,6 +146,21 @@ export async function entriesOfDay(db: Db, userId: string, day: string): Promise
   return (data ?? []).map(toEntry);
 }
 
+/** 从 from 到 to（含）这些天的日记，日期早的在前。 */
+export async function entriesBetween(db: Db, userId: string, from: string, to: string): Promise<JournalEntry[]> {
+  const { data, error } = await db.from("journal_entries").select(ENTRY_COLUMNS).eq("user_id", userId).gte("day", from).lte("day", to).order("day", { ascending: true }).order("created_at", { ascending: true }).limit(400);
+  if (error) fail("读取日记失败", error);
+  return (data ?? []).map(toEntry);
+}
+
+/** 这几天的日记，日期新的在前。 */
+export async function entriesOnDays(db: Db, userId: string, days: string[]): Promise<JournalEntry[]> {
+  if (days.length === 0) return [];
+  const { data, error } = await db.from("journal_entries").select(ENTRY_COLUMNS).eq("user_id", userId).in("day", days).order("day", { ascending: false }).order("created_at", { ascending: true }).limit(200);
+  if (error) fail("读取日记失败", error);
+  return (data ?? []).map(toEntry);
+}
+
 /** 最近动过的那一篇用的风格（新的一篇接着用）；一篇都没有是 null。 */
 export async function lastStyle(db: Db, userId: string): Promise<JournalStyle | null> {
   const { data, error } = await db.from("journal_entries").select("style").eq("user_id", userId).order("updated_at", { ascending: false }).limit(1);
