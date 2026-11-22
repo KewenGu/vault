@@ -17,12 +17,14 @@ import {
   removeSticker,
   retryMedia,
   saveEntry,
+  tidyTranscript,
   type EntryEdit,
   type LookBack,
   type MediaTicket,
   type MediaView,
   type StickerTicket,
   type StickerView,
+  type Tidied,
 } from "@/lib/vault/journal-service";
 import type { ActionState } from "../actions";
 
@@ -107,6 +109,12 @@ export async function finishMediaAction(mediaId: string): Promise<Result<{ media
 export async function retryMediaAction(mediaId: string): Promise<Result<{ media: MediaView }>> {
   const session = await requireSession();
   return attempt(async () => ({ media: await retryMedia(session, mediaId) }));
+}
+
+/** 「AI 整理」：把这段录音的文字发给 Claude 理顺（只在用户点了按钮时调）。 */
+export async function tidyMediaAction(mediaId: string): Promise<Result<Tidied>> {
+  const session = await requireSession();
+  return attempt(() => tidyTranscript(session, mediaId));
 }
 
 export async function removeMediaAction(mediaId: string): Promise<{ error: string | null }> {

@@ -8,12 +8,15 @@ vi.mock("workflow/api", () => ({ start: vi.fn() }));
 vi.mock("@/workflows/process-journal-audio", () => ({ processJournalAudio: vi.fn() }));
 vi.mock("@/lib/media/files", async (orig) => ({ ...(await orig<object>()), archiveImage: vi.fn() }));
 vi.mock("./journal-sticker-image", () => ({ stickerImage: vi.fn() }));
+vi.mock("@/lib/ai/claude", async (orig) => ({ ...(await orig<object>()), askClaude: vi.fn() }));
 
 import { start } from "workflow/api";
+import { ClaudeNotConfiguredError, askClaude } from "@/lib/ai/claude";
 import { archiveImage } from "@/lib/media/files";
+import { recordClaudeUsage } from "@/lib/usage/meter";
 import { processJournalAudio } from "@/workflows/process-journal-audio";
 import { VaultError } from "./errors";
-import { beginMediaUpload, beginStickerUpload, createEntryFor, finishMediaUpload, finishStickerUpload, getEntryDetail, listEntryMedia, listMonth, listMyEntries, listMyStickers, lookBack, removeEntry, removeMedia, removeSticker, retryMedia, saveEntry, toMediaView } from "./journal-service";
+import { beginMediaUpload, beginStickerUpload, createEntryFor, finishMediaUpload, finishStickerUpload, getEntryDetail, listEntryMedia, listMonth, listMyEntries, listMyStickers, lookBack, removeEntry, removeMedia, removeSticker, retryMedia, saveEntry, tidyTranscript, toMediaView } from "./journal-service";
 import { stickerImage } from "./journal-sticker-image";
 import type { JournalMedia } from "./journal-store";
 
@@ -76,6 +79,7 @@ beforeEach(() => {
   vi.mocked(start).mockReset();
   vi.mocked(archiveImage).mockReset();
   vi.mocked(stickerImage).mockReset();
+  vi.mocked(askClaude).mockReset();
   fake = makeFakeSupabase({ journal_entries: [], journal_media: [], journal_stickers: [] }, { uuidIds: true });
 });
 
@@ -401,6 +405,51 @@ describe("my stickers", () => {
     await removeSticker(session(), S1);
     expect(rows("journal_stickers")).toEqual([]);
     expect([...fake.files.keys()]).toEqual([]);
+  });
+});
+
+describe("tidyTranscript (the one place diary text goes to Claude)", () => {
+  const said = "[0:02] 嗯今天风特别大\n[0:11] 然后然后码头那家店的拿铁比上次甜";
+  beforeEach(() => {
+    fake.store.journal_entries.push(entry(E1, "2026-11-21", { title: "不该发出去的标题", doc: { blocks: [text("t", "不该发出去的正文")] } }));
+    fake.store.journal_media.push(media(M1, E1, "audio", { transcript: said, usage: { asr_flash_sec: 35 } }), media(M2, E1, "audio"), media(M3, E1, "image"));
+  });
+
+  it("sends only that recording's words, and hands back the tidied text without saving it anywhere", async () => {
+    vi.mocked(askClaude).mockImplementation(async () => {
+      recordClaudeUsage("claude-opus-5-5", { input_tokens: 400, output_tokens: 60 });
+      return { text: "<tidy>今天风特别大。\n\n码头那家店的拿铁比上次甜。</tidy>", model: "claude-opus-5-5", truncated: false };
+    });
+    expect(await tidyTranscript(session(), M1)).toEqual({ text: "今天风特别大。\n\n码头那家店的拿铁比上次甜。", notes: [] });
+    const sent = vi.mocked(askClaude).mock.calls[0][0];
+    expect(sent.prompt).toContain("嗯今天风特别大然后然后码头那家店的拿铁比上次甜");
+    expect(`${sent.system}${sent.prompt}`).not.toContain("不该发出去");
+    expect(sent.images).toBeUndefined();
+    // 花费记在这段录音的账上（和转写的加在一起）；日记本身没动
+    const usage = row("journal_media", M1).usage as Record<string, number>;
+    expect(usage.asr_flash_sec).toBe(35);
+    expect(Object.keys(usage).some((k) => k.startsWith("tok_out"))).toBe(true);
+    expect(Number(row("journal_media", M1).cost_usd)).toBeGreaterThan(0);
+    expect(row("journal_entries", E1)).toMatchObject({ rev: 0, title: "不该发出去的标题" });
+  });
+
+  it("has nothing to tidy without a transcript, and never calls the model for it", async () => {
+    await expect(tidyTranscript(session(), M2)).rejects.toThrow("还没有转出文字");
+    await expect(tidyTranscript(session(), M3)).rejects.toThrow("还没有转出文字");
+    await expect(tidyTranscript(session(OTHER), M1)).rejects.toMatchObject({ status: 404 });
+    expect(askClaude).not.toHaveBeenCalled();
+  });
+
+  it("says what was not done: a reply cut short, or no usable reply", async () => {
+    vi.mocked(askClaude).mockResolvedValue({ text: "<tidy>今天风特别大。", model: "m", truncated: true });
+    expect(await tidyTranscript(session(), M1)).toEqual({ text: "今天风特别大。", notes: [expect.stringContaining("截断")] });
+    vi.mocked(askClaude).mockResolvedValue({ text: "<tidy></tidy>", model: "m", truncated: false });
+    await expect(tidyTranscript(session(), M1)).rejects.toMatchObject({ status: 502 });
+  });
+
+  it("tells the user when Claude is not set up", async () => {
+    vi.mocked(askClaude).mockRejectedValue(new ClaudeNotConfiguredError());
+    await expect(tidyTranscript(session(), M1)).rejects.toThrow("没配 ANTHROPIC_API_KEY");
   });
 });
 

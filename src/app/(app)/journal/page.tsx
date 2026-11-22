@@ -48,7 +48,7 @@ export default async function JournalPage({ searchParams }: Props) {
     <div className="mx-auto flex max-w-3xl flex-col gap-7">
       <section className="flex flex-col gap-3">
         <h1 className="text-xl font-semibold tracking-tight">日记</h1>
-        <p className="text-sm leading-relaxed text-ink-muted">自己写的日记：打字、放照片、录一段话（会转成文字）。每一篇可以换风格。日记不进知识图谱，也不交给 AI 读；只有录音会发给语音识别转成文字。</p>
+        <p className="text-sm leading-relaxed text-ink-muted">自己写的日记：打字、放照片、录一段话（会转成文字）。每一篇可以换风格。日记不进知识图谱，也不交给 AI 读：录音会发给语音识别转成文字；你点了「AI 整理」的那一段录音的文字才会发给 Claude。</p>
         <NewEntryButton />
       </section>
 

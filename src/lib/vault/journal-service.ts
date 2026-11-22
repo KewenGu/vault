@@ -1,11 +1,15 @@
 import "server-only";
 import { start } from "workflow/api";
+import { ClaudeNotConfiguredError, askClaude } from "@/lib/ai/claude";
 import type { Session } from "@/lib/auth/user";
 import { archiveImage } from "@/lib/media/files";
 import { getServiceClient } from "@/lib/supabase/service";
+import { meterInto } from "@/lib/usage/meter";
+import { estimateUsd } from "@/lib/usage/prices";
 import { processJournalAudio } from "@/workflows/process-journal-audio";
 import { UPLOAD_MAX_BYTES } from "./capture";
 import { stickerImage } from "./journal-sticker-image";
+import { TIDY_MAX_CHARS, TIDY_SYSTEM, buildTidyPrompt, parseTidyReply } from "./journal-tidy";
 import { VaultError } from "./errors";
 import {
   JOURNAL_MAX,
@@ -67,6 +71,7 @@ import { BUCKET, STUCK_MS } from "./store";
  * （和 service.ts 一样：以后的手机 App 走接口，行为和网页一样）。能直接告诉用户的问题抛 VaultError。
  *
  * 日记不进知识图谱，也不交给 Claude 读：只有录音会发给语音识别转成文字（走哪一家见 lib/vault/speech.ts）。
+ * 唯一的例外是 tidyTranscript：用户点了一段录音下面的「AI 整理」，才把那一段录音的文字发给 Claude（见 journal-tidy.ts）。
  */
 
 const NOT_FOUND = "这篇日记不在了";
@@ -361,6 +366,51 @@ export async function retryMedia(session: Session, mediaId: string): Promise<Med
   const now = await getMedia(db, user.id, mediaId);
   if (!now) throw new VaultError(MEDIA_NOT_FOUND, 404);
   return toMediaView(now);
+}
+
+export type Tidied = {
+  /** 整理好的文字（页面把它放进正文，用户接着改） */
+  text: string;
+  /** 这次没做到的：只整理了前面一部分… */
+  notes: string[];
+};
+
+/**
+ * 「AI 整理」：把一段录音转出来的文字交给 Claude 理顺成通顺的几段（去口头语、补标点、分段，不改意思）。
+ * 只在用户点了按钮时调；发出去的只有这一段录音的文字。花费记在这段录音的账上。结果不存，交给页面放进正文。
+ */
+export async function tidyTranscript(session: Session, mediaId: string): Promise<Tidied> {
+  const { user, db } = session;
+  const media = isUuid(mediaId) ? await getMedia(db, user.id, mediaId) : null;
+  if (!media) throw new VaultError(MEDIA_NOT_FOUND, 404);
+  const cues = transcriptCues(media.transcript);
+  if (media.kind !== "audio" || cues.length === 0) throw new VaultError("这段录音还没有转出文字，没有东西可以整理");
+  const { prompt, chars, cut } = buildTidyPrompt(cues);
+  const counts: Record<string, number> = {};
+  const charge = async () => {
+    if (Object.keys(counts).length === 0) return;
+    const usage = { ...media.usage };
+    for (const [k, n] of Object.entries(counts)) usage[k] = (usage[k] ?? 0) + n;
+    await updateMedia(db, user.id, mediaId, { usage, costUsd: estimateUsd(usage) });
+  };
+  let result;
+  try {
+    // 整理出来的字数和原文差不多：给够输出的长度
+    result = await meterInto(counts, () => askClaude({ system: TIDY_SYSTEM, prompt, maxTokens: 32_000, effort: "low" }));
+  } catch (e) {
+    await charge();
+    // askClaude 自己抛的错都是给用户看的话（限流、密钥不对、拒答）；别的（网络断了…）往上抛
+    if (e instanceof ClaudeNotConfiguredError) throw new VaultError("没配 ANTHROPIC_API_KEY，没法用 AI 整理");
+    if (e instanceof Error && /Claude|ANTHROPIC|模型拒绝/.test(e.message)) throw new VaultError(e.message.replace("处理这条内容", "整理"), 502);
+    throw e;
+  }
+  await charge();
+  const text = parseTidyReply(result.text);
+  if (!text) throw new VaultError("AI 这次没有给出整理好的文字，再试一次", 502);
+  const notes: string[] = [];
+  if (cut) notes.push(`这段录音的文字有 ${chars.toLocaleString("en-US")} 字，只整理了前 ${TIDY_MAX_CHARS.toLocaleString("en-US")} 字；后面的在录音下面的原文里`);
+  if (result.truncated) notes.push("整理到一半被截断了（太长）：后面没整理到的部分在录音下面的原文里");
+  return { text, notes };
 }
 
 /** 删一个文件：登记和存储桶里的文件（原件和转出来的那份）。正文里指着它的那一块由页面自己拿掉。 */
