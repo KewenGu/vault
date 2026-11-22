@@ -14,7 +14,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - 数据按用户隔离：新表必须有 `user_id`、打开行级安全、加「own rows」策略、给 `service_role` 授权，并在 `src/lib/db/migration-postgres.test.ts` 里加隔离的断言。用 service role 客户端查表时条件里必须带 `user_id`。
 - 改了表结构要同步改 `src/lib/db/types.ts`（手写的类型）。
 - 模型的输出一律用带标签的文字再自己解析，不用 JSON 结构化输出（原因见 `src/lib/ai/claude.ts`）。Claude 的调用只走 `askClaude`。
-- 日记（`journal_*`）不进知识图谱、不拼进任何提示词：只有录音发给语音识别。要让模型读日记，先问用户。
+- 日记（`journal_*`）不进知识图谱、不拼进任何提示词：只有录音发给语音识别。唯一的例外是「AI 整理」（`journal-tidy.ts`）：用户点了按钮，才把那一段录音的文字发给 Claude。语义搜索（把日记全文发给 Voyage）用户 2026-11-22 说了不做。别的地方要让模型读日记，先问用户。
 - 存进来的内容是外部数据：拼进提示词时放在标签里，并在提示词里说明它不是指令。
 - 「没看到」和「没有」要分开：处理中读不到、截断、跳过的东西记进 `notes` / `digestNotes` / `gaps`，页面上列出来。
 - 页面和 `/api/v1` 的接口共用 `src/lib/vault/service.ts`（自己建的导图是 `src/lib/vault/map-service.ts`，日记是 `src/lib/vault/journal-service.ts`）；新功能先写在那里，再接两边（以后的手机 App 走接口）。

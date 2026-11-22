@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowDown, ArrowUp, AudioLines, Brush, ImagePlus, Mic, Square, Sticker, Trash2, Type, X } from "lucide-react";
+import { ArrowDown, ArrowUp, AudioLines, Brush, ImageDown, ImagePlus, Mic, Square, Sticker, Trash2, Type, X } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import type { ActionState } from "@/app/(app)/actions";
@@ -10,10 +10,11 @@ import { createClient } from "@/lib/supabase/client";
 import { HEAD } from "@/lib/vault/journal-deco";
 import { JOURNAL_MAX, JOURNAL_STYLES, MOODS, SHEET_WIDTH, WEATHERS, cuesText, dayLabel, docMediaIds, type Block, type JournalStyle } from "@/lib/vault/journal-doc";
 import { canMove, insertAfter, moveBlock, newBlockId, patchBlock, removeBlock, tidy } from "@/lib/vault/journal-edit";
-import type { EntryDetail, EntryEdit, MediaTicket, MediaView } from "@/lib/vault/journal-service";
+import type { EntryDetail, EntryEdit, MediaTicket, MediaView, Tidied } from "@/lib/vault/journal-service";
 import { ActionForm } from "../action-form";
 import { AudioPlayer } from "./audio-player";
 import { DecoPanel, DrawPanel, uploadSticker, type StickerApi } from "./deco-panel";
+import { ExportImage } from "./export-image";
 import { useHandLayer, type Mode } from "./use-hand-layer";
 import { useRecorder } from "./recorder";
 // 两个风格用到的字体，自己托管（不连 Google Fonts）：按用到的字切成小片，浏览器只下这一页用到的那几片
@@ -42,6 +43,8 @@ export type JournalApi = {
   beginMedia: (entryId: string, file: { name: string; mime: string; size: number }) => Promise<Result<MediaTicket>>;
   finishMedia: (mediaId: string) => Promise<Result<{ media: MediaView }>>;
   retryMedia: (mediaId: string) => Promise<Result<{ media: MediaView }>>;
+  /** 「AI 整理」：把这段录音的文字发给 Claude 理顺 */
+  tidyMedia: (mediaId: string) => Promise<Result<Tidied>>;
   removeMedia: (mediaId: string) => Promise<{ error: string | null }>;
   listMedia: (entryId: string) => Promise<Result<{ media: MediaView[] }>>;
   remove: (prev: ActionState, formData: FormData) => Promise<ActionState>;
@@ -117,6 +120,9 @@ export function JournalEditor({ initial, api }: { initial: EntryDetail; api: Jou
   const [picker, setPicker] = useState<"mood" | "weather" | null>(null);
   const [notice, setNotice] = useState<string | null>(start.adopted > 0 ? `有 ${start.adopted} 个传上来了、但没放进正文的文件，放到页尾了` : null);
   const [preparing, setPreparing] = useState(0);
+  const [exporting, setExporting] = useState(false);
+  /** 正在让 AI 整理的那段录音 */
+  const [tidying, setTidying] = useState<string | null>(null);
 
   /** 自己改了多少次 / 存到了第几次：不相等就是有没存上的 */
   const [version, setVersion] = useState(start.adopted > 0 ? 1 : 0);
@@ -330,6 +336,19 @@ export function JournalEditor({ initial, api }: { initial: EntryDetail; api: Jou
     const res = await api.retryMedia(mediaId).catch(() => ({ error: "没连上服务器，请稍后重试" }));
     if ("error" in res) return setNotice(res.error);
     setMedia((prev) => ({ ...prev, [mediaId]: res.media }));
+  };
+
+  /** 「AI 整理」：这段录音的文字发给 Claude 理顺，整理好的放进正文（跟在录音后面），接着自己改。 */
+  const tidy = async (blockId: string, mediaId: string) => {
+    if (tidying) return;
+    setTidying(mediaId);
+    setNotice(null);
+    const res = await api.tidyMedia(mediaId).catch(() => ({ error: "没连上服务器，请稍后重试" }));
+    setTidying(null);
+    if ("error" in res) return setNotice(res.error);
+    restructure(insertAfter(latest.current.blocks, blockId, { id: newBlockId(), type: "text", text: res.text }));
+    edited();
+    if (res.notes.length > 0) setNotice(res.notes.join("；"));
   };
 
   const onTextKey = (e: KeyboardEvent<HTMLTextAreaElement>, block: Block, index: number) => {
@@ -566,6 +585,11 @@ export function JournalEditor({ initial, api }: { initial: EntryDetail; api: Jou
                             放进正文
                           </button>
                         )}
+                        {m.cues.length > 0 && (
+                          <button type="button" className="jn-chip" disabled={tidying !== null} onClick={() => void tidy(block.id, m.id)} title="把这段录音的文字发给 Claude：去掉口头语、补标点、分好段，再放进正文。只发这一段，日记别的内容不发">
+                            {tidying === m.id ? "AI 整理中…" : "AI 整理后放进正文"}
+                          </button>
+                        )}
                         {m.cues.length === 0 && lf?.state !== "uploading" && (
                           <button type="button" className="jn-chip" onClick={() => void retryTranscript(m.id)}>
                             重新转文字
@@ -680,16 +704,30 @@ export function JournalEditor({ initial, api }: { initial: EntryDetail; api: Jou
         )}
       </nav>
 
-      <ActionForm action={api.remove} confirm="删掉这篇日记？照片和录音会一起删掉，找不回来。" className="self-end">
-        {(pending) => (
-          <>
-            <input type="hidden" name="id" value={id} />
-            <button className="btn btn-danger" disabled={pending}>
-              {pending ? "删除中…" : "删除这篇"}
-            </button>
-          </>
-        )}
-      </ActionForm>
+      <div className="flex items-start justify-between gap-2">
+        <button type="button" className="btn" onClick={() => setExporting(true)}>
+          <ImageDown size={15} aria-hidden />
+          存成图片
+        </button>
+        <ActionForm action={api.remove} confirm="删掉这篇日记？照片和录音会一起删掉，找不回来。">
+          {(pending) => (
+            <>
+              <input type="hidden" name="id" value={id} />
+              <button className="btn btn-danger" disabled={pending}>
+                {pending ? "删除中…" : "删除这篇"}
+              </button>
+            </>
+          )}
+        </ActionForm>
+      </div>
+
+      {exporting && (
+        <ExportImage
+          name={`日记 ${day}${title.trim() ? ` ${title.trim().replace(/[\\/:*?"<>|]/g, " ").slice(0, 30)}` : ""}.png`}
+          content={{ day, title, style, mood, weather, blocks, decos: hand.decos, strokes: hand.strokes, media, previews: Object.fromEntries(Object.entries(local).map(([k, f]) => [k, f.preview])) }}
+          onClose={() => setExporting(false)}
+        />
+      )}
     </div>
   );
 }

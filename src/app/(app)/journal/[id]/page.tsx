@@ -5,7 +5,7 @@ import { JournalEditor, type JournalApi } from "@/components/journal/journal-edi
 import { requireSession } from "@/lib/auth/user";
 import { VaultError } from "@/lib/vault/errors";
 import { getEntryDetail, type EntryDetail } from "@/lib/vault/journal-service";
-import { beginMediaAction, beginStickerAction, deleteEntryAction, entryMediaAction, finishMediaAction, finishStickerAction, listStickersAction, removeMediaAction, removeStickerAction, retryMediaAction, saveEntryAction } from "../actions";
+import { beginMediaAction, beginStickerAction, deleteEntryAction, entryMediaAction, finishMediaAction, finishStickerAction, listStickersAction, removeMediaAction, removeStickerAction, retryMediaAction, saveEntryAction, tidyMediaAction } from "../actions";
 
 type Props = { params: Promise<{ id: string }> };
 
@@ -30,6 +30,7 @@ const api: JournalApi = {
   beginMedia: beginMediaAction,
   finishMedia: finishMediaAction,
   retryMedia: retryMediaAction,
+  tidyMedia: tidyMediaAction,
   removeMedia: removeMediaAction,
   listMedia: entryMediaAction,
   remove: deleteEntryAction,
