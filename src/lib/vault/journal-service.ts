@@ -13,12 +13,15 @@ import {
   cleanDay,
   cleanDoc,
   cleanJournalTitle,
+  cleanMonth,
   cleanMood,
   cleanStyle,
   cleanWeather,
   docMediaIds,
   excerpt,
   isBlankDoc,
+  lookBackDays,
+  monthRange,
   planJournalUpload,
   searchTerms,
   snippet,
@@ -31,6 +34,8 @@ import {
   deleteEntry,
   deleteMedia,
   deleteSticker,
+  entriesBetween,
+  entriesOnDays,
   getSticker,
   insertSticker,
   listStickers,
@@ -124,18 +129,14 @@ export function toMediaView(m: JournalMedia, now = Date.now()): MediaView {
 /** 给页面的一篇：搜索用的那一大段文字不带（正文里都有）。 */
 const strip = ({ id, day, title, style, mood, weather, doc, rev, createdAt, updatedAt }: JournalEntry): EntryDetail["entry"] => ({ id, day, title, style, mood, weather, doc, rev, createdAt, updatedAt });
 
-/** 日记列表，日期新的在前。q = 搜索：标题、正文、照片说明、录音里说的话，按空白拆开的每个词都出现才算。 */
-export async function listMyEntries(session: Session, opts: { q?: string; page?: number } = {}): Promise<{ entries: EntrySummary[]; more: boolean; terms: string[] }> {
-  const { user, db } = session;
-  const terms = searchTerms(opts.q ?? "");
-  const page = Number.isInteger(opts.page) && opts.page! > 0 ? opts.page! : 0;
-  const { entries, more } = await listEntries(db, user.id, { terms, offset: page * PAGE_SIZE, limit: PAGE_SIZE });
+/** 列表上的一条条：摘要（搜索时是找到的那一段）、这一页上放着几张照片几段录音、封面。 */
+async function summarize(session: Session, entries: JournalEntry[], terms: string[] = []): Promise<EntrySummary[]> {
   const media = await listMediaOf(
-    db,
-    user.id,
+    session.db,
+    session.user.id,
     entries.map((e) => e.id)
   );
-  const summaries = entries.map((e): EntrySummary => {
+  return entries.map((e): EntrySummary => {
     const mine = new Map(media.filter((m) => m.entryId === e.id).map((m) => [m.id, m]));
     // 只数这一页上真的放着的（传了一半没放进去的不算）
     const used = docMediaIds(e.doc).flatMap((id) => mine.get(id) ?? []);
@@ -154,7 +155,39 @@ export async function listMyEntries(session: Session, opts: { q?: string; page?:
       updatedAt: e.updatedAt,
     };
   });
-  return { entries: summaries, more, terms };
+}
+
+/** 日记列表，日期新的在前。q = 搜索：标题、正文、照片说明、录音里说的话，按空白拆开的每个词都出现才算。 */
+export async function listMyEntries(session: Session, opts: { q?: string; page?: number } = {}): Promise<{ entries: EntrySummary[]; more: boolean; terms: string[] }> {
+  const { user, db } = session;
+  const terms = searchTerms(opts.q ?? "");
+  const page = Number.isInteger(opts.page) && opts.page! > 0 ? opts.page! : 0;
+  const { entries, more } = await listEntries(db, user.id, { terms, offset: page * PAGE_SIZE, limit: PAGE_SIZE });
+  return { entries: await summarize(session, entries, terms), more, terms };
+}
+
+/** 一个月的日记（月历用），日期早的在前。month 是 YYYY-MM。 */
+export async function listMonth(session: Session, month: unknown): Promise<EntrySummary[]> {
+  const clean = cleanMonth(month);
+  if (!clean) throw new VaultError("月份不对：要 YYYY-MM 这样的");
+  const { from, to } = monthRange(clean);
+  return summarize(session, await entriesBetween(session.db, session.user.id, from, to));
+}
+
+export type LookBack = { label: string; entry: EntrySummary };
+
+/** 「那年今日」：一个月前、半年前、往年的今天写过的日记，近的在前。today = 看的人当地的今天（浏览器给）。 */
+export async function lookBack(session: Session, today: unknown): Promise<LookBack[]> {
+  const day = cleanDay(today);
+  if (!day) throw new VaultError("日期不对：要 YYYY-MM-DD 这样的");
+  const days = lookBackDays(day);
+  const labelOf = new Map(days.map((d) => [d.day, d.label]));
+  const entries = await entriesOnDays(
+    session.db,
+    session.user.id,
+    days.map((d) => d.day)
+  );
+  return (await summarize(session, entries)).map((entry) => ({ label: labelOf.get(entry.day) ?? "", entry }));
 }
 
 /**

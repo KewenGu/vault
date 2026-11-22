@@ -812,3 +812,47 @@
 .jn-swatch[aria-pressed="true"] {
   box-shadow: 0 0 0 2px var(--color-accent);
 }
+
+/* ---------------------------------------------------------------- 只读的一页（存成图片时画的那一份） */
+
+.jn-sheet.jn-still {
+  position: relative;
+  transform: none;
+  border-radius: 0;
+  box-shadow: none;
+}
+.jn-still-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+/* 空着的文字块留着高度（挂在它上面的东西位置才对），但不垫纸 */
+.jn-still .jn-text[data-blank="true"] {
+  background: none;
+}
+.jn-hidden {
+  visibility: hidden;
+}
+.jn-still .jn-tools {
+  width: 28px;
+}
+.jn-still-seek {
+  position: relative;
+}
+.jn-still-seek::before {
+  content: "";
+  position: absolute;
+  inset: 8px 0;
+  border-radius: 2px;
+  background: var(--jn-accent);
+  opacity: 0.35;
+}
+.jn-still .jn-cue-at,
+.jn-still .jn-link {
+  color: var(--jn-accent);
+  font-size: 11.5px;
+}
+.jn-still .jn-cue-at {
+  margin-right: 6px;
+  font-family: var(--jn-mono);
+  font-variant-numeric: tabular-nums;
+}

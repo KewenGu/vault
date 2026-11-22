@@ -13,7 +13,7 @@ import { start } from "workflow/api";
 import { archiveImage } from "@/lib/media/files";
 import { processJournalAudio } from "@/workflows/process-journal-audio";
 import { VaultError } from "./errors";
-import { beginMediaUpload, beginStickerUpload, createEntryFor, finishMediaUpload, finishStickerUpload, getEntryDetail, listEntryMedia, listMyEntries, listMyStickers, removeEntry, removeMedia, removeSticker, retryMedia, saveEntry, toMediaView } from "./journal-service";
+import { beginMediaUpload, beginStickerUpload, createEntryFor, finishMediaUpload, finishStickerUpload, getEntryDetail, listEntryMedia, listMonth, listMyEntries, listMyStickers, lookBack, removeEntry, removeMedia, removeSticker, retryMedia, saveEntry, toMediaView } from "./journal-service";
 import { stickerImage } from "./journal-sticker-image";
 import type { JournalMedia } from "./journal-store";
 
@@ -189,6 +189,35 @@ describe("listMyEntries / getEntryDetail", () => {
     const detail = await getEntryDetail(session(), E2);
     expect(detail.media.map((m) => m.id)).toEqual([M1, M2, M3]);
     expect(detail.entry).not.toHaveProperty("searchText");
+  });
+});
+
+describe("the calendar and looking back", () => {
+  beforeEach(() => {
+    fake.store.journal_entries.push(
+      entry(E1, "2026-11-22", { title: "今天" }),
+      entry(E2, "2026-10-22", { title: "上个月", doc: { blocks: [{ id: "p", type: "photo", media: M1, caption: "" }] } }),
+      entry(E3, "2025-11-22", { title: "去年" }),
+      entry("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4", "2026-11-01", { title: "月初" }),
+      entry("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa5", "2026-11-30", { title: "月底" }),
+      entry("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa6", "2026-12-01", { title: "下个月" }),
+      { ...entry(THEIRS, "2025-11-22", { title: "别人的去年" }), user_id: OTHER }
+    );
+    fake.store.journal_media.push(media(M1, E2, "image"));
+  });
+
+  it("a month has exactly its own days, earliest first", async () => {
+    expect((await listMonth(session(), "2026-11")).map((e) => e.title)).toEqual(["月初", "今天", "月底"]);
+    expect(await listMonth(session(), "2026-09")).toEqual([]);
+    await expect(listMonth(session(), "2026-13")).rejects.toThrow("月份不对");
+  });
+
+  it("looking back finds a month ago and a year ago, nearest first, and only mine", async () => {
+    const items = await lookBack(session(), "2026-11-22");
+    expect(items.map((i) => `${i.label} ${i.entry.title}`)).toEqual(["1 个月前 上个月", "1 年前 去年"]);
+    expect(items[0].entry.cover).toContain(M1);
+    expect(await lookBack(session(), "2026-11-21")).toEqual([]);
+    await expect(lookBack(session(), "today")).rejects.toThrow("日期不对");
   });
 });
 

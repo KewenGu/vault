@@ -189,6 +189,67 @@ export function dayLabel(day: string, style: JournalStyle): string {
 /** 这个时刻在看的人当地是哪一天（浏览器里调；服务器上是服务器的时区，不要用它当「今天」）。 */
 export const localDay = (now = new Date()) => `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 
+// ---------------------------------------------------------------- 月历和回看
+
+const MONTH = /^(\d{4})-(\d{2})$/;
+
+/** 合格的月份（YYYY-MM，1970–2199 年）原样返回；不是的返回 null。 */
+export function cleanMonth(raw: unknown): string | null {
+  const m = typeof raw === "string" ? MONTH.exec(raw) : null;
+  if (!m) return null;
+  const [y, mo] = [Number(m[1]), Number(m[2])];
+  return y >= 1970 && y <= 2199 && mo >= 1 && mo <= 12 ? (raw as string) : null;
+}
+
+/** 往前（负数）或往后挪几个月。 */
+export function shiftMonth(month: string, by: number): string {
+  const m = MONTH.exec(month);
+  const d = new Date(Date.UTC(m ? Number(m[1]) : 1970, (m ? Number(m[2]) : 1) - 1 + by, 1));
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}`;
+}
+
+/** 这个月的第一天和最后一天。 */
+export function monthRange(month: string): { from: string; to: string } {
+  const m = MONTH.exec(month);
+  const [y, mo] = m ? [Number(m[1]), Number(m[2])] : [1970, 1];
+  return { from: `${month}-01`, to: `${month}-${pad(new Date(Date.UTC(y, mo, 0)).getUTCDate())}` };
+}
+
+/** 月历的格子：一行一周，周一开头；不是这个月的位置是 null。 */
+export function monthGrid(month: string): (string | null)[][] {
+  const { to } = monthRange(month);
+  const days = Number(to.slice(8));
+  const lead = (dayParts(`${month}-01`).weekday + 6) % 7;
+  const cells: (string | null)[] = [...Array<null>(lead).fill(null), ...Array.from({ length: days }, (_, i) => `${month}-${pad(i + 1)}`)];
+  while (cells.length % 7 !== 0) cells.push(null);
+  return Array.from({ length: cells.length / 7 }, (_, w) => cells.slice(w * 7, w * 7 + 7));
+}
+
+export const monthLabel = (month: string) => `${Number(month.slice(0, 4))} 年 ${Number(month.slice(5, 7))} 月`;
+
+/** 最多往回看这么多年 */
+const LOOK_BACK_YEARS = 30;
+
+/**
+ * 「那年今日」要找的日子：一个月前、半年前的今天，和往年的今天（近的在前）。那个月没有这一天的（3 月 31 日的一个月前、
+ * 平年的 2 月 29 日）跳过，不拿邻近的日子顶替。
+ */
+export function lookBackDays(today: string): { day: string; label: string }[] {
+  const p = dayParts(today);
+  const on = (year: number, month: number): string | null => {
+    const first = new Date(Date.UTC(year, month - 1, 1));
+    return cleanDay(`${first.getUTCFullYear()}-${pad(first.getUTCMonth() + 1)}-${pad(p.date)}`);
+  };
+  const out: { day: string; label: string }[] = [];
+  const add = (day: string | null, label: string) => {
+    if (day) out.push({ day, label });
+  };
+  add(on(p.year, p.month - 1), "1 个月前");
+  add(on(p.year, p.month - 6), "半年前");
+  for (let n = 1; n <= LOOK_BACK_YEARS; n++) add(on(p.year - n, p.month), `${n} 年前`);
+  return out;
+}
+
 // ---------------------------------------------------------------- 录音转出来的文字
 
 export type Cue = { at: number | null; text: string };

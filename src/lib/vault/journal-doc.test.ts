@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildJournalSearchText, cleanDay, cleanDoc, cuesText, dayLabel, docMediaIds, emptyDoc, excerpt, isBlankDoc, planJournalUpload, searchTerms, snippet, transcriptCues, weekdayLabel } from "./journal-doc";
+import { buildJournalSearchText, cleanDay, cleanDoc, cleanMonth, lookBackDays, monthGrid, monthLabel, monthRange, shiftMonth, cuesText, dayLabel, docMediaIds, emptyDoc, excerpt, isBlankDoc, planJournalUpload, searchTerms, snippet, transcriptCues, weekdayLabel } from "./journal-doc";
 
 const A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -112,6 +112,72 @@ describe("days", () => {
     expect(dayLabel("2026-11-21", "kawaii")).toBe("11月21日 星期六 ♡");
     expect(dayLabel("2026-11-21", "geek")).toBe("$ date +%F # 2026-11-21 Sat");
     expect(dayLabel("2026-01-04", "scenery")).toBe("JAN 4 · 2026");
+  });
+});
+
+describe("months", () => {
+  it("accepts real months only", () => {
+    expect(cleanMonth("2026-11")).toBe("2026-11");
+    for (const bad of ["2026-13", "2026-00", "2026-1", "202611", "2026-11-21", "", null, 1969]) expect(cleanMonth(bad)).toBeNull();
+  });
+
+  it("steps across year ends", () => {
+    expect(shiftMonth("2026-11", 1)).toBe("2026-12");
+    expect(shiftMonth("2026-12", 1)).toBe("2027-01");
+    expect(shiftMonth("2026-01", -1)).toBe("2025-12");
+    expect(shiftMonth("2026-03", -14)).toBe("2025-01");
+  });
+
+  it("knows the first and last day, leap years included", () => {
+    expect(monthRange("2026-11")).toEqual({ from: "2026-11-01", to: "2026-11-30" });
+    expect(monthRange("2026-02").to).toBe("2026-02-28");
+    expect(monthRange("2028-02").to).toBe("2028-02-29");
+    expect(monthLabel("2026-03")).toBe("2026 年 3 月");
+  });
+
+  it("lays a month out in weeks that start on Monday", () => {
+    // 2026-11-01 是周日：第一行前六格是空的
+    const grid = monthGrid("2026-11");
+    expect(grid[0]).toEqual([null, null, null, null, null, null, "2026-11-01"]);
+    expect(grid[1][0]).toBe("2026-11-02");
+    expect(grid).toHaveLength(6);
+    expect(grid[5]).toEqual(["2026-11-30", null, null, null, null, null, null]);
+    expect(grid.flat().filter(Boolean)).toHaveLength(30);
+    // 2027-02-01 是周一、28 天：正好四行，没有空格
+    expect(monthGrid("2027-02")).toHaveLength(4);
+    expect(monthGrid("2027-02").flat().every(Boolean)).toBe(true);
+  });
+});
+
+describe("lookBackDays", () => {
+  it("looks a month, half a year, and whole years back", () => {
+    const days = lookBackDays("2026-11-22");
+    expect(days.slice(0, 4)).toEqual([
+      { day: "2026-10-22", label: "1 个月前" },
+      { day: "2026-05-22", label: "半年前" },
+      { day: "2025-11-22", label: "1 年前" },
+      { day: "2024-11-22", label: "2 年前" },
+    ]);
+    expect(days).toHaveLength(32);
+    expect(days.at(-1)).toEqual({ day: "1996-11-22", label: "30 年前" });
+  });
+
+  it("crosses the year going back from January", () => {
+    expect(lookBackDays("2026-01-15").slice(0, 2)).toEqual([
+      { day: "2025-12-15", label: "1 个月前" },
+      { day: "2025-07-15", label: "半年前" },
+    ]);
+  });
+
+  it("skips months that have no such day instead of borrowing a neighbour", () => {
+    // 3 月 31 日：2 月没有 31 日，9 月也没有
+    const march = lookBackDays("2026-03-31").map((d) => d.label);
+    expect(march).not.toContain("1 个月前");
+    expect(march).not.toContain("半年前");
+    expect(march[0]).toBe("1 年前");
+    // 闰年的 2 月 29 日：只有闰年才有「那年今日」
+    const leap = lookBackDays("2028-02-29");
+    expect(leap.filter((d) => /^\d+ 年前$/.test(d.label)).map((d) => d.day).slice(0, 2)).toEqual(["2024-02-29", "2020-02-29"]);
   });
 });
 

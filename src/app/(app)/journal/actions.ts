@@ -11,12 +11,14 @@ import {
   finishStickerUpload,
   listEntryMedia,
   listMyStickers,
+  lookBack,
   removeEntry,
   removeMedia,
   removeSticker,
   retryMedia,
   saveEntry,
   type EntryEdit,
+  type LookBack,
   type MediaTicket,
   type MediaView,
   type StickerTicket,
@@ -56,6 +58,19 @@ export async function createEntryAction(_prev: ActionState, formData: FormData):
     return { error: message(e) };
   }
   redirect(`/journal/${id}`);
+}
+
+/** 月历上点一个没写过的日子：开一篇那一天的（补记）。日期是月历自己给的，不会不对；真出了错让页面报出来。 */
+export async function openDayAction(formData: FormData): Promise<void> {
+  const session = await requireSession();
+  const id = await createEntryFor(session, { day: String(formData.get("day") ?? "") });
+  redirect(`/journal/${id}`);
+}
+
+/** 「那年今日」。today 是浏览器算的当地日期。 */
+export async function lookBackAction(today: string): Promise<Result<{ items: LookBack[] }>> {
+  const session = await requireSession();
+  return attempt(async () => ({ items: await lookBack(session, today) }));
 }
 
 export async function deleteEntryAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
