@@ -5,6 +5,7 @@ import { archiveImage } from "@/lib/media/files";
 import { getServiceClient } from "@/lib/supabase/service";
 import { processJournalAudio } from "@/workflows/process-journal-audio";
 import { UPLOAD_MAX_BYTES } from "./capture";
+import { stickerImage } from "./journal-sticker-image";
 import { VaultError } from "./errors";
 import {
   JOURNAL_MAX,
@@ -29,6 +30,12 @@ import {
   createEntry,
   deleteEntry,
   deleteMedia,
+  deleteSticker,
+  getSticker,
+  insertSticker,
+  listStickers,
+  readySticker,
+  type JournalSticker,
   entriesOfDay,
   getEntry,
   getMedia,
@@ -330,4 +337,82 @@ export async function removeMedia(session: Session, mediaId: string): Promise<vo
   if (!media) return; // 已经不在了：要的结果已经有了
   await deleteMedia(db, user.id, mediaId);
   await removeFiles(user.id, media.entryId, media.id);
+}
+
+// ---------------------------------------------------------------- 我的贴纸
+
+/** 自己传的贴纸最多留这么多张；一张的原件最多这么大 */
+export const STICKERS_MAX = 200;
+export const STICKER_MAX_BYTES = 15 * 1024 * 1024;
+const STICKER_NOT_FOUND = "这张贴纸不在了";
+
+export type StickerView = { id: string; url: string; width: number | null; height: number | null };
+export type StickerTicket = { id: string; upload: { bucket: string; path: string; token: string } };
+
+export const stickerDir = (userId: string) => `${userId}/journal-stickers`;
+const toStickerView = (s: JournalSticker): StickerView => ({ id: s.id, url: `/media/journal/sticker/${s.id}`, width: s.width, height: s.height });
+
+/** 我的贴纸，新传的在前。 */
+export async function listMyStickers(session: Session): Promise<StickerView[]> {
+  return (await listStickers(session.db, session.user.id)).map(toStickerView);
+}
+
+/** 开始传一张贴纸：只收图片。登记一行「等上传」，发一个签名上传地址；传完调 finishStickerUpload。 */
+export async function beginStickerUpload(session: Session, file: { name: string; mime: string; size: number }): Promise<StickerTicket> {
+  const { user, db } = session;
+  const plan = planJournalUpload(file, STICKER_MAX_BYTES);
+  if ("error" in plan) throw new VaultError(plan.error === "日记里只能放照片和录音" ? "贴纸只能是图片" : plan.error);
+  if (plan.kind !== "image") throw new VaultError("贴纸只能是图片");
+  if ((await listStickers(db, user.id, true)).length >= STICKERS_MAX) throw new VaultError(`「我的贴纸」最多留 ${STICKERS_MAX} 张：先删掉几张不用的`);
+  const id = crypto.randomUUID();
+  const path = `${stickerDir(user.id)}/${id}-raw.${plan.ext}`;
+  await insertSticker(db, user.id, { id, path, bytes: file.size });
+  const { data, error } = await getServiceClient().storage.from(BUCKET).createSignedUploadUrl(path, { upsert: true });
+  if (error || !data) {
+    await deleteSticker(db, user.id, id);
+    throw new Error(`拿不到上传地址: ${error?.message ?? "没有返回"}`);
+  }
+  return { id, upload: { bucket: BUCKET, path, token: data.token } };
+}
+
+/** 贴纸传完了：裁掉四周的空白、缩小、存成保留透明底的 WebP，原件删掉。读不出来的整张不要（登记和文件都清掉）。 */
+export async function finishStickerUpload(session: Session, id: string): Promise<StickerView> {
+  const { user, db } = session;
+  const sticker = isUuid(id) ? await getSticker(db, user.id, id) : null;
+  if (!sticker) throw new VaultError(STICKER_NOT_FOUND, 404);
+  if (sticker.status === "ready") return toStickerView(sticker);
+  const service = getServiceClient();
+  const drop = async () => {
+    await deleteSticker(db, user.id, id);
+    await service.storage.from(BUCKET).remove([sticker.path]);
+  };
+  const { data: blob, error } = await service.storage.from(BUCKET).download(sticker.path);
+  if (error || !blob) {
+    await drop();
+    throw new VaultError("文件没有传上来，请重新传", 409);
+  }
+  let img;
+  try {
+    img = await stickerImage(new Uint8Array(await blob.arrayBuffer()));
+  } catch {
+    await drop();
+    throw new VaultError("这张图片读不出来（格式不支持或文件坏了）。HEIC 照片请先转成 PNG 或 JPEG 再传");
+  }
+  const path = `${stickerDir(user.id)}/${id}.webp`;
+  const { error: upErr } = await service.storage.from(BUCKET).upload(path, new Blob([img.data as BlobPart], { type: img.mime }), { contentType: img.mime, upsert: true });
+  if (upErr) throw new Error(`保存贴纸失败: ${upErr.message}`);
+  await readySticker(db, user.id, id, { path, width: img.width, height: img.height, bytes: img.data.byteLength });
+  const { error: rmErr } = await service.storage.from(BUCKET).remove([sticker.path]);
+  if (rmErr) console.error(`删除贴纸的原文件失败 ${sticker.path}: ${rmErr.message}`);
+  return { id, url: `/media/journal/sticker/${id}`, width: img.width, height: img.height };
+}
+
+/** 从「我的贴纸」里删一张（登记和文件）。日记上贴着的那一件不动，只是画不出来了。 */
+export async function removeSticker(session: Session, id: string): Promise<void> {
+  const { user, db } = session;
+  const sticker = isUuid(id) ? await getSticker(db, user.id, id) : null;
+  if (!sticker) return;
+  await deleteSticker(db, user.id, id);
+  const { error } = await getServiceClient().storage.from(BUCKET).remove([sticker.path]);
+  if (error) console.error(`删除贴纸的文件失败 ${sticker.path}: ${error.message}`);
 }

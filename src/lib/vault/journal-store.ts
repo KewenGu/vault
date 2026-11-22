@@ -4,7 +4,7 @@ import { VaultError } from "./errors";
 import { cleanDay, cleanDoc, cleanMood, cleanStyle, cleanWeather, type JournalDoc, type JournalStyle } from "./journal-doc";
 
 /**
- * journal_entries / journal_media 两张表的读写（日记本）。每个查询都带 user_id：页面用登录用户的客户端（行级安全也拦一道），
+ * journal_entries / journal_media / journal_stickers 三张表的读写（日记本）。每个查询都带 user_id：页面用登录用户的客户端（行级安全也拦一道），
  * 后台用 service role 时只靠它。
  */
 
@@ -273,4 +273,52 @@ export async function deleteMedia(db: Db, userId: string, id: string): Promise<b
   const { data, error } = await db.from("journal_media").delete().eq("id", id).eq("user_id", userId).select("id");
   if (error) fail("删除文件失败", error);
   return (data ?? []).length > 0;
+}
+
+// ---------------------------------------------------------------- 我的贴纸
+
+export type JournalSticker = { id: string; userId: string; status: "uploading" | "ready"; path: string; width: number | null; height: number | null; createdAt: string };
+
+const STICKER_COLUMNS = "id,user_id,status,path,width,height,created_at" as const;
+const STICKER_MIGRATION = "supabase/migrations/20261122000001_journal_stickers.sql";
+
+/** 同 fail，但缺的是贴纸那张表（它的迁移晚一天）。 */
+function failSticker(what: string, error: { message: string; code?: string }): never {
+  if (error.code === "42P01" || error.code === "PGRST205") {
+    throw new VaultError(`数据库里还没有「我的贴纸」用的表：把迁移 ${STICKER_MIGRATION} 推到 Supabase（把文件内容贴进控制台的 SQL Editor 运行；或者 npx supabase db push --remote）`, 503);
+  }
+  throw new Error(`${what}: ${error.message}`);
+}
+
+type StickerRow = { id: string; user_id: string; status: string; path: string; width: number | null; height: number | null; created_at: string };
+const toSticker = (row: StickerRow): JournalSticker => ({ id: row.id, userId: row.user_id, status: row.status === "ready" ? "ready" : "uploading", path: row.path, width: row.width ?? null, height: row.height ?? null, createdAt: row.created_at });
+
+/** 这个人的贴纸（传好了的），新传的在前。all = 连没传完的一起（数个数用）。 */
+export async function listStickers(db: Db, userId: string, all = false): Promise<JournalSticker[]> {
+  let query = db.from("journal_stickers").select(STICKER_COLUMNS).eq("user_id", userId);
+  if (!all) query = query.eq("status", "ready");
+  const { data, error } = await query.order("created_at", { ascending: false }).limit(500);
+  if (error) failSticker("读取贴纸失败", error);
+  return (data ?? []).map(toSticker);
+}
+
+export async function getSticker(db: Db, userId: string, id: string): Promise<JournalSticker | null> {
+  const { data, error } = await db.from("journal_stickers").select(STICKER_COLUMNS).eq("id", id).eq("user_id", userId).maybeSingle();
+  if (error) failSticker("读取贴纸失败", error);
+  return data ? toSticker(data) : null;
+}
+
+export async function insertSticker(db: Db, userId: string, input: { id: string; path: string; bytes: number }): Promise<void> {
+  const { error } = await db.from("journal_stickers").insert({ id: input.id, user_id: userId, path: input.path, bytes: input.bytes, status: "uploading" });
+  if (error) failSticker("登记贴纸失败", error);
+}
+
+export async function readySticker(db: Db, userId: string, id: string, patch: { path: string; width: number; height: number; bytes: number }): Promise<void> {
+  const { error } = await db.from("journal_stickers").update({ ...patch, status: "ready" }).eq("id", id).eq("user_id", userId);
+  if (error) failSticker("保存贴纸失败", error);
+}
+
+export async function deleteSticker(db: Db, userId: string, id: string): Promise<void> {
+  const { error } = await db.from("journal_stickers").delete().eq("id", id).eq("user_id", userId);
+  if (error) failSticker("删除贴纸失败", error);
 }

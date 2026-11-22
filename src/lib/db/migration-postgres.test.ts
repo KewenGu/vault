@@ -80,7 +80,7 @@ describe.skipIf(!pg)("migrations — isolated PostgreSQL", () => {
   const search = (user: string, args: string) => as(user, `select string_agg(i.dedupe_key, ',' order by s.score desc, i.created_at desc) from search_items('${user}'${args ? `, ${args}` : ""}) s join items i on i.id = s.id`);
 
   beforeEach(() => {
-    query("truncate items, entities, maps, journal_entries, journal_media cascade");
+    query("truncate items, entities, maps, journal_entries, journal_media, journal_stickers cascade");
   });
 
   it("migrations can be applied twice", () => {
@@ -152,6 +152,22 @@ describe.skipIf(!pg)("migrations — isolated PostgreSQL", () => {
     as(alice, `delete from journal_entries where id = '${mine}'`);
     expect(query(`select count(*) from journal_media where user_id = '${alice}'`)).toBe("0");
     expect(query(`select count(*) from journal_media where user_id = '${bob}'`)).toBe("1");
+  });
+
+  it("my stickers are private to their owner", () => {
+    query(`insert into journal_stickers (user_id, path) values ('${alice}', 'a/s1.webp'), ('${bob}', 'b/s1.webp')`);
+    expect(as(alice, "select string_agg(path, ',') from journal_stickers")).toBe("a/s1.webp");
+    expect(as(bob, "select string_agg(path, ',') from journal_stickers")).toBe("b/s1.webp");
+    expect(() => as(alice, `insert into journal_stickers (user_id, path) values ('${bob}', 'x')`)).toThrow(/row-level security/);
+    expect(as(alice, `update journal_stickers set path = '抢' where user_id = '${bob}' returning id`)).toBe("");
+    expect(as(alice, `delete from journal_stickers where user_id = '${bob}' returning id`)).toBe("");
+    expect(query(`select path from journal_stickers where user_id = '${bob}'`)).toBe("b/s1.webp");
+    // 默认填当前用户，一开始是「等上传」；状态只有两种
+    as(alice, "insert into journal_stickers (path) values ('a/s2-raw.png')");
+    expect(query(`select user_id || ' ' || status from journal_stickers where path = 'a/s2-raw.png'`)).toBe(`${alice} uploading`);
+    expect(() => query(`update journal_stickers set status = 'done' where path = 'a/s1.webp'`)).toThrow(/journal_stickers_status_check/);
+    // 后台（service_role）读得到、写得了，代码里自己带 user_id
+    expect(query(`begin; set local role service_role; update journal_stickers set status = 'ready', width = 200 where user_id = '${alice}' and path = 'a/s2-raw.png' returning status; commit;`)).toBe("ready");
   });
 
   it("journal search finds Chinese text with ilike, and saving bumps updated_at", () => {

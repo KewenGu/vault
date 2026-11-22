@@ -7,12 +7,14 @@ vi.mock("@/lib/supabase/service", () => ({ getServiceClient: () => fake.db }));
 vi.mock("workflow/api", () => ({ start: vi.fn() }));
 vi.mock("@/workflows/process-journal-audio", () => ({ processJournalAudio: vi.fn() }));
 vi.mock("@/lib/media/files", async (orig) => ({ ...(await orig<object>()), archiveImage: vi.fn() }));
+vi.mock("./journal-sticker-image", () => ({ stickerImage: vi.fn() }));
 
 import { start } from "workflow/api";
 import { archiveImage } from "@/lib/media/files";
 import { processJournalAudio } from "@/workflows/process-journal-audio";
 import { VaultError } from "./errors";
-import { beginMediaUpload, createEntryFor, finishMediaUpload, getEntryDetail, listEntryMedia, listMyEntries, removeEntry, removeMedia, retryMedia, saveEntry, toMediaView } from "./journal-service";
+import { beginMediaUpload, beginStickerUpload, createEntryFor, finishMediaUpload, finishStickerUpload, getEntryDetail, listEntryMedia, listMyEntries, listMyStickers, removeEntry, removeMedia, removeSticker, retryMedia, saveEntry, toMediaView } from "./journal-service";
+import { stickerImage } from "./journal-sticker-image";
 import type { JournalMedia } from "./journal-store";
 
 const USER = "11111111-1111-4111-8111-111111111111";
@@ -73,7 +75,8 @@ const putFile = (path: string) => fake.files.set(`vault/${path}`, { body: new Ui
 beforeEach(() => {
   vi.mocked(start).mockReset();
   vi.mocked(archiveImage).mockReset();
-  fake = makeFakeSupabase({ journal_entries: [], journal_media: [] }, { uuidIds: true });
+  vi.mocked(stickerImage).mockReset();
+  fake = makeFakeSupabase({ journal_entries: [], journal_media: [], journal_stickers: [] }, { uuidIds: true });
 });
 
 describe("createEntryFor", () => {
@@ -289,6 +292,86 @@ describe("photos and recordings", () => {
     await removeEntry(session(), E1);
     expect(rows("journal_entries").map((r) => r.id)).toEqual([THEIRS]);
     expect([...fake.files.keys()]).toEqual([`vault/${OTHER}/journal/${THEIRS}/x.jpg`]);
+  });
+});
+
+describe("the decoration layer", () => {
+  it("is saved with the page, and its text is not searched", async () => {
+    fake.store.journal_entries.push(entry(E1, "2026-11-21"));
+    const doc = {
+      blocks: [text("t1", "下午去了江边")],
+      decos: [
+        { id: "d1", kind: "sticker", anchor: "head", x: 286, y: 16, r: 18, s: 1, data: { name: "leaf" } },
+        { id: "d2", kind: "word", anchor: "t1", x: 150, y: 40, data: { text: "今日份的风", look: "fresh" } },
+        { id: "d3", kind: "mine", anchor: "t1", x: 1, y: 1, data: { sticker: M1 } },
+        { id: "bad", kind: "sticker", anchor: "t1", x: "nope", y: 1 },
+      ],
+      strokes: [{ id: "s1", anchor: "t1", color: "#5f8f6e", width: 2.8, points: [1, 2, 3, 4] }],
+    };
+    await saveEntry(session(), E1, { doc, rev: 0 });
+    const saved = row("journal_entries", E1).doc as { decos: { id: string }[]; strokes: unknown[] };
+    expect(saved.decos.map((d) => d.id)).toEqual(["d1", "d2", "d3"]);
+    expect(saved.strokes).toHaveLength(1);
+    expect(row("journal_entries", E1).search_text).toBe("下午去了江边");
+    expect((await getEntryDetail(session(), E1)).entry.doc.decos).toHaveLength(3);
+  });
+});
+
+describe("my stickers", () => {
+  const S1 = "cccccccc-cccc-4ccc-8ccc-ccccccccccc1";
+  const sticker = (id: string, over: Record<string, unknown> = {}) => ({ id, user_id: USER, status: "ready", path: `${USER}/journal-stickers/${id}.webp`, width: 120, height: 90, bytes: 100, created_at: "2026-11-22T10:00:00Z", ...over });
+
+  it("takes pictures only, and hands out an upload address in my sticker folder", async () => {
+    await expect(beginStickerUpload(session(), { name: "录音.m4a", mime: "audio/mp4", size: 10 })).rejects.toThrow("贴纸只能是图片");
+    await expect(beginStickerUpload(session(), { name: "a.pdf", mime: "application/pdf", size: 10 })).rejects.toThrow("贴纸只能是图片");
+    await expect(beginStickerUpload(session(), { name: "a.png", mime: "image/png", size: 16 * 1024 * 1024 })).rejects.toThrow("文件太大");
+    const ticket = await beginStickerUpload(session(), { name: "猫.png", mime: "image/png", size: 5000 });
+    expect(ticket.upload.path).toBe(`${USER}/journal-stickers/${ticket.id}-raw.png`);
+    expect(row("journal_stickers", ticket.id)).toMatchObject({ user_id: USER, status: "uploading" });
+    // 还没传完的不出现在贴纸盘里
+    expect(await listMyStickers(session())).toEqual([]);
+  });
+
+  it("stops at 200", async () => {
+    for (let i = 0; i < 200; i++) fake.store.journal_stickers.push(sticker(crypto.randomUUID()));
+    await expect(beginStickerUpload(session(), { name: "a.png", mime: "image/png", size: 10 })).rejects.toThrow("最多留 200 张");
+  });
+
+  it("turns the upload into a trimmed WebP and removes the original", async () => {
+    const raw = `${USER}/journal-stickers/${S1}-raw.png`;
+    fake.store.journal_stickers.push(sticker(S1, { status: "uploading", path: raw, width: null, height: null }));
+    putFile(raw);
+    vi.mocked(stickerImage).mockResolvedValue({ data: new Uint8Array(300), mime: "image/webp", width: 200, height: 100 });
+    expect(await finishStickerUpload(session(), S1)).toEqual({ id: S1, url: `/media/journal/sticker/${S1}`, width: 200, height: 100 });
+    expect(row("journal_stickers", S1)).toMatchObject({ status: "ready", path: `${USER}/journal-stickers/${S1}.webp`, width: 200, height: 100, bytes: 300 });
+    expect([...fake.files.keys()]).toEqual([`vault/${USER}/journal-stickers/${S1}.webp`]);
+    expect(await listMyStickers(session())).toHaveLength(1);
+    expect(await listMyStickers(session(OTHER))).toEqual([]);
+  });
+
+  it("a picture that cannot be read, or never arrived, leaves nothing behind", async () => {
+    const raw = `${USER}/journal-stickers/${S1}-raw.heic`;
+    fake.store.journal_stickers.push(sticker(S1, { status: "uploading", path: raw }));
+    putFile(raw);
+    vi.mocked(stickerImage).mockRejectedValue(new Error("unsupported"));
+    await expect(finishStickerUpload(session(), S1)).rejects.toThrow("读不出来");
+    expect(rows("journal_stickers")).toEqual([]);
+    expect([...fake.files.keys()]).toEqual([]);
+
+    fake.store.journal_stickers.push(sticker(S1, { status: "uploading", path: raw }));
+    await expect(finishStickerUpload(session(), S1)).rejects.toMatchObject({ status: 409 });
+    expect(rows("journal_stickers")).toEqual([]);
+  });
+
+  it("only the owner can finish or remove a sticker", async () => {
+    fake.store.journal_stickers.push(sticker(S1));
+    putFile(`${USER}/journal-stickers/${S1}.webp`);
+    await expect(finishStickerUpload(session(OTHER), S1)).rejects.toMatchObject({ status: 404 });
+    await removeSticker(session(OTHER), S1);
+    expect(rows("journal_stickers")).toHaveLength(1);
+    await removeSticker(session(), S1);
+    expect(rows("journal_stickers")).toEqual([]);
+    expect([...fake.files.keys()]).toEqual([]);
   });
 });
 

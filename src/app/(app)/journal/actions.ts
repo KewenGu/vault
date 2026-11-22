@@ -3,7 +3,25 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireSession } from "@/lib/auth/user";
 import { VaultError } from "@/lib/vault/errors";
-import { beginMediaUpload, createEntryFor, finishMediaUpload, listEntryMedia, removeEntry, removeMedia, retryMedia, saveEntry, type EntryEdit, type MediaTicket, type MediaView } from "@/lib/vault/journal-service";
+import {
+  beginMediaUpload,
+  beginStickerUpload,
+  createEntryFor,
+  finishMediaUpload,
+  finishStickerUpload,
+  listEntryMedia,
+  listMyStickers,
+  removeEntry,
+  removeMedia,
+  removeSticker,
+  retryMedia,
+  saveEntry,
+  type EntryEdit,
+  type MediaTicket,
+  type MediaView,
+  type StickerTicket,
+  type StickerView,
+} from "@/lib/vault/journal-service";
 import type { ActionState } from "../actions";
 
 /**
@@ -90,4 +108,31 @@ export async function removeMediaAction(mediaId: string): Promise<{ error: strin
 export async function entryMediaAction(entryId: string): Promise<Result<{ media: MediaView[] }>> {
   const session = await requireSession();
   return attempt(async () => ({ media: await listEntryMedia(session, entryId) }));
+}
+
+// ---------------------------------------------------------------- 我的贴纸
+
+export async function listStickersAction(): Promise<Result<{ stickers: StickerView[] }>> {
+  const session = await requireSession();
+  return attempt(async () => ({ stickers: await listMyStickers(session) }));
+}
+
+export async function beginStickerAction(file: { name: string; mime: string; size: number }): Promise<Result<StickerTicket>> {
+  const session = await requireSession();
+  return attempt(() => beginStickerUpload(session, file));
+}
+
+export async function finishStickerAction(id: string): Promise<Result<{ sticker: StickerView }>> {
+  const session = await requireSession();
+  return attempt(async () => ({ sticker: await finishStickerUpload(session, id) }));
+}
+
+export async function removeStickerAction(id: string): Promise<{ error: string | null }> {
+  const session = await requireSession();
+  try {
+    await removeSticker(session, id);
+    return { error: null };
+  } catch (e) {
+    return { error: message(e) };
+  }
 }
