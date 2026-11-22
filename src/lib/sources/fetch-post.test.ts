@@ -8,6 +8,7 @@ vi.mock("./instagram", () => ({ fetchInstagramPost: vi.fn() }));
 vi.mock("./youtube", async (orig) => ({ ...(await orig<object>()), fetchYouTubeVideo: vi.fn() }));
 vi.mock("./youtube-apify", () => ({ fetchYouTubeViaApify: vi.fn() }));
 vi.mock("./x", () => ({ readXPost: vi.fn() }));
+vi.mock("./reddit", async (orig) => ({ ...(await orig<object>()), readRedditPost: vi.fn() }));
 vi.mock("./web", () => ({ fetchWebPage: vi.fn() }));
 vi.mock("./ytdlp", async (orig) => ({ ...(await orig<object>()), ytdlpPath: vi.fn(), ytdlpInfo: vi.fn() }));
 
@@ -15,6 +16,7 @@ import { fetchDouyinVideo } from "./douyin";
 import { fetchPost } from "./fetch-post";
 import { fetchInstagramPost } from "./instagram";
 import { VIDEO_MAX_BYTES } from "@/lib/media/files";
+import { RedditArchiveMiss, readRedditPost } from "./reddit";
 import { fetchTikTokVideo } from "./tiktok";
 import { fetchWebPage } from "./web";
 import { readXPost } from "./x";
@@ -34,6 +36,7 @@ beforeEach(() => {
   vi.mocked(fetchInstagramPost).mockReset().mockResolvedValue(post("instagram"));
   vi.mocked(fetchYouTubeVideo).mockReset().mockResolvedValue(post("youtube"));
   vi.mocked(readXPost).mockReset().mockResolvedValue({ post: post("x"), mentions: [] });
+  vi.mocked(readRedditPost).mockReset().mockResolvedValue({ post: post("reddit"), mentions: [] });
   vi.mocked(fetchWebPage).mockReset().mockResolvedValue(post("web"));
   vi.mocked(ytdlpPath).mockReset().mockReturnValue(null);
   vi.mocked(ytdlpInfo).mockReset().mockResolvedValue(null);
@@ -47,7 +50,7 @@ afterEach(() => {
 
 describe("收藏夹：按平台读帖子", () => {
   it("每个平台走自己的读法；能挑视频档位的都带上转存上限", async () => {
-    for (const p of ["xiaohongshu", "douyin", "tiktok", "instagram", "youtube", "x", "web"] as const) expect((await fetchPost(ref(p))).title).toBe(p);
+    for (const p of ["xiaohongshu", "douyin", "tiktok", "instagram", "youtube", "x", "reddit", "web"] as const) expect((await fetchPost(ref(p))).title).toBe(p);
     expect(vi.mocked(fetchXhsNote)).toHaveBeenCalledWith(ref("xiaohongshu"), VIDEO_MAX_BYTES);
     expect(vi.mocked(fetchTikTokVideo)).toHaveBeenCalledWith(ref("tiktok"), VIDEO_MAX_BYTES);
     expect(vi.mocked(readXPost)).toHaveBeenCalledWith(ref("x"), VIDEO_MAX_BYTES);
@@ -55,6 +58,50 @@ describe("收藏夹：按平台读帖子", () => {
     expect(vi.mocked(fetchDouyinVideo)).toHaveBeenCalledWith(ref("douyin"));
     expect(vi.mocked(fetchInstagramPost)).toHaveBeenCalledWith(ref("instagram"));
     expect(vi.mocked(fetchWebPage)).toHaveBeenCalledWith(ref("web"));
+    expect(vi.mocked(readRedditPost)).toHaveBeenCalledWith(ref("reddit"));
+  });
+
+  it("Reddit 的链接帖：指向的链接跟着读（走那个平台的读法），内容接在正文后面", async () => {
+    vi.mocked(readRedditPost).mockResolvedValue({ post: { ...post("reddit"), kind: "text", text: "链接：https://youtu.be/dQw4w9WgXcQ" }, mentions: [{ how: "link", url: "https://youtu.be/dQw4w9WgXcQ", ref: null }] });
+    vi.mocked(fetchYouTubeVideo).mockResolvedValue({ ...post("youtube"), title: "视频标题", text: "视频简介", captions: "[00:01] 字幕" });
+    const got = await fetchPost(ref("reddit"));
+    expect(got.platform).toBe("reddit");
+    expect(got.text).toContain("链接：https://youtu.be/dQw4w9WgXcQ");
+    expect(got.text).toContain("视频简介");
+    expect(vi.mocked(fetchYouTubeVideo).mock.calls[0][0]).toMatchObject({ platform: "youtube", externalId: "dQw4w9WgXcQ" });
+  });
+
+  it("跟着读到的 Reddit 帖子读到为止：它自己指向的链接不再跟", async () => {
+    const reddit2 = { platform: "reddit" as const, externalId: "abc123", url: "https://www.reddit.com/comments/abc123" };
+    vi.mocked(readXPost).mockResolvedValue({ post: { ...post("x"), text: "主帖" }, mentions: [{ how: "link", url: reddit2.url, ref: reddit2 }] });
+    vi.mocked(readRedditPost).mockResolvedValue({ post: { ...post("reddit"), text: "Reddit 上的讨论" }, mentions: [{ how: "link", url: "https://example.com/a", ref: null }] });
+    const got = await fetchPost({ platform: "x", externalId: "1", url: "https://x.com/i/status/1" });
+    expect(got.text).toContain("Reddit 上的讨论");
+    expect(vi.mocked(readRedditPost)).toHaveBeenCalledWith(reddit2);
+    expect(vi.mocked(fetchWebPage)).not.toHaveBeenCalled();
+  });
+
+  it("Reddit 的存档里没有 / 存档出错：按网页再试一次，读到了说明是按网页读的；也读不到就说清楚是哪种情况", async () => {
+    vi.mocked(readRedditPost).mockRejectedValue(new RedditArchiveMiss());
+    vi.mocked(fetchWebPage).mockResolvedValue({ ...post("web"), title: "网页读到的", notes: ["正文是直接从网页里取的"] });
+    const got = await fetchPost(ref("reddit"));
+    expect(got).toMatchObject({ platform: "reddit", externalId: "1", title: "网页读到的" });
+    expect(got.notes).toEqual(["第三方存档里还没有这条帖子，内容是按网页读的：没有点赞数，评论没有单独读", "正文是直接从网页里取的"]);
+    expect(vi.mocked(fetchWebPage)).toHaveBeenCalledWith({ ...ref("reddit"), platform: "web" });
+
+    vi.mocked(fetchWebPage).mockRejectedValue(new SourceFetchError("这个网页没读出正文"));
+    await expect(fetchPost(ref("reddit"))).rejects.toThrow(/第三方存档里也还没有这一条（刚发的帖子要过一阵才收录/);
+    await expect(fetchPost(ref("reddit"))).rejects.toBeInstanceOf(SourceFetchError);
+
+    vi.mocked(readRedditPost).mockRejectedValue(new Error("Reddit 存档(arctic-shift.photon-reddit.com) 请求超时"));
+    await expect(fetchPost(ref("reddit"))).rejects.toThrow(/第三方存档这会儿也读不了（Reddit 存档\(arctic-shift\.photon-reddit\.com\) 请求超时）/);
+    vi.mocked(fetchWebPage).mockResolvedValue(post("web"));
+    expect((await fetchPost(ref("reddit"))).notes[0]).toMatch(/^第三方存档这会儿读不了，内容是按网页读的/);
+
+    // 存档说「这不是一条帖子」这类读不到：不换路，原样报
+    const bad = new SourceFetchError("这不是一个 Reddit 帖子的链接");
+    vi.mocked(readRedditPost).mockRejectedValue(bad);
+    await expect(fetchPost(ref("reddit"))).rejects.toBe(bad);
   });
 
   it("X 帖子提到的东西跟着读：X 的走 X 的读法，别的链接走各自平台的读法，短链先跟跳转", async () => {

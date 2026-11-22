@@ -1,9 +1,10 @@
 import "server-only";
 import { fetchDouyinVideo } from "./douyin";
 import { fetchInstagramPost } from "./instagram";
-import { followMentions } from "./follow";
+import { followMentions, type FollowDeps, type Followed } from "./follow";
 import { resolveLink, type LinkRef } from "./link";
 import { VIDEO_MAX_BYTES } from "@/lib/media/files";
+import { RedditArchiveMiss, readRedditPost } from "./reddit";
 import { fetchTikTokVideo } from "./tiktok";
 import { SourceFetchError, type SourcePlatform, type FetchedPost } from "./types";
 import { fetchWebPage } from "./web";
@@ -24,6 +25,7 @@ import { mapYtdlpInfo, ytdlpInfo, ytdlpPath } from "./ytdlp";
  * | Instagram | Apify 官方 actor | 约 $0.003 / 条 |
  * | YouTube | App 的播放接口（字幕 + 360p 视频）；被拦时（云服务器上）走 Apify，只有字幕 | 免费；走 Apify 时约 $0.004 / 条 |
  * | X | FxTwitter 公开接口 → 官方嵌入接口；提到的帖子和链接跟着读（见 follow.ts） | 免费 |
+ * | Reddit | 第三方存档 Arctic Shift（帖子 + 评论）；链接帖指向的链接跟着读；存档读不到时按网页再试一次 | 免费 |
  * | 网页 | Jina Reader → 自己抓；本机有 yt-dlp 时认别的视频站 | Jina 带密钥时 $0.0005 |
  */
 
@@ -46,13 +48,47 @@ async function fetchYouTube(ref: LinkRef): Promise<FetchedPost> {
   }
 }
 
+/**
+ * Reddit：先问存档；存档里没有（刚发的帖子）或者存档出错，按网页再试一次（家用网络下有时读得到，机房 IP 读不到）。
+ * 两边都不行，说清楚是哪种情况、接下来能怎么办。
+ */
+async function readReddit(ref: LinkRef): Promise<Followed> {
+  try {
+    return await readRedditPost(ref);
+  } catch (e) {
+    if (e instanceof SourceFetchError && !(e instanceof RedditArchiveMiss)) throw e;
+    const miss = e instanceof RedditArchiveMiss;
+    const page = await fetchWebPage({ ...ref, platform: "web" }).catch(() => null);
+    if (page) {
+      const why = miss ? "第三方存档里还没有这条帖子" : "第三方存档这会儿读不了";
+      return { post: { ...page, platform: "reddit", externalId: ref.externalId, notes: [`${why}，内容是按网页读的：没有点赞数，评论没有单独读`, ...page.notes] }, mentions: [] };
+    }
+    throw new SourceFetchError(
+      miss
+        ? "这个 Reddit 帖子读不到：Reddit 不让服务器直接读，第三方存档里也还没有这一条（刚发的帖子要过一阵才收录；链接不对、帖子不存在也是这样）。过一会儿点「重试」，或者把内容复制下来贴进来"
+        : `这个 Reddit 帖子读不到：Reddit 不让服务器直接读，第三方存档这会儿也读不了（${(e instanceof Error ? e.message : String(e)).slice(0, 100)}）。过一会儿点「重试」，或者把内容复制下来贴进来`
+    );
+  }
+}
+
+/**
+ * 跟着读时各种链接怎么读。Reddit 帖子在这里读到为止，它自己指向的链接不再跟
+ * （不然「X 帖子 → Reddit 帖子 → 又一条 X 帖子」各跟各的，读过的记不到一起）。
+ */
+const FOLLOW: FollowDeps = {
+  readX: (r) => readXPost(r, VIDEO_MAX_BYTES),
+  readOther: async (r) => (r.platform === "reddit" ? (await readReddit(r)).post : FETCHERS[r.platform](r)),
+  resolve: (url) => resolveLink(url),
+};
+
 const FETCHERS: Record<SourcePlatform, (ref: LinkRef) => Promise<FetchedPost>> = {
   xiaohongshu: (ref) => fetchXhsNote(ref, VIDEO_MAX_BYTES),
   douyin: (ref) => fetchDouyinVideo(ref),
   tiktok: (ref) => fetchTikTokVideo(ref, VIDEO_MAX_BYTES),
   instagram: (ref) => fetchInstagramPost(ref),
   youtube: fetchYouTube,
-  x: async (ref) => followMentions(await readXPost(ref, VIDEO_MAX_BYTES), { readX: (r) => readXPost(r, VIDEO_MAX_BYTES), readOther: (r) => FETCHERS[r.platform](r), resolve: (url) => resolveLink(url) }),
+  x: async (ref) => followMentions(await readXPost(ref, VIDEO_MAX_BYTES), FOLLOW),
+  reddit: async (ref) => followMentions(await readReddit(ref), FOLLOW),
   web: (ref) => fetchWebPage(ref),
 };
 

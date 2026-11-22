@@ -195,6 +195,14 @@ describe("buildUnderstandPrompt", () => {
     expect(gaps.some((g) => g.startsWith("正文太长，只读了前 60,000 个字"))).toBe(true);
   });
 
+  it("carries top comments, each cut short; Reddit ones get more room because the answers live there", () => {
+    const long = "答".repeat(900);
+    const withComments = (platform: UnderstandInput["platform"]) => buildUnderstandPrompt(input({ platform, post: post({ topComments: [{ text: long, likes: 266 }, { text: "短的\n一条", likes: null }] }) })).prompt;
+    expect(withComments("douyin")).toContain(`<高赞评论>\n- ${"答".repeat(200)}（266 赞）\n- 短的 一条\n</高赞评论>`);
+    expect(withComments("reddit")).toContain(`- ${"答".repeat(600)}（266 赞）`);
+    expect(withComments("reddit")).toContain("来源：Reddit（视频）的链接");
+  });
+
   it("describes uploads and attached images, in English when asked", () => {
     const { prompt } = buildUnderstandPrompt(
       input({ source: "upload", platform: null, kind: "image", url: null, title: "", author: "", transcript: null, post: post(), images: [{ caption: "图片", data: new Uint8Array() }], language: "en" })

@@ -9,6 +9,7 @@ import { withTempDir } from "@/lib/media/ffmpeg";
 import { IMAGE_MAX_BYTES, MAX_IMAGES, VIDEO_MAX_BYTES, TooLargeError, archiveImage, downloadRemote, downloadRemoteToFile, visionImage, visionSlices } from "@/lib/media/files";
 import { canDigestVideo, contactSheets, digestVideo, digestVideoFile, sheetLayout } from "@/lib/media/frames";
 import { keepLocalFile, localFileSize, localMediaPath, removeLocalItemFiles } from "@/lib/media/local-store";
+import { muxAudioInto } from "@/lib/media/mux";
 import { clockTenths, frameNote, likelyChinese, parseTranscript, speechAt, speechLabel, type Cue } from "@/lib/media/transcript";
 import { fetchPost } from "@/lib/sources/fetch-post";
 import { mapCapture } from "@/lib/sources/web";
@@ -159,6 +160,15 @@ async function storeMedia(db: Db, dir: string, post: FetchedPost, tmp: string): 
         await writeFile(file, data);
         bytes = data.byteLength;
       } else bytes = await downloadRemoteToFile(post.video, file, readMax, 600_000);
+      // 声音在另一个文件里的（Reddit）：下下来合进去。合不成不算失败，留着没有声音的画面，说清楚
+      if (post.video.audio) {
+        try {
+          bytes = await muxAudioInto(file, post.video.audio, tmp);
+        } catch (e) {
+          notes.push(`视频的声音没有合进去（${messageOf(e).slice(0, 100)}），只有画面：说了什么读不到`);
+          console.error(`视频合声音失败 ${dir}: ${messageOf(e)}`);
+        }
+      }
       const cannotPlay = "画面和声音照常读，但这里不能播放，要看去原链接";
       if (bytes <= VIDEO_MAX_BYTES) {
         const path = `${dir}/video.mp4`;
@@ -566,9 +576,9 @@ async function understandItemStep(itemId: string): Promise<StepResult> {
         now: new Date(),
       })
     );
-    // 平台自己有标题的（YouTube、小红书、网页）留着，用户认得它；抖音、TikTok、Instagram、X 的「标题」是文案的第一行，
+    // 平台自己有标题的（YouTube、小红书、Reddit、网页）留着，用户认得它；抖音、TikTok、Instagram、X 的「标题」是文案的第一行，
     // 常常是一整段话——换成模型起的。上传的文件名、空标题也换成模型起的。
-    const keepTitle = item.source === "link" && item.title && (item.platform === "youtube" || item.platform === "xiaohongshu" || item.platform === "web");
+    const keepTitle = item.source === "link" && item.title && (item.platform === "youtube" || item.platform === "xiaohongshu" || item.platform === "reddit" || item.platform === "web");
     const { error } = await db
       .from("items")
       .update({

@@ -192,7 +192,9 @@ export function buildUnderstandPrompt(input: UnderstandInput): { prompt: string;
     gaps.push(input.kind === "video" ? "没有口播文字：视频里说了什么只能从画面上的字和文案里看" : "音频没有转写出文字");
   }
   if (post.topComments.length > 0) {
-    parts.push(`<高赞评论>\n${post.topComments.map((c) => `- ${c.text.replace(/\s+/g, " ").slice(0, 200)}${c.likes !== null ? `（${fmt(c.likes)} 赞）` : ""}`).join("\n")}\n</高赞评论>`);
+    // Reddit 的帖子常常是一个问题，回答在评论里：每条多带一些
+    const each = input.platform === "reddit" ? 600 : 200;
+    parts.push(`<高赞评论>\n${post.topComments.map((c) => `- ${c.text.replace(/\s+/g, " ").slice(0, each)}${c.likes !== null ? `（${fmt(c.likes)} 赞）` : ""}`).join("\n")}\n</高赞评论>`);
   }
   if (input.images.length > 0) {
     const anchored = input.images.some((i) => i.caption.includes("说到：") || i.caption.startsWith("帧格"));

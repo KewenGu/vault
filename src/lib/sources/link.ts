@@ -5,8 +5,8 @@ import type { SourcePlatform } from "./types";
 
 /**
  * 收藏夹的链接识别：从粘贴的分享文案里找出链接 → 认出是哪个平台的哪条帖子。
- * 认得的平台（小红书、抖音、TikTok、Instagram、YouTube、X）要从链接里读出帖子 id；短链（xhslink.com、v.douyin.com、
- * vm.tiktok.com、instagram.com/share/…）发一次请求看它跳到哪，每一跳都必须还在这个平台自己的域名上。
+ * 认得的平台（小红书、抖音、TikTok、Instagram、YouTube、X、Reddit）要从链接里读出帖子 id；短链（xhslink.com、v.douyin.com、
+ * vm.tiktok.com、instagram.com/share/…、reddit.com/r/…/s/…）发一次请求看它跳到哪，每一跳都必须还在这个平台自己的域名上。
  * 其余链接一律算「网页」（博文、新闻、别的视频站）：不跟跳转，id 是整理过的地址的哈希。
  *
  * - 小红书：`/explore/<id>`、`/discovery/item/<id>`（笔记 id 是 24 位十六进制）。链接里的 `xsec_token` 是访问口令，
@@ -16,6 +16,8 @@ import type { SourcePlatform } from "./types";
  * - Instagram：`/p/<短码>`、`/reel/<短码>`、`/tv/<短码>`（前面可以带用户名；短码区分大小写）。
  * - YouTube：`watch?v=<id>`、`youtu.be/<id>`、`/shorts/<id>`、`/live/<id>`、`/embed/<id>`（id 是 11 位）。
  * - X：`/<用户>/status/<id>`、`/i/status/<id>`（twitter.com 和 fxtwitter 这类镜像域名也认）。
+ * - Reddit：`/r/<版块>/comments/<id>/…`（后面带着某条评论的也算这条帖子）、`/comments/<id>`、`/gallery/<id>`、`redd.it/<id>`
+ *   （id 是一串小写字母和数字）。i.redd.it、v.redd.it 是图片和视频文件的地址，不是帖子，按网页处理。
  */
 
 export const MOBILE_UA =
@@ -39,6 +41,7 @@ const HOSTS: Record<Site, RegExp> = {
   instagram: /(^|\.)(instagram\.com|instagr\.am)$/,
   youtube: /(^|\.)(youtube\.com|youtu\.be|youtube-nocookie\.com)$/,
   x: /(^|\.)(x\.com|twitter\.com|fxtwitter\.com|vxtwitter\.com|fixupx\.com)$/,
+  reddit: /(^|\.)reddit\.com$|^redd\.it$/,
 };
 const SITES = Object.keys(HOSTS) as Site[];
 
@@ -59,7 +62,7 @@ function toUrl(raw: string): URL | null {
 
 /** 没带 http 的链接（有人只复制了 xhslink.com/xxx、youtu.be/xxx）：只认这几个平台的域名 */
 const BARE_LINK =
-  /(?<![\w./@-])((?:[\w-]+\.)*(?:xhslink\.com|xiaohongshu\.com|douyin\.com|tiktok\.com|instagram\.com|youtube\.com|youtu\.be|twitter\.com|x\.com)\/[\x21-\x7e]+)/gi;
+  /(?<![\w./@-])((?:[\w-]+\.)*(?:xhslink\.com|xiaohongshu\.com|douyin\.com|tiktok\.com|instagram\.com|youtube\.com|youtu\.be|twitter\.com|x\.com|reddit\.com|redd\.it)\/[\x21-\x7e]+)/gi;
 
 /**
  * 从粘贴的内容里找链接。App 里「复制链接」得到的是一段话（「7.94 复制打开抖音，看看【…】 https://v.douyin.com/xxx/ k@P.xx」），
@@ -136,6 +139,12 @@ function siteRef(site: Site, url: URL): LinkRef | null {
     if (!id) return null;
     return { platform: site, externalId: id, url: !short && m?.[1] === "shorts" ? `https://www.youtube.com/shorts/${id}` : `https://www.youtube.com/watch?v=${id}` };
   }
+  if (site === "reddit") {
+    const short = /^redd\.it$/i.test(url.hostname);
+    const m = short ? /^\/([0-9a-z]{4,10})\/?$/i.exec(path) : /^\/(?:(?:r|u|user)\/[\w.-]+\/)?comments\/([0-9a-z]{4,10})(?:\/|$)/i.exec(path) ?? /^\/gallery\/([0-9a-z]{4,10})\/?$/i.exec(path);
+    // 读到之后换成带版块和标题的那个地址（见 reddit.ts）
+    return m ? { platform: site, externalId: m[1].toLowerCase(), url: `https://www.reddit.com/comments/${m[1].toLowerCase()}` } : null;
+  }
   const m = /^\/(?:(\w{1,15})\/status(?:es)?|i\/(?:web\/)?status)\/(\d{5,25})(?:\/(?:photo|video)\/\d+)?\/?$/.exec(path);
   return m ? { platform: "x", externalId: m[2], url: `https://x.com/${m[1] ?? "i"}/status/${m[2]}` } : null;
 }
@@ -165,9 +174,10 @@ const NOT_A_POST: Record<Site, string> = {
   instagram: "没认出这是哪个帖子：在 Instagram 里点「分享 → 复制链接」再贴进来（要帖子或 Reels 的链接，主页和快拍读不了）",
   youtube: "没认出这是哪个视频：贴视频页面的链接（youtube.com/watch?v=… 或 youtu.be/…），频道主页和播放列表读不了",
   x: "没认出这是哪条帖子：在 X 里点「分享 → 复制链接」再贴进来（x.com/…/status/… 这样的链接，主页读不了）",
+  reddit: "没认出这是哪个帖子：在 Reddit 里点「分享 → 复制链接」再贴进来（要帖子的链接，版块主页、用户主页读不了）",
 };
 const X_ARTICLE_LINK = "这是 X 长文本身的链接，读不了：在 X 里打开发这篇长文的那条帖子，点「分享 → 复制链接」贴帖子的链接（x.com/…/status/…），长文的全文会一起读到";
-const SHORT_LINK_LABEL: Record<Site, string> = { xiaohongshu: "小红书", douyin: "抖音", tiktok: "TikTok", instagram: "Instagram", youtube: "YouTube", x: "X" };
+const SHORT_LINK_LABEL: Record<Site, string> = { xiaohongshu: "小红书", douyin: "抖音", tiktok: "TikTok", instagram: "Instagram", youtube: "YouTube", x: "X", reddit: "Reddit" };
 
 const MAX_HOPS = 5;
 

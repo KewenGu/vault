@@ -15,6 +15,7 @@ describe("收藏夹：共用的小工具", () => {
     expect(fallbackTitle("youtube", null)).toBe("YouTube 视频");
     expect(fallbackTitle("instagram", null)).toBe("Instagram 帖子");
     expect(fallbackTitle("x", "text")).toBe("X 帖子");
+    expect(fallbackTitle("reddit", null)).toBe("Reddit 帖子");
     expect(fallbackTitle("web", null)).toBe("网页");
     expect(fallbackTitle("web", "article")).toBe("文章");
   });
