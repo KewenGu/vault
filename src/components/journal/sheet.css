@@ -1,0 +1,570 @@
+/*
+ * 日记的那一页纸。固定 360 宽（lib/vault/journal-doc.ts 的 SHEET_WIDTH），外面用 transform 等比缩放，
+ * 所以这里的尺寸都写死成像素：缩放前后每一行断在同一个地方。
+ * 一个风格 = 一组变量（纸、墨色、强调色、字体、文字底下垫不垫纸）+ 几处自己的样子（页眉、照片框、录音条）。
+ * 纸有自己的颜色，不跟系统的深色模式走。输入框的字不小于 16px：iOS 上小于 16px 的输入框一点就自动放大。
+ */
+
+.jn-stage {
+  position: relative;
+  width: 100%;
+  max-width: 480px;
+  margin-inline: auto;
+}
+
+.jn-sheet {
+  --jn-ink: #3b463d;
+  --jn-soft: #7d8a7f;
+  --jn-accent: #5f8f6e;
+  --jn-on-accent: #ffffff;
+  --jn-line: #c5d3c4;
+  --jn-card: transparent;
+  --jn-card-pad: 0px;
+  --jn-panel: rgba(255, 255, 255, 0.6);
+  --jn-warn: #9a5b1e;
+  --jn-body: "LXGW WenKai Lite", "LXGW WenKai", "Kaiti SC", STKaiti, KaiTi, "Noto Serif CJK SC", serif;
+  --jn-title: var(--jn-body);
+  --jn-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 360px;
+  min-height: 560px;
+  transform-origin: 0 0;
+  box-sizing: border-box;
+  padding: 26px 22px 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  background: #f8f7ef;
+  color: var(--jn-ink);
+  font-family: var(--jn-body);
+  font-size: 17px;
+  line-height: 1.75;
+  box-shadow:
+    0 1px 2px rgba(40, 38, 30, 0.08),
+    0 10px 28px rgba(40, 38, 30, 0.12);
+  overflow: hidden;
+}
+@media (min-width: 640px) {
+  .jn-sheet {
+    border-radius: 5px;
+  }
+}
+
+/* ---------------------------------------------------------------- 纸和字：五个风格 */
+
+.jn-sheet[data-style="fresh"] {
+  background:
+    radial-gradient(circle, #cbd9c7 1px, transparent 1.4px) 0 0 / 16px 16px,
+    #f8f7ef;
+}
+
+.jn-sheet[data-style="y2k"] {
+  --jn-ink: #2a1a5e;
+  --jn-soft: #6b55b5;
+  --jn-accent: #e0388c;
+  --jn-line: #7a5cff;
+  --jn-panel: rgba(255, 255, 255, 0.68);
+  --jn-warn: #8a2a60;
+  --jn-body: "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif;
+  font-size: 16px;
+  background:
+    radial-gradient(circle at 12% 60px, #fff 0 2px, transparent 3px),
+    radial-gradient(circle at 82% 30px, #fff 0 1.5px, transparent 2.5px),
+    radial-gradient(circle at 68% 420px, #fff 0 2px, transparent 3px),
+    radial-gradient(circle at 24% 520px, #fff 0 1.5px, transparent 2.5px),
+    linear-gradient(160deg, #ffd1ec 0%, #d9c8ff 45%, #bfe3ff 100%);
+}
+
+.jn-sheet[data-style="kawaii"] {
+  --jn-ink: #6b4a55;
+  --jn-soft: #a57f8b;
+  --jn-accent: #f0648f;
+  --jn-line: #ffc2d1;
+  --jn-panel: #ffffff;
+  --jn-warn: #a2562a;
+  --jn-body: "ZCOOL KuaiLe", "Yuanti SC", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+  font-size: 17px;
+  background:
+    radial-gradient(circle, #ffdfe6 5px, transparent 5.5px) 0 0 / 36px 36px,
+    radial-gradient(circle, #ffdfe6 5px, transparent 5.5px) 18px 18px / 36px 36px,
+    #fff8f4;
+}
+
+.jn-sheet[data-style="geek"] {
+  --jn-ink: #b9f3c9;
+  --jn-soft: #6f9c7c;
+  --jn-accent: #7cffb2;
+  --jn-on-accent: #0c120e;
+  --jn-line: #2c4a36;
+  --jn-panel: rgba(124, 255, 178, 0.05);
+  --jn-warn: #ffb454;
+  --jn-body: ui-monospace, "SF Mono", Menlo, Consolas, "PingFang SC", "Noto Sans SC", "Microsoft YaHei", monospace;
+  font-size: 16px;
+  line-height: 1.8;
+  color-scheme: dark;
+  background:
+    linear-gradient(#16231a 1px, transparent 1px) 0 0 / 100% 20px,
+    linear-gradient(90deg, #16231a 1px, transparent 1px) 0 0 / 20px 100%,
+    #0c120e;
+}
+@media (min-width: 640px) {
+  .jn-sheet[data-style="geek"] {
+    border-radius: 2px;
+  }
+}
+
+.jn-sheet[data-style="scenery"] {
+  --jn-ink: #26304a;
+  --jn-soft: #5d6787;
+  --jn-accent: #c96a45;
+  --jn-line: rgba(38, 48, 74, 0.25);
+  --jn-card: rgba(255, 255, 255, 0.88);
+  --jn-card-pad: 10px 13px;
+  --jn-panel: rgba(255, 255, 255, 0.88);
+  --jn-body: "Songti SC", "Noto Serif CJK SC", "Noto Serif SC", "Source Han Serif SC", SimSun, serif;
+  font-size: 16px;
+  padding-bottom: 120px;
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 120' preserveAspectRatio='none'%3E%3Cpath d='M0 120V70l60-40 50 30 70-50 60 45 60-30 100 55v40z' fill='%231b2547' fill-opacity='.55'/%3E%3Cpath d='M0 120V95l80-30 70 25 90-35 160 50v15z' fill='%23141b36' fill-opacity='.75'/%3E%3C/svg%3E")
+      bottom / 100% 118px no-repeat,
+    linear-gradient(180deg, #1f2f5c 0%, #5a5fa0 38%, #e58f6b 74%, #f6c992 100%);
+}
+
+/* ---------------------------------------------------------------- 输入框 */
+
+.jn-grow {
+  display: grid;
+  min-width: 0;
+}
+.jn-grow::after {
+  content: attr(data-value) " ";
+  visibility: hidden;
+}
+.jn-grow > textarea,
+.jn-grow::after {
+  grid-area: 1 / 1 / 2 / 2;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  font: inherit;
+  letter-spacing: inherit;
+  text-align: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.jn-grow > textarea {
+  resize: none;
+  overflow: hidden;
+  background: none;
+  color: inherit;
+  border-radius: 0;
+  appearance: none;
+}
+.jn-sheet textarea:focus-visible {
+  outline: none;
+}
+.jn-sheet textarea::placeholder {
+  color: var(--jn-soft);
+  opacity: 0.75;
+}
+.jn-sheet :focus-visible {
+  outline-color: var(--jn-accent);
+}
+.jn-sheet button {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.jn-sheet button:disabled {
+  cursor: default;
+}
+
+/* ---------------------------------------------------------------- 页眉 */
+
+.jn-head {
+  display: flex;
+  flex-direction: column;
+}
+.jn-date {
+  font-size: 12.5px;
+  line-height: 18px;
+  color: var(--jn-soft);
+  letter-spacing: 0.08em;
+}
+.jn-title {
+  margin-top: 6px;
+  font-family: var(--jn-title);
+  font-size: 26px;
+  line-height: 36px;
+}
+.jn-chips,
+.jn-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+}
+.jn-options {
+  margin-top: 8px;
+  padding: 8px;
+  border-radius: 8px;
+  background: var(--jn-panel);
+  border: 1px solid var(--jn-line);
+}
+.jn-sheet .jn-chip {
+  font-family: var(--jn-body);
+  font-size: 12.5px;
+  line-height: 22px;
+  padding: 0 10px;
+  border-radius: 12px;
+  border: 1px solid var(--jn-accent);
+  background: none;
+  color: var(--jn-ink);
+}
+.jn-chip[data-empty="true"] {
+  border-style: dashed;
+  border-color: var(--jn-line);
+  color: var(--jn-soft);
+}
+.jn-chip[aria-pressed="true"] {
+  background: var(--jn-accent);
+  color: var(--jn-on-accent);
+}
+
+.jn-sheet[data-style="y2k"] .jn-date {
+  align-self: flex-start;
+  padding: 0 10px;
+  border-radius: 9px;
+  background: #2a1a5e;
+  color: #fff;
+  font-family: var(--jn-mono);
+  letter-spacing: 0.04em;
+}
+.jn-sheet[data-style="y2k"] .jn-title {
+  font-style: italic;
+  font-weight: 700;
+}
+.jn-sheet[data-style="y2k"] .jn-chip {
+  background: rgba(255, 255, 255, 0.6);
+  border-color: #7a5cff;
+}
+.jn-sheet[data-style="y2k"] .jn-chip[aria-pressed="true"] {
+  background: var(--jn-accent);
+}
+.jn-sheet[data-style="kawaii"] .jn-chip {
+  background: #fff;
+  border-color: #ffc2d1;
+}
+.jn-sheet[data-style="kawaii"] .jn-chip[aria-pressed="true"] {
+  background: var(--jn-accent);
+}
+.jn-sheet[data-style="geek"] .jn-date {
+  color: #ffb454;
+  letter-spacing: 0;
+}
+.jn-sheet[data-style="geek"] .jn-title {
+  font-size: 22px;
+  font-weight: 700;
+  padding-left: 1.2em;
+  position: relative;
+}
+.jn-sheet[data-style="geek"] .jn-title::before {
+  content: "#";
+  position: absolute;
+  left: 0;
+  color: var(--jn-soft);
+}
+.jn-sheet[data-style="geek"] .jn-chip,
+.jn-sheet[data-style="geek"] .jn-options {
+  border-radius: 2px;
+}
+.jn-sheet[data-style="geek"] .jn-chip {
+  border-color: var(--jn-line);
+}
+.jn-sheet[data-style="scenery"] .jn-head {
+  color: #fff;
+}
+.jn-sheet[data-style="scenery"] .jn-date {
+  color: rgba(255, 255, 255, 0.85);
+  letter-spacing: 0.22em;
+}
+.jn-sheet[data-style="scenery"] .jn-title {
+  font-weight: 700;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.3);
+}
+.jn-sheet[data-style="scenery"] .jn-title textarea::placeholder {
+  color: rgba(255, 255, 255, 0.7);
+}
+.jn-sheet[data-style="scenery"] .jn-head .jn-chips .jn-chip {
+  border-color: rgba(255, 255, 255, 0.7);
+  color: #fff;
+}
+.jn-sheet[data-style="scenery"] .jn-head .jn-chips .jn-chip[data-empty="true"] {
+  border-color: rgba(255, 255, 255, 0.45);
+  color: rgba(255, 255, 255, 0.8);
+}
+
+/* ---------------------------------------------------------------- 正文的块 */
+
+.jn-text {
+  background: var(--jn-card);
+  padding: var(--jn-card-pad);
+  border-radius: 3px;
+}
+
+/* 照片、录音：左边是内容，右边一小列是挪和删 */
+.jn-media {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 28px;
+  gap: 8px;
+  align-items: start;
+}
+.jn-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.jn-sheet .jn-tools button {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--jn-soft);
+}
+.jn-tools button:hover:not(:disabled) {
+  background: var(--jn-panel);
+  color: var(--jn-ink);
+}
+.jn-tools button:disabled {
+  opacity: 0.3;
+}
+.jn-sheet[data-style="scenery"] .jn-tools button {
+  color: rgba(255, 255, 255, 0.85);
+}
+.jn-sheet[data-style="scenery"] .jn-tools button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+
+/* 照片：框跟着风格换 */
+.jn-photo {
+  margin: 4px 0 2px 3px;
+  padding: 8px 8px 4px;
+  background: #fff;
+  color: #55584f;
+  transform: rotate(-1.5deg);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.16);
+}
+.jn-photo-img {
+  position: relative;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.06);
+}
+.jn-photo-img img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.jn-photo-img[data-dim="true"] img {
+  opacity: 0.55;
+}
+.jn-photo-missing {
+  aspect-ratio: 4 / 3;
+}
+.jn-photo-state {
+  position: absolute;
+  inset: auto 0 0 0;
+  margin: 0;
+  padding: 6px 8px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #3a3d36;
+  font-family: system-ui, sans-serif;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.jn-photo-state[data-tone="bad"] {
+  color: #a3301f;
+}
+.jn-photo figcaption {
+  margin-top: 4px;
+  font-size: 16px;
+  line-height: 26px;
+  text-align: center;
+}
+.jn-photo figcaption textarea::placeholder {
+  color: #9b9e94;
+}
+.jn-sheet[data-style="y2k"] .jn-photo {
+  padding: 5px 5px 4px;
+  border-radius: 16px;
+  background: linear-gradient(135deg, #ff9ad5, #c9d6ff 40%, #9af0e0 70%, #b39bff);
+  color: #2a1a5e;
+  transform: rotate(1.5deg);
+}
+.jn-sheet[data-style="y2k"] .jn-photo-img {
+  border-radius: 12px;
+}
+.jn-sheet[data-style="y2k"] .jn-photo figcaption textarea::placeholder {
+  color: #6b55b5;
+}
+.jn-sheet[data-style="kawaii"] .jn-photo {
+  border-radius: 20px;
+  border: 3px solid #ffc2d1;
+  color: #8a6672;
+  transform: rotate(-2deg);
+  box-shadow: 0 4px 0 #ffdfe6;
+}
+.jn-sheet[data-style="kawaii"] .jn-photo-img {
+  border-radius: 12px;
+}
+.jn-sheet[data-style="geek"] .jn-photo {
+  margin: 0;
+  padding: 0;
+  background: none;
+  border: 1px solid var(--jn-accent);
+  color: var(--jn-soft);
+  transform: none;
+  box-shadow: none;
+}
+.jn-sheet[data-style="geek"] .jn-photo img {
+  filter: grayscale(1) sepia(1) hue-rotate(70deg) saturate(2.2) contrast(1.1);
+}
+.jn-sheet[data-style="geek"] .jn-photo figcaption {
+  margin: 0;
+  padding: 2px 8px;
+  border-top: 1px solid var(--jn-line);
+  text-align: left;
+}
+.jn-sheet[data-style="geek"] .jn-photo figcaption textarea::placeholder {
+  color: var(--jn-soft);
+}
+.jn-sheet[data-style="scenery"] .jn-photo {
+  padding: 7px 7px 4px;
+  transform: rotate(1.2deg);
+  letter-spacing: 0.08em;
+}
+
+/* 录音 */
+.jn-audio {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--jn-accent);
+  border-radius: 12px;
+  background: var(--jn-panel);
+  font-size: 14px;
+  line-height: 1.6;
+}
+.jn-player {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.jn-player-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.jn-sheet .jn-play {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--jn-accent);
+  color: var(--jn-on-accent);
+}
+.jn-seek {
+  flex: 1;
+  min-width: 0;
+  height: 20px;
+  accent-color: var(--jn-accent);
+}
+.jn-time {
+  flex: none;
+  font-family: var(--jn-mono);
+  font-size: 11.5px;
+  color: var(--jn-soft);
+  font-variant-numeric: tabular-nums;
+}
+.jn-cues {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.jn-sheet .jn-cue-at {
+  margin-right: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--jn-accent);
+  font-family: var(--jn-mono);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+.jn-cue-at:hover,
+.jn-link:hover {
+  text-decoration: underline;
+}
+.jn-sheet .jn-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--jn-accent);
+  font-size: inherit;
+}
+.jn-state {
+  margin: 0;
+  color: var(--jn-soft);
+}
+.jn-state[data-tone="bad"],
+.jn-notes {
+  color: var(--jn-warn);
+}
+.jn-notes {
+  margin: 0;
+  padding-left: 1.2em;
+  font-size: 13px;
+  list-style: disc;
+}
+.jn-audio-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.jn-audio-actions:empty {
+  display: none;
+}
+.jn-sheet[data-style="y2k"] .jn-audio {
+  border: 2px solid #7a5cff;
+  border-radius: 18px;
+}
+.jn-sheet[data-style="kawaii"] .jn-audio {
+  border: 2px dashed #ffc2d1;
+  border-radius: 18px;
+}
+.jn-sheet[data-style="geek"] .jn-audio {
+  border-color: var(--jn-line);
+  border-radius: 2px;
+}
+.jn-sheet[data-style="geek"] .jn-play {
+  border-radius: 2px;
+}
+.jn-sheet[data-style="scenery"] .jn-audio {
+  border: 0;
+  border-radius: 3px;
+}
