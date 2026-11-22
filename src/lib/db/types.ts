@@ -106,6 +106,18 @@ type JournalMediaRow = {
   updated_at: string;
 };
 
+type JournalStickerRow = {
+  id: string;
+  user_id: string;
+  status: string;
+  path: string;
+  width: number | null;
+  height: number | null;
+  bytes: number;
+  created_at: string;
+  updated_at: string;
+};
+
 type Table<Row, Required extends keyof Row> = {
   Row: Row;
   Insert: Pick<Row, Required> & Partial<Omit<Row, Required>>;
@@ -123,6 +135,7 @@ export type Database = {
       maps: Table<MapRow, "user_id">;
       journal_entries: Table<JournalEntryRow, "user_id" | "day">;
       journal_media: Table<JournalMediaRow, "user_id" | "entry_id" | "kind" | "path">;
+      journal_stickers: Table<JournalStickerRow, "user_id" | "path">;
     };
     Views: { [_ in never]: never };
     Functions: {

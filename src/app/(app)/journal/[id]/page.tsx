@@ -5,7 +5,7 @@ import { JournalEditor, type JournalApi } from "@/components/journal/journal-edi
 import { requireSession } from "@/lib/auth/user";
 import { VaultError } from "@/lib/vault/errors";
 import { getEntryDetail, type EntryDetail } from "@/lib/vault/journal-service";
-import { beginMediaAction, deleteEntryAction, entryMediaAction, finishMediaAction, removeMediaAction, retryMediaAction, saveEntryAction } from "../actions";
+import { beginMediaAction, beginStickerAction, deleteEntryAction, entryMediaAction, finishMediaAction, finishStickerAction, listStickersAction, removeMediaAction, removeStickerAction, retryMediaAction, saveEntryAction } from "../actions";
 
 type Props = { params: Promise<{ id: string }> };
 
@@ -25,7 +25,16 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   return { title: detail ? detail.entry.title || `${detail.entry.day} 的日记` : "不在了" };
 }
 
-const api: JournalApi = { save: saveEntryAction, beginMedia: beginMediaAction, finishMedia: finishMediaAction, retryMedia: retryMediaAction, removeMedia: removeMediaAction, listMedia: entryMediaAction, remove: deleteEntryAction };
+const api: JournalApi = {
+  save: saveEntryAction,
+  beginMedia: beginMediaAction,
+  finishMedia: finishMediaAction,
+  retryMedia: retryMediaAction,
+  removeMedia: removeMediaAction,
+  listMedia: entryMediaAction,
+  remove: deleteEntryAction,
+  stickers: { list: listStickersAction, begin: beginStickerAction, finish: finishStickerAction, remove: removeStickerAction },
+};
 
 /** 一篇日记：一页纸（components/journal/journal-editor.tsx），直接在上面写。 */
 export default async function JournalEntryPage({ params }: Props) {

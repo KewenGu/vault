@@ -1,17 +1,20 @@
 "use client";
 
-import { ArrowDown, ArrowUp, AudioLines, ImagePlus, Mic, Square, Trash2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, AudioLines, Brush, ImagePlus, Mic, Square, Sticker, Trash2, Type, X } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import type { ActionState } from "@/app/(app)/actions";
 import type { Result } from "@/app/(app)/journal/actions";
 import { clock } from "@/lib/media/transcript";
 import { createClient } from "@/lib/supabase/client";
+import { HEAD } from "@/lib/vault/journal-deco";
 import { JOURNAL_MAX, JOURNAL_STYLES, MOODS, SHEET_WIDTH, WEATHERS, cuesText, dayLabel, docMediaIds, type Block, type JournalStyle } from "@/lib/vault/journal-doc";
 import { canMove, insertAfter, moveBlock, newBlockId, patchBlock, removeBlock, tidy } from "@/lib/vault/journal-edit";
 import type { EntryDetail, EntryEdit, MediaTicket, MediaView } from "@/lib/vault/journal-service";
 import { ActionForm } from "../action-form";
 import { AudioPlayer } from "./audio-player";
+import { DecoPanel, DrawPanel, uploadSticker, type StickerApi } from "./deco-panel";
+import { useHandLayer, type Mode } from "./use-hand-layer";
 import { useRecorder } from "./recorder";
 // 两个风格用到的字体，自己托管（不连 Google Fonts）：按用到的字切成小片，浏览器只下这一页用到的那几片
 import "@fontsource/zcool-kuaile/400.css";
@@ -28,6 +31,8 @@ import "./sheet.css";
  * - 自己改的自动保存（停手不到一秒就存；切走、关页面前也存一次）。保存一次只发一个请求，带着上次看到的版本号：
  *   别处改过了就停下来说清楚，不盖掉。
  * - 风格只换纸、字体、配色、照片框（sheet.css），内容不动。
+ * - 手帐层（贴纸、胶带、艺术字、手绘）在 use-hand-layer.tsx：底下那一栏切「写字 / 贴纸 / 画笔」三种模式。
+ *   正文里有块要没的时候（删照片、两段字并成一段）先调 hand.rehome，挂在那一块上的东西改挂到还在的块上。
  *
  * 动作从页面传进来：都是 server action，逻辑在 lib/vault/journal-service.ts。
  */
@@ -40,7 +45,14 @@ export type JournalApi = {
   removeMedia: (mediaId: string) => Promise<{ error: string | null }>;
   listMedia: (entryId: string) => Promise<Result<{ media: MediaView[] }>>;
   remove: (prev: ActionState, formData: FormData) => Promise<ActionState>;
+  stickers: StickerApi;
 };
+
+const MODES: { id: Mode; label: string; Icon: typeof Type }[] = [
+  { id: "write", label: "写字", Icon: Type },
+  { id: "deco", label: "贴纸", Icon: Sticker },
+  { id: "draw", label: "画笔", Icon: Brush },
+];
 
 const SAVE_AFTER_MS = 900;
 const POLL_MS = 3000;
@@ -113,10 +125,7 @@ export function JournalEditor({ initial, api }: { initial: EntryDetail; api: Jou
   const [saveError, setSaveError] = useState<string | null>(null);
   const [conflict, setConflict] = useState(false);
   const rev = useRef(initial.entry.rev);
-  const latest = useRef({ title, day, style, mood, weather, blocks, version, conflict });
-  useEffect(() => {
-    latest.current = { title, day, style, mood, weather, blocks, version, conflict };
-  });
+  const latest = useRef({ title, day, style, mood, weather, blocks, decos: initial.entry.doc.decos, strokes: initial.entry.doc.strokes, version, conflict });
   const saver = useRef<{ timer: ReturnType<typeof setTimeout> | null; running: boolean; saved: number }>({ timer: null, running: false, saved: 0 });
   /** 过一会儿再存一次（saveNow 自己要用，所以经一个 ref 绕一下） */
   const again = useRef<(ms: number) => void>(() => {});
@@ -130,7 +139,7 @@ export function JournalEditor({ initial, api }: { initial: EntryDetail; api: Jou
     if (s.running || snap.conflict || snap.version === s.saved) return;
     s.running = true;
     setSaving(true);
-    const edit: EntryEdit = { title: snap.title, day: snap.day, style: snap.style, mood: snap.mood, weather: snap.weather, doc: { v: 1, blocks: snap.blocks, decos: initial.entry.doc.decos, strokes: initial.entry.doc.strokes }, rev: rev.current };
+    const edit: EntryEdit = { title: snap.title, day: snap.day, style: snap.style, mood: snap.mood, weather: snap.weather, doc: { v: 1, blocks: snap.blocks, decos: snap.decos, strokes: snap.strokes }, rev: rev.current };
     const res = await api.save(id, edit).catch(() => ({ error: "没连上服务器，过一会儿自动再试", conflict: false }));
     s.running = false;
     setSaving(false);
@@ -146,7 +155,7 @@ export function JournalEditor({ initial, api }: { initial: EntryDetail; api: Jou
     setSaveError(res.error);
     if (res.conflict) setConflict(true);
     else again.current(8000);
-  }, [api, id, initial.entry.doc.decos, initial.entry.doc.strokes]);
+  }, [api, id]);
   useEffect(() => {
     again.current = (ms) => {
       const s = saver.current;
@@ -180,6 +189,12 @@ export function JournalEditor({ initial, api }: { initial: EntryDetail; api: Jou
   // 这一页的缩放：宽度跟着外面的容器，高度跟着内容
   const stage = useRef<HTMLDivElement>(null);
   const sheet = useRef<HTMLElement>(null);
+  const zoom = useRef(1);
+  const bar = useRef<HTMLDivElement>(null);
+  const hand = useHandLayer({ sheet, zoom, bar, initial: { decos: initial.entry.doc.decos, strokes: initial.entry.doc.strokes, blocks: start.blocks }, style, edited, notify: setNotice });
+  useEffect(() => {
+    latest.current = { title, day, style, mood, weather, blocks, decos: hand.decos, strokes: hand.strokes, version, conflict };
+  });
   useLayoutEffect(() => {
     const st = stage.current;
     const sh = sheet.current;
@@ -191,6 +206,7 @@ export function JournalEditor({ initial, api }: { initial: EntryDetail; api: Jou
       w = st.clientWidth;
       h = sh.offsetHeight;
       const s = w / SHEET_WIDTH;
+      zoom.current = s;
       sh.style.transform = `scale(${s})`;
       st.style.height = `${h * s}px`;
     };
@@ -276,22 +292,37 @@ export function JournalEditor({ initial, api }: { initial: EntryDetail; api: Jou
     return () => window.removeEventListener("beforeunload", warn);
   }, [dirty, uploading, recorder.status]);
 
+  /** 贴纸模式下粘贴进来的图：存进「我的贴纸」，顺手贴到页面上。 */
+  const pasteStickers = async (files: File[]) => {
+    for (const file of files) {
+      const res = await uploadSticker(api.stickers, file);
+      if ("error" in res) setNotice(res.error);
+      else hand.place("mine", { sticker: res.sticker.id });
+    }
+  };
+
   const change = (run: () => void) => {
     run();
     edited();
+  };
+
+  /** 正文的块换成 next（有的块可能没了）：挂在要没的块上的贴纸和笔画先改挂到还在的块上。 */
+  const restructure = (next: Block[]) => {
+    hand.rehome(next);
+    setBlocks(next);
   };
 
   const removeMediaBlock = async (block: Exclude<Block, { type: "text" }>, what: string) => {
     if (!window.confirm(`删掉${what}？删了找不回来。`)) return;
     const res = await api.removeMedia(block.media).catch(() => ({ error: "没连上服务器，请稍后重试" }));
     if (res.error) return setNotice(res.error);
-    setBlocks((prev) => removeBlock(prev, block.id));
+    restructure(removeBlock(latest.current.blocks, block.id));
     setMedia((prev) => Object.fromEntries(Object.entries(prev).filter(([k]) => k !== block.media)));
     edited(true);
   };
 
   const move = (blockId: string, dir: -1 | 1) => {
-    setBlocks((prev) => moveBlock(prev, blockId, dir));
+    restructure(moveBlock(latest.current.blocks, blockId, dir));
     edited();
   };
 
@@ -305,7 +336,7 @@ export function JournalEditor({ initial, api }: { initial: EntryDetail; api: Jou
     // 夹在两个文件中间的空白文字块：退格拿掉它
     if (e.key === "Backspace" && block.type === "text" && block.text === "" && index < blocks.length - 1) {
       e.preventDefault();
-      setBlocks((prev) => removeBlock(prev, block.id));
+      restructure(removeBlock(blocks, block.id));
       edited();
     }
   };
@@ -394,15 +425,20 @@ export function JournalEditor({ initial, api }: { initial: EntryDetail; api: Jou
             ref={sheet}
             className="jn-sheet"
             data-style={style}
+            data-mode={hand.mode}
             suppressHydrationWarning
             onPaste={(e) => {
               const images = Array.from(e.clipboardData.files).filter((f) => f.type.startsWith("image/"));
               if (images.length === 0) return;
               e.preventDefault();
-              void addFiles(images);
+              // 写字时粘贴的图是照片；贴纸模式下粘贴的图（比如相册里抠出来的主体）是贴纸
+              void (hand.mode === "deco" ? pasteStickers(images) : addFiles(images));
+            }}
+            onPointerDown={(e) => {
+              if (hand.mode === "deco" && !(e.target as Element).closest(".jn-deco")) hand.deselect();
             }}
           >
-            <header className="jn-head">
+            <header className="jn-head" data-block={HEAD}>
               <div className="jn-date">{dayLabel(day, style)}</div>
               <Grow
                 className="jn-title"
@@ -446,22 +482,25 @@ export function JournalEditor({ initial, api }: { initial: EntryDetail; api: Jou
                   })}
                 </div>
               )}
+              {hand.hung(HEAD)}
             </header>
 
             {blocks.map((block, index) => {
               if (block.type === "text") {
                 return (
-                  <Grow
-                    key={block.id}
-                    className="jn-blk jn-text"
-                    value={block.text}
-                    maxLength={JOURNAL_MAX.text}
-                    aria-label="正文"
-                    placeholder={index === blocks.length - 1 ? (blocks.length === 1 ? "今天发生了什么…" : "接着写…") : ""}
-                    onFocus={() => (focused.current = block.id)}
-                    onKeyDown={(e) => onTextKey(e, block, index)}
-                    onChange={(v) => change(() => setBlocks((prev) => patchBlock(prev, block.id, { text: v })))}
-                  />
+                  <div key={block.id} className="jn-blk" data-block={block.id}>
+                    <Grow
+                      className="jn-text"
+                      value={block.text}
+                      maxLength={JOURNAL_MAX.text}
+                      aria-label="正文"
+                      placeholder={index === blocks.length - 1 ? (blocks.length === 1 ? "今天发生了什么…" : "接着写…") : ""}
+                      onFocus={() => (focused.current = block.id)}
+                      onKeyDown={(e) => onTextKey(e, block, index)}
+                      onChange={(v) => change(() => setBlocks((prev) => patchBlock(prev, block.id, { text: v })))}
+                    />
+                    {hand.hung(block.id)}
+                  </div>
                 );
               }
               const m = media[block.media];
@@ -470,7 +509,7 @@ export function JournalEditor({ initial, api }: { initial: EntryDetail; api: Jou
               if (block.type === "photo") {
                 const src = lf?.preview ?? (m && m.status === "ready" ? m.url : null);
                 return (
-                  <div key={block.id} className="jn-blk jn-media" onFocus={() => (focused.current = block.id)}>
+                  <div key={block.id} className="jn-blk jn-media" data-block={block.id} onFocus={() => (focused.current = block.id)}>
                     <figure className="jn-photo">
                       <div className="jn-photo-img" data-dim={st !== null}>
                         {src ? (
@@ -491,13 +530,14 @@ export function JournalEditor({ initial, api }: { initial: EntryDetail; api: Jou
                       </figcaption>
                     </figure>
                     {tools(block, "这张照片")}
+                    {hand.hung(block.id)}
                   </div>
                 );
               }
               // 服务器转好了就用服务器那份（能拖进度）；还没好先放浏览器手里刚录的
               const src = m?.status === "ready" || !lf ? (m && m.status !== "uploading" ? m.url : null) : lf.preview;
               return (
-                <div key={block.id} className="jn-blk jn-media" onFocus={() => (focused.current = block.id)}>
+                <div key={block.id} className="jn-blk jn-media" data-block={block.id} onFocus={() => (focused.current = block.id)}>
                   <div className="jn-audio">
                     {src && <AudioPlayer key={src} src={src} durationS={m?.durationS ?? null} cues={m?.cues ?? []} />}
                     {st && (
@@ -519,7 +559,7 @@ export function JournalEditor({ initial, api }: { initial: EntryDetail; api: Jou
                             type="button"
                             className="jn-chip"
                             onClick={() => {
-                              setBlocks((prev) => insertAfter(prev, block.id, { id: newBlockId(), type: "text", text: cuesText(m.cues) }));
+                              restructure(insertAfter(blocks, block.id, { id: newBlockId(), type: "text", text: cuesText(m.cues) }));
                               edited();
                             }}
                           >
@@ -535,9 +575,11 @@ export function JournalEditor({ initial, api }: { initial: EntryDetail; api: Jou
                     )}
                   </div>
                   {tools(block, "这段录音")}
+                  {hand.hung(block.id)}
                 </div>
               );
             })}
+            {hand.inkLayer}
           </article>
         </div>
         <FitScript />
@@ -554,9 +596,9 @@ export function JournalEditor({ initial, api }: { initial: EntryDetail; api: Jou
         </p>
       )}
 
-      <div className="panel sticky bottom-3 z-10 flex flex-wrap items-center gap-2 px-2.5 py-2 shadow-lg">
+      <div ref={bar} className="panel sticky bottom-3 z-10 flex flex-col gap-2 px-2.5 py-2 shadow-lg">
         {recorder.status === "recording" ? (
-          <>
+          <div className="flex flex-wrap items-center gap-2">
             <span className="flex items-center gap-2 px-1.5 text-sm tabular-nums" role="status">
               <span className="size-2.5 animate-pulse rounded-full bg-danger" aria-hidden />
               正在录 {clock(recorder.seconds)}
@@ -568,43 +610,57 @@ export function JournalEditor({ initial, api }: { initial: EntryDetail; api: Jou
             <button type="button" className="btn btn-quiet" onClick={recorder.cancel}>
               不要了
             </button>
-          </>
+          </div>
         ) : (
           <>
-            <label className={`btn ${conflict ? "pointer-events-none opacity-50" : ""}`}>
-              <ImagePlus size={15} aria-hidden />
-              照片
-              <input
-                type="file"
-                accept="image/*"
-                multiple
-                className="sr-only"
-                disabled={conflict}
-                onChange={(e) => {
-                  void addFiles(Array.from(e.target.files ?? []));
-                  e.target.value = "";
-                }}
-              />
-            </label>
-            <button type="button" className="btn" onClick={recorder.start} disabled={conflict || recorder.status === "starting"}>
-              <Mic size={15} aria-hidden />
-              {recorder.status === "starting" ? "等麦克风…" : "录音"}
-            </button>
-            <label className={`btn ${conflict ? "pointer-events-none opacity-50" : ""}`} title="传一个已经录好的音频文件">
-              <AudioLines size={15} aria-hidden />
-              音频文件
-              <input
-                type="file"
-                accept="audio/*,.m4a,.mp3,.wav,.aac,.ogg,.opus,.flac,.amr"
-                className="sr-only"
-                disabled={conflict}
-                onChange={(e) => {
-                  void addFiles(Array.from(e.target.files ?? []));
-                  e.target.value = "";
-                }}
-              />
-            </label>
-            {preparing > 0 && <span className="text-xs text-ink-muted">准备中…</span>}
+            <div className="flex gap-1.5" role="group" aria-label="现在做什么">
+              {MODES.map(({ id: m, label, Icon }) => (
+                <button key={m} type="button" aria-pressed={hand.mode === m} onClick={() => hand.setMode(m)} className={`chip h-8 flex-1 cursor-pointer justify-center ${hand.mode === m ? "chip-on" : ""}`}>
+                  <Icon size={14} aria-hidden />
+                  {label}
+                </button>
+              ))}
+            </div>
+            {hand.mode === "write" && (
+              <div className="flex flex-wrap items-center gap-2">
+              <label className={`btn ${conflict ? "pointer-events-none opacity-50" : ""}`}>
+                <ImagePlus size={15} aria-hidden />
+                照片
+                <input
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  className="sr-only"
+                  disabled={conflict}
+                  onChange={(e) => {
+                    void addFiles(Array.from(e.target.files ?? []));
+                    e.target.value = "";
+                  }}
+                />
+              </label>
+              <button type="button" className="btn" onClick={recorder.start} disabled={conflict || recorder.status === "starting"}>
+                <Mic size={15} aria-hidden />
+                {recorder.status === "starting" ? "等麦克风…" : "录音"}
+              </button>
+              <label className={`btn ${conflict ? "pointer-events-none opacity-50" : ""}`} title="传一个已经录好的音频文件">
+                <AudioLines size={15} aria-hidden />
+                音频文件
+                <input
+                  type="file"
+                  accept="audio/*,.m4a,.mp3,.wav,.aac,.ogg,.opus,.flac,.amr"
+                  className="sr-only"
+                  disabled={conflict}
+                  onChange={(e) => {
+                    void addFiles(Array.from(e.target.files ?? []));
+                    e.target.value = "";
+                  }}
+                />
+              </label>
+              {preparing > 0 && <span className="text-xs text-ink-muted">准备中…</span>}
+              </div>
+            )}
+            {hand.mode === "deco" && <DecoPanel style={style} selected={hand.selected} onAdd={hand.place} onPatch={hand.patchSelected} onRemove={hand.removeSelected} onRaise={hand.raiseSelected} onDone={hand.deselect} stickers={api.stickers} onNotice={setNotice} />}
+            {hand.mode === "draw" && <DrawPanel style={style} pen={hand.pen} onPen={hand.setPen} canUndo={hand.strokes.length > 0} onUndo={hand.undo} />}
           </>
         )}
       </div>
