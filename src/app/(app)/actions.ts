@@ -2,7 +2,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireSession } from "@/lib/auth/user";
-import { removeItem, reprocess, saveInput, savePage, VaultError } from "@/lib/vault/service";
+import { removeItem, reprocess, saveInput, savePage, startTrace, VaultError } from "@/lib/vault/service";
 import { updateItemMeta } from "@/lib/vault/store";
 import { parseTagInput } from "@/lib/vault/taxonomy";
 
@@ -53,6 +53,19 @@ export async function reprocessAction(_prev: ActionState, formData: FormData): P
   const id = String(formData.get("id") ?? "");
   try {
     await reprocess(session, id, formData.get("from") === "fetch" ? "fetch" : "analyze", { userText: String(formData.get("text") ?? "") || undefined });
+  } catch (e) {
+    return fail(e);
+  }
+  revalidatePath(`/items/${id}`);
+  return { error: null };
+}
+
+/** 开始溯源（后台做；页面刷新后显示「正在溯源」，查完自己换成结果）。 */
+export async function traceAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  const session = await requireSession();
+  const id = String(formData.get("id") ?? "");
+  try {
+    await startTrace(session, id);
   } catch (e) {
     return fail(e);
   }

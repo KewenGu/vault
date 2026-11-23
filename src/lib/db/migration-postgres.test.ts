@@ -119,6 +119,34 @@ describe.skipIf(!pg)("migrations — isolated PostgreSQL", () => {
     expect(query(`begin; set local role service_role; select count(*) from maps where user_id = '${bob}'; commit;`)).toBe("1");
   });
 
+  it("traces are private to their owner, cannot be attached to someone else's item, and go away with the item", () => {
+    item(alice, "a1");
+    item(bob, "b1");
+    const mine = query(`select id from items where dedupe_key = 'a1'`);
+    const theirs = query(`select id from items where dedupe_key = 'b1'`);
+    query(`insert into item_traces (item_id, user_id, status, result) values ('${mine}', '${alice}', 'ready', '{"overview":"alice 的"}'), ('${theirs}', '${bob}', 'ready', '{"overview":"bob 的"}')`);
+    expect(as(alice, "select string_agg(result->>'overview', ',') from item_traces")).toBe("alice 的");
+    expect(as(bob, "select string_agg(result->>'overview', ',') from item_traces")).toBe("bob 的");
+    // 改 / 删别人的：行级安全让它一行都碰不到
+    expect(as(alice, `update item_traces set status = 'failed' where user_id = '${bob}' returning item_id`)).toBe("");
+    expect(as(alice, `delete from item_traces where user_id = '${bob}' returning item_id`)).toBe("");
+    expect(query(`select status from item_traces where user_id = '${bob}'`)).toBe("ready");
+    // 不能替别人写，也不能给别人的内容建一行（外键带着 user_id）
+    query(`delete from item_traces where item_id = '${theirs}'`);
+    expect(() => as(alice, `insert into item_traces (item_id, user_id) values ('${theirs}', '${bob}')`)).toThrow(/row-level security/);
+    expect(() => as(alice, `insert into item_traces (item_id) values ('${theirs}')`)).toThrow(/foreign key/);
+    // 一条内容只有一行；默认是自己的、正在查
+    expect(() => as(alice, `insert into item_traces (item_id) values ('${mine}')`)).toThrow(/duplicate key/);
+    expect(() => query(`update item_traces set status = 'done' where item_id = '${mine}'`)).toThrow(/item_traces_status_check/);
+    as(bob, `insert into item_traces (item_id) values ('${theirs}')`);
+    expect(query(`select user_id || ' ' || status || ' ' || usage::text || ' ' || cost_usd from item_traces where item_id = '${theirs}'`)).toBe(`${bob} running {} 0.000000`);
+    // 后台（service_role）读得到、写得了，代码里自己带 user_id
+    expect(query(`begin; set local role service_role; update item_traces set status = 'ready' where item_id = '${theirs}' and user_id = '${bob}' returning status; commit;`)).toBe("ready");
+    // 内容删了，溯源结果跟着删
+    as(alice, `delete from items where id = '${mine}'`);
+    expect(query(`select count(*) from item_traces where user_id = '${alice}'`)).toBe("0");
+  });
+
   it("journal entries and their files are private to their owner", () => {
     const [mine, theirs] = query(`insert into journal_entries (user_id, day, title) values ('${alice}', '2026-11-21', 'alice 的日记'), ('${bob}', '2026-11-21', 'bob 的日记') returning id`).split("\n");
     query(`insert into journal_media (user_id, entry_id, kind, path) values ('${alice}', '${mine}', 'audio', 'a/1.m4a'), ('${bob}', '${theirs}', 'image', 'b/1.jpg')`);

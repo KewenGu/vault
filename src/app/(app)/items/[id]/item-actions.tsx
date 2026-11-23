@@ -1,5 +1,5 @@
 "use client";
-import { deleteAction, reprocessAction, updateMetaAction } from "@/app/(app)/actions";
+import { deleteAction, reprocessAction, saveAction, traceAction, updateMetaAction } from "@/app/(app)/actions";
 import { createMapFromItemAction } from "@/app/(app)/maps/actions";
 import { ActionForm } from "@/components/action-form";
 
@@ -92,6 +92,40 @@ export function MakeMapButton({ id }: { id: string }) {
           <input type="hidden" name="itemId" value={id} />
           <button className="btn" disabled={pending} title="新建一张自己的思维导图，从这条内容开始：可以自己改，也可以跟 AI 说话让它帮着改">
             {pending ? "新建中…" : "做成导图"}
+          </button>
+        </>
+      )}
+    </ActionForm>
+  );
+}
+
+/** 溯源：找这条内容引用的东西的第一手出处（后台做，页面自己刷新）。溯源过的再点是重新查一遍。 */
+export function TraceButton({ id, label, quiet = false }: { id: string; label: string; quiet?: boolean }) {
+  return (
+    <ActionForm action={traceAction}>
+      {(pending) => (
+        <>
+          <input type="hidden" name="id" value={id} />
+          <button className={quiet ? "btn btn-quiet h-7 px-2 text-xs" : "btn"} disabled={pending} title="联网去找这条内容引用的论文、文章、代码库、公告的原始出处，读原文核对。要一两分钟，按用量计费">
+            {pending ? "开始中…" : label}
+          </button>
+        </>
+      )}
+    </ActionForm>
+  );
+}
+
+/** 把溯源找到的出处也存进收藏库（存好后打开那一条；存过的直接打开）。 */
+export function SaveSourceButton({ url, note }: { url: string; note: string }) {
+  return (
+    <ActionForm action={saveAction}>
+      {(pending) => (
+        <>
+          <input type="hidden" name="input" value={url} />
+          <input type="hidden" name="note" value={note} />
+          <input type="hidden" name="then" value="open" />
+          <button className="btn btn-quiet h-7 px-2 text-xs" disabled={pending} title="把这个出处作为一条新的内容存进收藏库">
+            {pending ? "存入中…" : "把原文也存进来"}
           </button>
         </>
       )}

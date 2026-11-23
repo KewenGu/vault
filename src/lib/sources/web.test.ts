@@ -4,7 +4,7 @@ import { SourceFetchError } from "./types";
 
 vi.mock("./ytdlp", async (orig) => ({ ...(await orig<object>()), ytdlpInfo: vi.fn() }));
 
-import { JINA_COUNT_KEY, WEIXIN_BLOCKED, cleanMarkdown, dropPreamble, fetchWebPage, looksLikeLoginWall, looksLikeVerifyWall, mapCapture, mapJinaData, mapPage, parseHtmlPage, readPage, usableImage, type PageRead } from "./web";
+import { JINA_COUNT_KEY, WEIXIN_BLOCKED, cleanMarkdown, dropPreamble, fetchWebPage, looksLikeLoginWall, looksLikeVerifyWall, mapCapture, mapJinaData, mapPage, markdownLinks, outboundLinks, parseHtmlPage, readPage, usableImage, type PageRead } from "./web";
 import { ytdlpInfo } from "./ytdlp";
 
 const body = "这是一篇讲怎么做内容的长文。".repeat(20);
@@ -63,6 +63,7 @@ describe("收藏夹：读网页", () => {
       author: "Simon Willison",
       site: "Simon Willison’s Weblog",
       publishedAt: "2024-12-31T18:07:00.000Z",
+      links: [{ text: "这篇文章", url: "https://example.com/other" }],
       via: "jina",
     });
     expect(mapJinaData(jinaData({ metadata: { author: "https://facebook.com/someone" } }), ref.url)).toMatchObject({ author: "", publishedAt: null, cover: null });
@@ -88,6 +89,7 @@ describe("收藏夹：读网页", () => {
       author: "张三",
       site: "某站",
       publishedAt: "2026-09-01T00:00:00.000Z",
+      links: [],
       via: "direct",
     });
     // 没有 article / main：取 body；没有 og:title 用 <title>；发布时间认 JSON-LD
@@ -249,3 +251,39 @@ vi.mock("@/lib/network/public-fetch", async (original) => ({
   ...await original<typeof import("@/lib/network/public-fetch")>(),
   publicFetch: (url: string, options: import("@/lib/network/public-fetch").PublicFetchOptions = {}) => fetch(url, { headers: options.headers, method: options.method, redirect: options.redirect, signal: options.signal ?? AbortSignal.timeout(options.timeoutMs ?? 20_000) }),
 }));
+
+describe("正文里的链接（溯源用）", () => {
+  const page = "https://blog.example.com/posts/fast-attention";
+
+  it("Markdown 正文换成纯文字之前把外链收下来：同站的、图片的、分享按钮的不算，去重", () => {
+    const md = [
+      "[首页](/) · [关于](https://www.blog.example.com/about)",
+      "![题图](https://cdn.example.net/cover.png)",
+      "据 [**FlashAttention-9**](https://arxiv.org/abs/2611.01234#abstract \"论文\") 的结果，代码在 [https://github.com/acme/flash9](https://github.com/acme/flash9)。",
+      "又见[这篇论文](https://arxiv.org/abs/2611.01234)。[分享到 X](https://twitter.com/intent/tweet?url=x) [邮件](mailto:a@example.com)",
+    ].join("\n");
+    expect(markdownLinks(md, page)).toEqual([
+      { text: "FlashAttention-9", url: "https://arxiv.org/abs/2611.01234" },
+      { text: "", url: "https://github.com/acme/flash9" },
+    ]);
+    // 正文照旧是纯文字
+    expect(cleanMarkdown(md)).not.toContain("arxiv.org");
+  });
+
+  it("Jina 读到的网页带着链接；并成帖子时留着", () => {
+    const read = mapJinaData({ title: "T", content: "正文见 [原文](https://openai.com/index/x)。" + "字".repeat(300) }, page)!;
+    expect(read.links).toEqual([{ text: "原文", url: "https://openai.com/index/x" }]);
+    expect(mapPage(read, { platform: "web", externalId: "e", url: page }).links).toEqual([{ text: "原文", url: "https://openai.com/index/x" }]);
+  });
+
+  it("自己抓的 HTML 也收正文区域里的外链（导航、页脚里的不收）", () => {
+    const html = `<html><body><nav><a href="https://other.example/nav">导航</a></nav><article><p>据 <a class="x" href="https://arxiv.org/abs/2611.01234"><b>论文</b></a> 和 <a href="/local">站内</a>。</p></article></body></html>`;
+    expect(parseHtmlPage(html, page).links).toEqual([{ text: "论文", url: "https://arxiv.org/abs/2611.01234" }]);
+  });
+
+  it("最多留 80 条；页面地址不对时不收", () => {
+    const many = Array.from({ length: 100 }, (_, i) => ({ text: `l${i}`, url: `https://ref${i}.example/` }));
+    expect(outboundLinks(many, page)).toHaveLength(80);
+    expect(outboundLinks(many, "不是地址")).toEqual([]);
+  });
+});

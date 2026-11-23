@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { fallbackTitle, formatCount, hashtagsIn, statLabel, titleFromText, toCount } from "./types";
+import { fallbackTitle, formatCount, hashtagsIn, readPost, statLabel, titleFromText, toCount } from "./types";
 
 describe("收藏夹：共用的小工具", () => {
   it("互动数在各平台的叫法：X 是书签 / 回复 / 浏览，YouTube 是观看，其余是播放 / 收藏 / 评论", () => {
@@ -48,5 +48,13 @@ describe("收藏夹：共用的小工具", () => {
   it("正文里的 #话题：去重、按出现顺序；网址里的 # 和 &#39; 这类不算", () => {
     expect(hashtagsIn("#AI工具 讲 #deep_learning，再说一次 #AI工具 https://a.com/p#section it&#39;s")).toEqual(["AI工具", "deep_learning"]);
     expect(hashtagsIn("没有话题")).toEqual([]);
+  });
+
+  it("库里读出来的帖子：正文里的链接只留 http(s) 的；以前存的没有这一项，读出来是空", () => {
+    expect(readPost({ text: "x" }).links).toEqual([]);
+    expect(readPost({ links: [{ text: "论文", url: "https://arxiv.org/abs/1" }, { url: "https://b.example/" }, { text: "坏的", url: "javascript:alert(1)" }, null, "x"] }).links).toEqual([
+      { text: "论文", url: "https://arxiv.org/abs/1" },
+      { text: "", url: "https://b.example/" },
+    ]);
   });
 });

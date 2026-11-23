@@ -55,6 +55,19 @@ type EntityRow = {
 type ItemEntityRow = { item_id: string; entity_id: string; user_id: string; about: string };
 type EntityEdgeRow = { item_id: string; src_id: string; dst_id: string; relation: string; user_id: string };
 
+type ItemTraceRow = {
+  item_id: string;
+  user_id: string;
+  status: string;
+  error: string | null;
+  result: Json | null;
+  usage: Json;
+  cost_usd: number;
+  started_at: string;
+  created_at: string;
+  updated_at: string;
+};
+
 type MapRow = {
   id: string;
   user_id: string;
@@ -132,6 +145,7 @@ export type Database = {
       entities: Table<EntityRow, "user_id" | "type" | "name">;
       item_entities: Table<ItemEntityRow, "item_id" | "entity_id" | "user_id">;
       entity_edges: Table<EntityEdgeRow, "item_id" | "src_id" | "dst_id" | "relation" | "user_id">;
+      item_traces: Table<ItemTraceRow, "item_id" | "user_id">;
       maps: Table<MapRow, "user_id">;
       journal_entries: Table<JournalEntryRow, "user_id" | "day">;
       journal_media: Table<JournalMediaRow, "user_id" | "entry_id" | "kind" | "path">;
@@ -170,6 +184,7 @@ export type Database = {
 
 export type ItemRecord = ItemRow;
 export type EntityRecord = EntityRow;
+export type ItemTraceRecord = ItemTraceRow;
 export type MapRecord = MapRow;
 export type JournalEntryRecord = JournalEntryRow;
 export type JournalMediaRecord = JournalMediaRow;

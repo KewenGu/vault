@@ -105,6 +105,7 @@ const emptyPost = (patch: Partial<PostSnapshot> = {}): PostSnapshot => ({
   digestNotes: [],
   transcriptFrom: null,
   cuts: [],
+  links: [],
   ...patch,
 });
 
@@ -275,6 +276,7 @@ async function fetchLink(db: Db, item: Item, counts: Counts): Promise<boolean> {
     digestNotes,
     transcriptFrom: post.captions ? "captions" : transcript ? "asr" : null,
     cuts,
+    links: post.links ?? [],
     ...(capture ? { capture } : {}),
   });
   const { error } = await db
