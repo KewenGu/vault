@@ -15,7 +15,7 @@ const OTHER = "22222222-2222-4222-8222-222222222222";
 const ITEM = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1";
 const STARTED = "2026-11-23T08:00:00.000Z";
 
-const result = (overview: string): TraceResult => ({ origin: "secondary", overview, sources: [], notes: [], searches: 2, fetches: 1, model: "claude-opus-5-5", at: "2026-11-23T08:01:00.000Z" });
+const result = (overview: string): TraceResult => ({ origin: "secondary", overview, sources: [], notes: [], searches: 2, fetches: 1, extraReads: [], model: "claude-opus-5-5", at: "2026-11-23T08:01:00.000Z" });
 const row = () => fake.store.item_traces[0];
 
 function seed(trace: Record<string, unknown> = {}) {

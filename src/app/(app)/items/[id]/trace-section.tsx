@@ -152,6 +152,21 @@ export function TraceSection({
             {trace && trace.costUsd > 0 && <span>溯源一共花了约 ${trace.costUsd.toFixed(3)}</span>}
             {!running && !failed && <TraceButton id={itemId} label="重新溯源" quiet />}
           </div>
+          {result.extraReads.length > 0 && (
+            <details className="text-xs text-ink-faint">
+              <summary className="cursor-pointer hover:text-ink">另外还打开过 {result.extraReads.length} 个网页，没有列为出处</summary>
+              <ul className="mt-2 flex flex-col gap-1">
+                {result.extraReads.map((r) => (
+                  <li key={r.url} className="truncate">
+                    <a href={r.url} target="_blank" rel="noreferrer noopener" className="hover:underline">
+                      {r.title ? `${r.title} · ` : ""}
+                      {r.url}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
           <p className="text-xs leading-relaxed text-ink-faint">结论是模型读了之后写的，可能有错；每个地址下面写着它这次有没有真的打开过。要紧的点开原文自己看一眼。出处会变（论文出新版、网页改了），这里只是查的那一天的样子。</p>
         </>
       )}
