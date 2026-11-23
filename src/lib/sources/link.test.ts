@@ -29,6 +29,12 @@ describe("收藏夹：链接识别", () => {
     expect(platformOfHost("m.youtube.com")).toBe("youtube");
     expect(platformOfHost("twitter.com")).toBe("x");
     expect(platformOfHost("fxtwitter.com")).toBe("x");
+    expect(platformOfHost("old.reddit.com")).toBe("reddit");
+    expect(platformOfHost("redd.it")).toBe("reddit");
+    // 图片和视频文件的地址不是帖子：当网页
+    expect(platformOfHost("i.redd.it")).toBeNull();
+    expect(platformOfHost("v.redd.it")).toBeNull();
+    expect(platformOfHost("notreddit.com")).toBeNull();
     expect(platformOfHost("xiaohongshu.com.evil.io")).toBeNull();
     expect(platformOfHost("notdouyin.com")).toBeNull();
     // 结尾碰巧是 x.com 的别的站
@@ -123,6 +129,22 @@ describe("收藏夹：链接识别", () => {
     expect(parseLink("https://x.com/i/status/1")).toBeNull();
   });
 
+  it("Reddit：各种写法都认成同一条帖子（带评论的链接、旧版、图集、短链），版块主页认不出", () => {
+    const want = { platform: "reddit", externalId: "1xv8a46", url: "https://www.reddit.com/comments/1xv8a46" };
+    expect(parseLink("https://www.reddit.com/r/Cooking/comments/1xv8a46/vegetable_side_to_bring_to_pot_luck_host_is/?utm_source=share&utm_medium=web3x")).toEqual(want);
+    expect(parseLink("https://old.reddit.com/r/Cooking/comments/1xv8a46/vegetable_side/19skrorl2z2w5/")).toEqual(want);
+    expect(parseLink("https://reddit.com/comments/1XV8A46")).toEqual(want);
+    expect(parseLink("https://www.reddit.com/gallery/1xv8a46")).toEqual(want);
+    expect(parseLink("https://redd.it/1xv8a46")).toEqual(want);
+    expect(parseLink("https://www.reddit.com/user/someone/comments/1xv8a46/my_post/")).toEqual(want);
+    expect(parseLink("https://www.reddit.com/r/Cooking/")).toBeNull();
+    expect(parseLink("https://www.reddit.com/r/Cooking/s/AbCdEf1234")).toBeNull();
+    expect(parseLink("https://www.reddit.com/user/someone")).toBeNull();
+    // 图片文件的地址：当网页
+    expect(parseLink("https://i.redd.it/wa8316usae1i1.jpeg")?.platform).toBe("web");
+    expect(extractShareUrl("看这个 reddit.com/r/Cooking/comments/1xv8a46/x 不错")).toBe("https://reddit.com/r/Cooking/comments/1xv8a46/x");
+  });
+
   it("微信公众号文章：长链接只留认文章的四个参数，短链接不要参数，分享场合不同也是同一条", () => {
     const long = parseLink("https://mp.weixin.qq.com/s?__biz=MzA5&mid=2650&idx=1&sn=abc123&chksm=8b3e&scene=21&sharer_shareid=9#wechat_redirect");
     expect(long).toMatchObject({ platform: "web", url: "https://mp.weixin.qq.com/s?__biz=MzA5&mid=2650&idx=1&sn=abc123" });
@@ -159,6 +181,11 @@ describe("收藏夹：链接识别", () => {
     await expect(resolveLink("https://www.youtube.com/@3blue1brown", none)).rejects.toThrow(/没认出这是哪个视频：贴视频页面的链接/);
     await expect(resolveLink("https://x.com/someone", none)).rejects.toThrow(/没认出这是哪条帖子/);
     await expect(resolveLink("https://www.instagram.com/instagram/", none)).rejects.toThrow(/主页和快拍读不了/);
+    // Reddit App 里「复制链接」给的是 /r/<版块>/s/<码>：跟一次跳转
+    const reddit = vi.fn<(service: string, url: string, init?: RequestInit) => Promise<Response>>(async () => redirectTo("https://www.reddit.com/r/Cooking/comments/1xv8a46/vegetable_side/?share_id=abc&utm_name=ioscss"));
+    expect(await resolveLink("https://www.reddit.com/r/Cooking/s/AbCdEf1234", reddit)).toEqual({ platform: "reddit", externalId: "1xv8a46", url: "https://www.reddit.com/comments/1xv8a46" });
+    expect(reddit.mock.calls[0][0]).toBe("Reddit短链");
+    await expect(resolveLink("https://www.reddit.com/r/Cooking/", none)).rejects.toThrow(/没认出这是哪个帖子.*版块主页、用户主页读不了/);
   });
 
   it("不是链接：报给用户看的错", async () => {

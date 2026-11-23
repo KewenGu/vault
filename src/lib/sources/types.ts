@@ -1,13 +1,13 @@
 /**
- * 链接来源：把分享链接读成一条帖子。认小红书、抖音、TikTok、Instagram、YouTube、X；其余链接一律按「网页」读
- * （博文、新闻、商品页、Reddit 帖子，本机装了 yt-dlp 时还有别的视频站）。
+ * 链接来源：把分享链接读成一条帖子。认小红书、抖音、TikTok、Instagram、YouTube、X、Reddit；其余链接一律按「网页」读
+ * （博文、新闻、商品页，本机装了 yt-dlp 时还有别的视频站）。
  * 这里是各层共用的形状：抓到的帖子（FetchedPost）、存进库里的快照（PostSnapshot）、转存的文件（ItemMedia）。
  * 读取器（xhs.ts、douyin.ts…）最初来自 SM-Intelligence 的收藏夹，那边修了平台改版的问题要同步过来。
  */
 
 import { readCapture, type PageCapture } from "@/lib/vault/page-capture";
 
-export const SOURCE_PLATFORMS = ["xiaohongshu", "douyin", "tiktok", "instagram", "youtube", "x", "web"] as const;
+export const SOURCE_PLATFORMS = ["xiaohongshu", "douyin", "tiktok", "instagram", "youtube", "x", "reddit", "web"] as const;
 export type SourcePlatform = (typeof SOURCE_PLATFORMS)[number];
 export const SOURCE_PLATFORM_LABEL: Record<SourcePlatform, string> = {
   xiaohongshu: "小红书",
@@ -16,6 +16,7 @@ export const SOURCE_PLATFORM_LABEL: Record<SourcePlatform, string> = {
   instagram: "Instagram",
   youtube: "YouTube",
   x: "X",
+  reddit: "Reddit",
   web: "网页",
 };
 
@@ -80,8 +81,11 @@ export type FetchedPost = {
   topComments: { text: string; likes: number | null }[];
   /** 图文的每一张图；视频是封面（可能有几个候选地址，按顺序试）；文章是题图和配图 */
   images: RemoteFile[];
-  /** via = "ytdlp"：没有能直接下的地址，url 是视频页面，要用本机的 yt-dlp 下（见 ytdlp.ts） */
-  video: (RemoteFile & { durationS: number | null; via?: "ytdlp" }) | null;
+  /**
+   * via = "ytdlp"：没有能直接下的地址，url 是视频页面，要用本机的 yt-dlp 下（见 ytdlp.ts）。
+   * audio：声音在另一个文件里（Reddit：画面和声音分开放），下载之后要合进视频（见 lib/media/mux.ts）
+   */
+  video: (RemoteFile & { durationS: number | null; via?: "ytdlp"; audio?: RemoteFile }) | null;
   /** 没拿到视频本体、但知道时长时填（YouTube 走 Apify 那条路）；有 video 时以 video.durationS 为准 */
   durationS?: number | null;
   /** 背景音乐（抖音、TikTok、Instagram） */
