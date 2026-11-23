@@ -21,8 +21,13 @@ import type { OutputLanguage } from "./understand";
  */
 
 export const TRACE_MAX = { sources: 10, notes: 12 } as const;
-/** 一次溯源最多搜几次、读几个网页（每个网页最多放 12,000 token 进上下文）：管的是花费和等多久 */
-export const TRACE_BUDGET = { searches: 10, fetches: 8, fetchTokens: 12_000 } as const satisfies WebBudget;
+/**
+ * 一次溯源最多搜几次、读几个网页（每个网页最多放 12,000 token 进上下文）：管的是花费和等多久。
+ * 要够把 TRACE_MAX.sources 样东西各查一遍：读 = 每样的原文一个 + 找链接的转述（TRACE_LEAD_READS）+ 几个余量
+ * （打不开的也算次数；有的出处要读两页，比如仓库的 README 和里面的一个文件）；搜也一样，第一手的不一定一次搜得到。
+ * 2026-11-23 第一版是搜 10 次、读 8 个：连每样东西读一个原文都不够。
+ */
+export const TRACE_BUDGET = { searches: 15, fetches: 16, fetchTokens: 12_000 } as const satisfies WebBudget;
 /** 给模型看的正文 / 口播最多这么多字；超了只带开头，记进 notes */
 export const TRACE_BODY_MAX = 40_000;
 export const TRACE_TRANSCRIPT_MAX = 60_000;
