@@ -40,8 +40,12 @@ export const ASR_COUNT_KEY = "asr_flash_sec";
 export const ASR2_COUNT_KEY = "asr_seed2_sec";
 export const OPENAI_ASR_COUNT_KEY = "asr_openai_sec";
 
+/** Claude 的联网搜索：$10 / 1000 次，搜出来的内容另按 token 算；读网页（web fetch）不另收费（2026-11-23 核对） */
+export const CLAUDE_WEB_SEARCH_KEY = "claude_web_search";
+
 /** 按次 / 按秒计价的调用（美元）。键就是 recordCall 用的计数键。 */
 export const UNIT_USD: Record<string, number> = {
+  [CLAUDE_WEB_SEARCH_KEY]: 0.01,
   jina_fetch: 0.0005,
   apify_douyin_post: 0.01,
   apify_instagram_post: 0.003,

@@ -5,11 +5,14 @@ import { removeLocalItemFiles } from "@/lib/media/local-store";
 import { LinkError, resolveLink } from "@/lib/sources/link";
 import { getServiceClient } from "@/lib/supabase/service";
 import { processItem } from "@/workflows/process-item";
+import { traceItem } from "@/workflows/trace-item";
 import { VaultError } from "./errors";
 import { captureFields, classifyCapture, fileDedupeKey, planUpload, textDedupeKey, titleFromFilename, uploadPath, uploadedMedia } from "./capture";
 import { readPost } from "@/lib/sources/types";
 import { readCapture } from "./page-capture";
 import { BUCKET, TEXT_MAX, createItem, deleteItem, getItem, inProgress, itemDir, linkDedupeKey, restartItem } from "./store";
+import { hasTraceMaterial } from "./trace";
+import { beginTrace, endTrace, getTrace, traceRunning, type ItemTrace } from "./trace-store";
 
 /**
  * 存进来 / 重新处理 / 删除：页面的 server action 和 /api/v1 的接口都调这里（以后的手机 App 走接口，行为和网页一样）。
@@ -162,4 +165,39 @@ export async function removeItem(session: Session, id: string): Promise<void> {
     if (e instanceof Error && e.message.includes("不在了")) throw new VaultError(e.message, 404);
     throw e;
   }
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** 这条内容的溯源结果（还没溯源过是 null）。 */
+export async function getItemTrace(session: Session, id: string): Promise<ItemTrace | null> {
+  return UUID.test(id) ? getTrace(session.db, session.user.id, id) : null;
+}
+
+/**
+ * 溯源：找这条内容引用的东西的第一手出处、读原文核对（lib/vault/trace.ts）。要联网搜、读网页，放到后台做
+ * （workflows/trace-item.ts），这里只是开始；页面 / 客户端隔几秒读一次 getItemTrace 看结果。
+ * 用户点了才做（每次都要花搜索和 token 的钱）；溯源过的再点就是重新查一遍，换掉上次的结果。
+ */
+export async function startTrace(session: Session, id: string): Promise<ItemTrace> {
+  const { user, db } = session;
+  const item = UUID.test(id) ? await getItem(db, user.id, id) : null;
+  if (!item) throw new VaultError("这条内容不在了", 404);
+  if (item.status !== "ready" || !item.understanding) throw new VaultError("这条内容还没处理好，处理完再溯源", 409);
+  if (!hasTraceMaterial(item)) throw new VaultError("这条内容里没有能拿去核对出处的文字（没有正文、口播，图上也没有字）");
+  if (!process.env.ANTHROPIC_API_KEY) throw new VaultError("没配 ANTHROPIC_API_KEY，没法溯源", 503);
+  const had = await getTrace(db, user.id, id);
+  if (had && traceRunning(had)) throw new VaultError("正在溯源，等它结束再试", 409);
+  const startedAt = await beginTrace(db, user.id, id, had);
+  try {
+    await start(traceItem, [id, user.id, startedAt]);
+  } catch (e) {
+    // 后台任务起不来（Workflow 运行时没连上）：标成失败并带上原因，不让它挂在「正在溯源」
+    const message = e instanceof Error ? e.message : String(e);
+    console.error(`溯源的后台任务没启动 item=${id}: ${message}`);
+    await endTrace(db, user.id, id, startedAt, { status: "failed", error: `后台任务没启动：${message.slice(0, 300)}` });
+  }
+  const trace = await getTrace(db, user.id, id);
+  if (!trace) throw new VaultError("这条内容不在了", 404);
+  return trace;
 }

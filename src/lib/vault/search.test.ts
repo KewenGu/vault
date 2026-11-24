@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { emptyStats, type PostSnapshot } from "@/lib/sources/types";
 import { escapeLike, findSnippet, parseQuery } from "./search";
 
-const post = { text: "", publishedAt: null, stats: emptyStats(), hashtags: [], topComments: [], music: null, notes: [], authorId: null, durationS: null, digestNotes: [], transcriptFrom: null, cuts: [] } satisfies PostSnapshot;
+const post = { text: "", publishedAt: null, stats: emptyStats(), hashtags: [], topComments: [], music: null, notes: [], authorId: null, durationS: null, digestNotes: [], transcriptFrom: null, cuts: [], links: [] } satisfies PostSnapshot;
 
 describe("parseQuery", () => {
   it("splits on whitespace, keeps quoted phrases whole and de-duplicates", () => {

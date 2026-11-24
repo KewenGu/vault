@@ -64,6 +64,9 @@ export type RemoteFile = {
   bytesEstimated?: boolean;
 };
 
+/** 正文里的一个链接：text 是链接上的字（没有或者就是地址本身时是空）。 */
+export type PostLink = { text: string; url: string };
+
 /** 从平台读到的一条帖子（还没转存文件）。 */
 export type FetchedPost = {
   platform: SourcePlatform;
@@ -92,6 +95,8 @@ export type FetchedPost = {
   music: string | null;
   /** 平台自带的字幕（YouTube）：有它就不用再做语音识别 */
   captions?: string | null;
+  /** 正文里指向别的网站的链接（网页才有，见 web.ts 的 outboundLinks）：正文存的是纯文字，链接的地址单独留在这里，「溯源」时用 */
+  links?: PostLink[];
   /** 读的时候发现的情况，分析时要知道（如「正文做成了图片」「文案被平台截断」） */
   notes: string[];
 };
@@ -106,6 +111,8 @@ export type PostSnapshot = Pick<FetchedPost, "text" | "publishedAt" | "stats" | 
   transcriptFrom: "captions" | "asr" | null;
   /** 画面切换的时间点（秒，0.1 秒精度，按时间排；抽帧时 ffmpeg 测的）。没测 / 一刀没切是空 */
   cuts: number[];
+  /** 正文里指向别的网站的链接（见 FetchedPost.links）。2026-11-23 以前读的内容没有，重新读取链接才有 */
+  links: PostLink[];
   /**
    * 网页是在手机的 Safari 里读的（服务器读不到，见 lib/vault/page-capture.ts）：读取这一步用它，不去抓网页。
    * 一直留着，重新读取时还用这一份。
@@ -211,6 +218,9 @@ export function readPost(raw: unknown): PostSnapshot {
     digestNotes: strings(o.digestNotes),
     transcriptFrom: o.transcriptFrom === "captions" || o.transcriptFrom === "asr" ? o.transcriptFrom : null,
     cuts: Array.isArray(o.cuts) ? o.cuts.filter((t): t is number => typeof t === "number" && Number.isFinite(t) && t >= 0) : [],
+    links: Array.isArray(o.links)
+      ? o.links.filter((l) => l && typeof l.url === "string" && /^https?:\/\//i.test(l.url)).map((l) => ({ text: typeof l.text === "string" ? l.text : "", url: l.url }))
+      : [],
     ...(capture ? { capture } : {}),
   };
 }

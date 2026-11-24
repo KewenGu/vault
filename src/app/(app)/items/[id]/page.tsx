@@ -11,8 +11,12 @@ import { entitiesOfItem } from "@/lib/graph/data";
 import { clock, parseTranscript } from "@/lib/media/transcript";
 import { POST_STAT_KEYS, formatCount, postNotes, statLabel, type ItemMedia } from "@/lib/sources/types";
 import { audioOf, displayTitle, getItem, imagesOf, inProgress, isStuck, itemFileUrl, sheetsOf, sourceLabel, videoOf } from "@/lib/vault/store";
+import { VaultError } from "@/lib/vault/errors";
 import { CATEGORY_LABEL, CONTENT_TYPE_INFO, ENTITY_TYPE_INFO } from "@/lib/vault/taxonomy";
+import { hasTraceMaterial } from "@/lib/vault/trace";
+import { getTrace, traceRunning, type ItemTrace } from "@/lib/vault/trace-store";
 import { DeleteButton, MakeMapButton, MetaForm, PasteTextForm, ReprocessButton } from "./item-actions";
+import { TraceSection } from "./trace-section";
 
 type Props = { params: Promise<{ id: string }> };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -57,6 +61,15 @@ export default async function ItemPage({ params }: Props) {
   if (!item) notFound();
   const entities = await entitiesOfItem(db, user.id, id);
   const u = item.understanding;
+  // 溯源的表可能还没建（应用更新了、迁移没推）：只有那一块说明原因，别的照常显示
+  let trace: ItemTrace | null = null;
+  let traceUnavailable: string | null = null;
+  try {
+    trace = await getTrace(db, user.id, id);
+  } catch (e) {
+    if (!(e instanceof VaultError)) throw e;
+    traceUnavailable = e.message;
+  }
   const video = videoOf(item);
   const audio = audioOf(item);
   const images = imagesOf(item);
@@ -77,7 +90,7 @@ export default async function ItemPage({ params }: Props) {
 
   return (
     <div className={hasOriginal ? "grid gap-8 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]" : "mx-auto max-w-2xl"}>
-      <AutoRefresh active={busy} />
+      <AutoRefresh active={busy || (!!trace && traceRunning(trace))} />
 
       {/* 左栏：原内容 */}
       <div className={hasOriginal ? "flex flex-col gap-4 lg:sticky lg:top-6 lg:self-start" : "hidden"}>
@@ -249,6 +262,8 @@ export default async function ItemPage({ params }: Props) {
             )}
           </>
         )}
+
+        {u && !busy && !failed && (trace || hasTraceMaterial(item)) && <TraceSection itemId={item.id} itemTitle={displayTitle(item)} trace={trace} unavailable={traceUnavailable} processedAt={item.processedAt} />}
 
         {entities.length > 0 && (
           <Section title="提到的">

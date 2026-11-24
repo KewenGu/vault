@@ -4,7 +4,7 @@ import { recordCall } from "@/lib/usage/meter";
 import { assertSafeUrl } from "@/lib/network/safe-url";
 import type { LinkRef } from "./link";
 import { downloadRemote } from "@/lib/media/files";
-import { SourceFetchError, emptyStats, type FetchedPost, type RemoteFile } from "./types";
+import { SourceFetchError, emptyStats, type FetchedPost, type PostLink, type RemoteFile } from "./types";
 import { mapYtdlpInfo, ytdlpInfo } from "./ytdlp";
 import type { PageCapture } from "@/lib/vault/page-capture";
 
@@ -40,6 +40,8 @@ export type PageRead = {
   author: string;
   site: string;
   publishedAt: string | null;
+  /** 正文里指向别的网站的链接（文章引用的出处多半在这里；「溯源」用）。在 Safari 里读的没有 */
+  links?: PostLink[];
   /** browser = 用户在手机的 Safari 里读的（见 lib/vault/page-capture.ts） */
   via: "jina" | "direct" | "browser";
 };
@@ -54,6 +56,50 @@ export function cleanMarkdown(md: string): string {
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+/** 一篇文章最多留这么多条外链 */
+export const WEB_MAX_LINKS = 80;
+/** 分享按钮、登录跳转这类不是引用的链接 */
+const NOT_A_REFERENCE = /(^|\.)(facebook\.com\/sharer|twitter\.com\/(intent|share)|x\.com\/(intent|share)|linkedin\.com\/share|reddit\.com\/submit|t\.me\/share|api\.whatsapp\.com|service\.weibo\.com\/share)/i;
+const bareHost = (u: URL) => u.hostname.replace(/^www\./, "").toLowerCase();
+
+/**
+ * 收一批链接里指向别的网站的（同站的是导航和站内文章，不算引用）：去重、去掉分享按钮，按出现顺序最多留 WEB_MAX_LINKS 条。
+ * 链接的文字是地址本身或者空的时候不留文字。
+ */
+export function outboundLinks(found: Iterable<{ text: string; url: string }>, pageUrl: string): PostLink[] {
+  let home: string;
+  try {
+    home = bareHost(new URL(pageUrl));
+  } catch {
+    return [];
+  }
+  const out: PostLink[] = [];
+  const seen = new Set<string>();
+  for (const { text, url } of found) {
+    let u: URL;
+    try {
+      u = new URL(url.trim(), pageUrl);
+    } catch {
+      continue;
+    }
+    if (u.protocol !== "http:" && u.protocol !== "https:") continue;
+    if (bareHost(u) === home || NOT_A_REFERENCE.test(`${u.hostname}${u.pathname}`)) continue;
+    u.hash = "";
+    if (u.href.length > 600 || seen.has(u.href)) continue;
+    seen.add(u.href);
+    const label = text.replace(/[*_`]+/g, "").replace(/\s+/g, " ").trim();
+    out.push({ text: /^https?:\/\//i.test(label) ? "" : Array.from(label).slice(0, 120).join(""), url: u.href });
+    if (out.length >= WEB_MAX_LINKS) break;
+  }
+  return out;
+}
+
+/** Markdown 正文里的链接 `[文字](地址)`（图片的不算），在换成纯文字之前收下来。 */
+export function markdownLinks(md: string, pageUrl: string): PostLink[] {
+  const found = Array.from(md.replace(/!\[[^\]]*\]\([^)]*\)/g, "").matchAll(/\[([^\]]*)\]\(\s*<?([^)\s>]+)>?(?:\s+"[^"]*")?\s*\)/g), (m) => ({ text: m[1], url: m[2] }));
+  return outboundLinks(found, pageUrl);
 }
 
 /**
@@ -121,6 +167,7 @@ export function mapJinaData(data: unknown, url: string): PageRead | null {
     title,
     description: str(d.description) || str(meta["og:description"]),
     text: dropPreamble(cleanMarkdown(d.content), title),
+    links: markdownLinks(d.content, url),
     cover: usableImage(str(meta["og:image"]) || str(meta["twitter:image"]), url),
     images: images.map((i) => usableImage(str(i), url)).filter((i): i is string => i !== null),
     author,
@@ -166,6 +213,7 @@ export function parseHtmlPage(html: string, url: string): PageRead {
     const u = usableImage(decode(m[1]), url);
     if (u && !images.includes(u)) images.push(u);
   }
+  const anchors = Array.from(kept.matchAll(/<a\b[^>]*?\bhref=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi), (m) => ({ url: decode(m[1]), text: decode(m[2].replace(/<[^>]*>/g, " ")) }));
   const author = metaContent(html, "author") || metaContent(html, "article:author");
   return {
     title: metaContent(html, "og:title") || decode(/<title[^>]*>([\s\S]*?)<\/title>/i.exec(html)?.[1] ?? "").replace(/\s+/g, " ").trim(),
@@ -176,6 +224,7 @@ export function parseHtmlPage(html: string, url: string): PageRead {
     author: /^https?:\/\//i.test(author) ? "" : author,
     site: metaContent(html, "og:site_name"),
     publishedAt: isoDate(metaContent(html, "article:published_time"), metaContent(html, "datePublished"), /"datePublished"\s*:\s*"([^"]+)"/.exec(html)?.[1]),
+    links: outboundLinks(anchors, url),
     via: "direct",
   };
 }
@@ -285,6 +334,7 @@ export function mapPage(page: PageRead, ref: LinkRef): FetchedPost {
     images,
     video: null,
     music: null,
+    links: page.links ?? [],
     notes,
   };
 }

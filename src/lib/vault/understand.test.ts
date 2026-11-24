@@ -15,6 +15,7 @@ const post = (patch: Partial<PostSnapshot> = {}): PostSnapshot => ({
   digestNotes: [],
   transcriptFrom: null,
   cuts: [],
+  links: [],
   ...patch,
 });
 
