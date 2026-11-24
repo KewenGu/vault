@@ -81,7 +81,7 @@ const dim = (v: unknown): number | null => {
   const n = toCount(v);
   return n && n > 0 ? n : null;
 };
-const GONE = /^\[\s*(removed|deleted)(\s+by\s+[\w\s]+)?\s*\]$/i;
+export const GONE = /^\[\s*(removed|deleted)(\s+by\s+[\w\s]+)?\s*\]$/i;
 
 /** 评论树 → 一行一条（深度优先；「more」节点 = 没展开的回复，跳过）。 */
 export function flattenComments(nodes: unknown): RdComment[] {
@@ -315,8 +315,8 @@ export class RedditArchiveMiss extends SourceFetchError {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** 问一次存档，返回 `data`。它嫌快（422 / 429）时等一下再问一次。 */
-async function archiveGet(path: string, wait = sleep): Promise<unknown> {
+/** 问一次存档，返回 `data`。它嫌快（422 / 429）时等一下再问一次。情报的版块列表（lib/intel/reddit-listing.ts）也用它。 */
+export async function archiveGet(path: string, wait = sleep): Promise<unknown> {
   for (let attempt = 0; ; attempt++) {
     const res = await labeledFetch(SERVICE, `${ARCHIVE}${path}`, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(30_000) });
     if ((res.status === 422 || res.status === 429) && attempt === 0) {

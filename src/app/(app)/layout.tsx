@@ -12,10 +12,11 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     // 页面里有 data-wide 的（导图页的工作区）用更宽的版心，顶栏跟着一起宽，左右对得齐
     <div className="mx-auto flex min-h-dvh w-full max-w-6xl flex-col px-4 has-[[data-wide]]:max-w-[112rem] sm:px-6">
       <header className="flex h-14 items-center gap-5 border-b border-edge">
-        <Link href="/" prefetch={false} className="text-base font-semibold tracking-tight">
+        <Link href="/" prefetch={false} className="shrink-0 text-base font-semibold tracking-tight">
           Vault
         </Link>
-        <nav className="flex gap-4 text-sm text-ink-muted" aria-label="主导航">
+        {/* 链接不折行；手机上放不下时这一排横着滑（七个链接在 390 宽的屏上会各自折成两行） */}
+        <nav className="flex min-w-0 gap-4 overflow-x-auto text-sm whitespace-nowrap text-ink-muted [scrollbar-width:none]" aria-label="主导航">
           <Link href="/" prefetch={false} className="hover:text-ink">
             收藏库
           </Link>
@@ -24,6 +25,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           </Link>
           <Link href="/maps" prefetch={false} className="hover:text-ink">
             导图
+          </Link>
+          <Link href="/intel" prefetch={false} className="hover:text-ink">
+            情报
           </Link>
           <Link href="/graph" prefetch={false} className="hover:text-ink">
             图谱
@@ -35,7 +39,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             手机
           </Link>
         </nav>
-        <form action={signOut} className="ml-auto flex items-center gap-3">
+        <form action={signOut} className="ml-auto flex shrink-0 items-center gap-3">
           <span className="hidden max-w-48 truncate text-xs text-ink-faint sm:inline">{user.email}</span>
           <button className="btn btn-quiet h-8 px-2 text-xs">退出</button>
         </form>

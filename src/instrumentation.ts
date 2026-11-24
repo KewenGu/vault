@@ -7,6 +7,8 @@
  * 那条内容就一直停在「正在看画面…」，直到超过 VAULT_STUCK_MINUTES 才显示成中断、要手动重试。
  *
  * 重新排队后从中断的那一步重跑（已经做完的步骤不重做）；每一步开头都会看这条内容现在的状态，重跑是安全的。
+ *
+ * 另外开情报的定时检查（见下面）。
  */
 export async function register() {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
@@ -16,5 +18,12 @@ export async function register() {
   } catch (e) {
     // 恢复不了不该拦住整个服务启动：页面照常能用，中断的内容超时后可以手动重试
     console.error(`恢复上次没跑完的后台任务失败: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  try {
+    // 情报的定时检查（lib/vault/intel-timer.ts）：每隔一阵把盯着的来源看一遍
+    const { startIntelTimer } = await import("@/lib/vault/intel-timer");
+    startIntelTimer();
+  } catch (e) {
+    console.error(`情报的定时检查没开起来: ${e instanceof Error ? e.message : String(e)}`);
   }
 }
