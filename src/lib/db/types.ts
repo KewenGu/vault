@@ -131,6 +131,42 @@ type JournalStickerRow = {
   updated_at: string;
 };
 
+type IntelWatchRow = {
+  id: string;
+  user_id: string;
+  kind: string;
+  query: string;
+  keywords: string;
+  min_score: number;
+  enabled: boolean;
+  last_checked_at: string | null;
+  last_error: string | null;
+  last_notes: Json;
+  created_at: string;
+  updated_at: string;
+};
+
+type IntelSignalRow = {
+  id: string;
+  user_id: string;
+  watch_id: string;
+  source: string;
+  external_id: string;
+  url: string;
+  discussion_url: string | null;
+  title: string;
+  excerpt: string;
+  author: string | null;
+  channel: string | null;
+  score: number | null;
+  comments: number | null;
+  published_at: string | null;
+  status: string;
+  item_id: string | null;
+  found_at: string;
+  updated_at: string;
+};
+
 type Table<Row, Required extends keyof Row> = {
   Row: Row;
   Insert: Pick<Row, Required> & Partial<Omit<Row, Required>>;
@@ -150,6 +186,8 @@ export type Database = {
       journal_entries: Table<JournalEntryRow, "user_id" | "day">;
       journal_media: Table<JournalMediaRow, "user_id" | "entry_id" | "kind" | "path">;
       journal_stickers: Table<JournalStickerRow, "user_id" | "path">;
+      intel_watches: Table<IntelWatchRow, "user_id" | "kind" | "query">;
+      intel_signals: Table<IntelSignalRow, "user_id" | "watch_id" | "source" | "external_id" | "url" | "title">;
     };
     Views: { [_ in never]: never };
     Functions: {
@@ -186,5 +224,7 @@ export type ItemRecord = ItemRow;
 export type EntityRecord = EntityRow;
 export type ItemTraceRecord = ItemTraceRow;
 export type MapRecord = MapRow;
+export type IntelWatchRecord = IntelWatchRow;
+export type IntelSignalRecord = IntelSignalRow;
 export type JournalEntryRecord = JournalEntryRow;
 export type JournalMediaRecord = JournalMediaRow;

@@ -146,6 +146,9 @@ export function makeFakeSupabase(
         if (lease) conds.push((r) => r.run_id == null || (typeof r.run_expires_at === "string" && r.run_expires_at < lease[1]));
         const scope = /^persona_id\.is\.null,persona_id\.in\.\((.*)\)$/.exec(expression);
         if (scope) conds.push((r) => r.persona_id == null || scope[1].split(",").includes(String(r.persona_id)));
+        // 情报的定时检查：还没看过、或者上次看早于某个时间的来源
+        const due = /^last_checked_at\.is\.null,last_checked_at\.lt\.(.+)$/.exec(expression);
+        if (due) conds.push((r) => r.last_checked_at == null || String(r.last_checked_at) < due[1]);
         const contentFamily = /^id\.eq\.([0-9a-f-]+),source_brief_id\.eq\.\1$/i.exec(expression);
         if (contentFamily) conds.push((r) => r.id === contentFamily[1] || r.source_brief_id === contentFamily[1]);
         return chain;

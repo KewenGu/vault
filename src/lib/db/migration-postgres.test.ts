@@ -80,7 +80,7 @@ describe.skipIf(!pg)("migrations — isolated PostgreSQL", () => {
   const search = (user: string, args: string) => as(user, `select string_agg(i.dedupe_key, ',' order by s.score desc, i.created_at desc) from search_items('${user}'${args ? `, ${args}` : ""}) s join items i on i.id = s.id`);
 
   beforeEach(() => {
-    query("truncate items, entities, maps, journal_entries, journal_media, journal_stickers cascade");
+    query("truncate items, entities, maps, journal_entries, journal_media, journal_stickers, intel_watches, intel_signals cascade");
   });
 
   it("migrations can be applied twice", () => {
@@ -117,6 +117,53 @@ describe.skipIf(!pg)("migrations — isolated PostgreSQL", () => {
     expect(query(`select user_id || ' ' || nodes::text || ' ' || sources::text || ' ' || chat::text from maps where title = '默认是我的'`)).toBe(`${alice} [] {} []`);
     // 后台（service_role）读得到，代码里自己带 user_id
     expect(query(`begin; set local role service_role; select count(*) from maps where user_id = '${bob}'; commit;`)).toBe("1");
+  });
+
+  it("intel watches and what they found are private to their owner, and cannot point at someone else's watch or item", () => {
+    const [mine, theirs] = query(`insert into intel_watches (user_id, kind, query) values ('${alice}', 'subreddit', 'LocalLLaMA'), ('${bob}', 'subreddit', 'LocalLLaMA') returning id`).split("\n");
+    const signal = (user: string, watch: string, id: string, extra = "") => `insert into intel_signals (user_id, watch_id, source, external_id, url, title${extra ? ", item_id" : ""}) values ('${user}', '${watch}', 'reddit', '${id}', 'https://www.reddit.com/comments/${id}', '${id}'${extra ? `, '${extra}'` : ""})`;
+    query(`${signal(alice, mine, "a1")}; ${signal(bob, theirs, "b1")}`);
+
+    // 各看各的
+    expect(as(alice, "select count(*) from intel_watches")).toBe("1");
+    expect(as(alice, "select string_agg(external_id, ',') from intel_signals")).toBe("a1");
+    expect(as(bob, "select string_agg(external_id, ',') from intel_signals")).toBe("b1");
+    // 改不了、删不了别人的
+    expect(as(alice, `update intel_watches set enabled = false where id = '${theirs}' returning id`)).toBe("");
+    expect(as(alice, `delete from intel_watches where id = '${theirs}' returning id`)).toBe("");
+    expect(as(alice, `update intel_signals set status = 'dismissed' where external_id = 'b1' returning id`)).toBe("");
+    expect(as(alice, `delete from intel_signals where external_id = 'b1' returning id`)).toBe("");
+    // 不能替别人加，也不能把自己的一行挂到别人的来源、别人的内容上
+    expect(() => as(alice, `insert into intel_watches (user_id, kind, query) values ('${bob}', 'hn', 'x')`)).toThrow(/row-level security/);
+    expect(() => as(alice, signal(bob, theirs, "x1"))).toThrow(/row-level security/);
+    expect(() => as(alice, signal(alice, theirs, "x2"))).toThrow(/row-level security/);
+    const bobsItem = item(bob, "bob-item");
+    const myItem = item(alice, "alice-item");
+    expect(() => as(alice, signal(alice, mine, "x3", bobsItem))).toThrow(/row-level security/);
+    expect(() => as(alice, `update intel_signals set item_id = '${bobsItem}' where external_id = 'a1'`)).toThrow(/row-level security/);
+    as(alice, `update intel_signals set status = 'saved', item_id = '${myItem}' where external_id = 'a1'`);
+
+    // 默认值：自己的、开着的、50 分的线；新发现的是「新的」
+    as(alice, "insert into intel_watches (kind, query) values ('hn', 'agent')");
+    expect(query(`select user_id || ' ' || enabled || ' ' || min_score || ' ' || keywords || ' ' || last_notes::text from intel_watches where query = 'agent'`)).toBe(`${alice} true 50  []`);
+    expect(query(`select status from intel_signals where external_id = 'b1'`)).toBe("new");
+    // 同一个来源一个人只能有一个（不分大小写）；同一条内容一个人只有一行；别人可以有同样的
+    expect(() => as(alice, "insert into intel_watches (kind, query) values ('subreddit', 'localllama')")).toThrow(/duplicate key/);
+    expect(() => as(alice, signal(alice, mine, "a1"))).toThrow(/duplicate key/);
+    as(bob, signal(bob, theirs, "a1"));
+    // 写错的种类、状态进不来
+    expect(() => query(`insert into intel_watches (user_id, kind, query) values ('${alice}', 'rss', 'x')`)).toThrow(/check constraint/);
+    expect(() => query(`update intel_signals set status = 'archived' where external_id = 'b1'`)).toThrow(/check constraint/);
+
+    // 存下的内容删了：那一条还在，只是不再指着它；来源删了：它发现的跟着删
+    query(`delete from items where id = '${myItem}'`);
+    expect(query(`select status || ' ' || coalesce(item_id::text, 'null') from intel_signals where user_id = '${alice}' and external_id = 'a1'`)).toBe("saved null");
+    as(alice, `delete from intel_watches where id = '${mine}'`);
+    expect(query(`select count(*) from intel_signals where user_id = '${alice}'`)).toBe("0");
+    expect(query(`select count(*) from intel_signals where user_id = '${bob}'`)).toBe("2");
+    // 后台用的角色看得到（代码里自己带 user_id）
+    expect(query(`begin; set local role service_role; select count(*) from intel_watches where user_id = '${bob}'; commit;`)).toBe("1");
+    expect(query(`begin; set local role service_role; select count(*) from intel_signals where user_id = '${bob}'; commit;`)).toBe("2");
   });
 
   it("traces are private to their owner, cannot be attached to someone else's item, and go away with the item", () => {
