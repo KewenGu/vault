@@ -13,7 +13,7 @@ import { SourceFetchError, emptyStats, hashtagsIn, toCount, type FetchedPost, ty
  *
  * 字幕就是口播文字（`captions`）：有它就不用语音识别。视频按 360p 存（18 分钟约 36 MB），超过转存上限的不存，
  * 只看封面、字幕和简介。读不到评论。YouTube 对机房 IP 会要求登录验证，那时报 YouTubeBlockedError，
- * 由 fetch-post.ts 换一条路读（本机的 yt-dlp，或者 Apify，见 youtube-apify.ts）。
+ * 由 fetch-post.ts 换一条路读（本机的 yt-dlp，或者 Apify，见 youtube-apify.ts：那条路也下得到视频）。
  */
 
 const PLAYER_URL = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false";

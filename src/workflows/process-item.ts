@@ -18,6 +18,7 @@ import { ytdlpDownload } from "@/lib/sources/ytdlp";
 import { buildEmbeddingText, buildSearchText } from "@/lib/vault/indexing";
 import { SPEECH_MAX_SECONDS, transcribeSpeech } from "@/lib/vault/speech";
 import { BUCKET, audioOf, bucketFileLimit, framesOf, getItemById, imagesOf, itemDir, removeItemFiles, sheetsOf, tagCounts, videoOf, type Item } from "@/lib/vault/store";
+import { videoReadMaxBytes } from "@/lib/vault/limits";
 import { understand, type OutputLanguage } from "@/lib/vault/understand";
 import type { Json } from "@/lib/db/types";
 
@@ -45,18 +46,6 @@ type Db = ReturnType<typeof getServiceClient>;
 
 const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-/**
- * 为了读懂内容，视频最多下载这么大（默认 600 MB，`VAULT_VIDEO_READ_MAX_MB` 可以改）。
- * 和「存档」的上限（VIDEO_MAX_BYTES）是两回事：超过存档上限的视频不进存储桶（原片留在这台服务器的磁盘上），
- * 但照样下载到本机抽画面、转写——2026-11-18 第一条真实的抖音视频（38 分钟、127 MB）就因为把两个上限混在一起，
- * 整条没下载，只看了封面和文案。
- * 视频直接写到磁盘上的临时目录，不进内存（2026-11-19 改的：以前整个读进内存，2 GB 的机器只敢设 250 MB，
- * 一条两个多小时的讲课视频就这么被拦下了）。所以这个数管的是临时目录占多少磁盘、下载等多久，不是内存。
- */
-const videoReadMaxBytes = () => {
-  const mb = Number(process.env.VAULT_VIDEO_READ_MAX_MB);
-  return (Number.isFinite(mb) && mb >= 50 ? Math.min(mb, 2000) : 600) * 1024 * 1024;
-};
 const megabytes = (bytes: number) => Math.round(bytes / 1024 / 1024);
 /** 超过这么大的视频不测切点（见 digestVideoSource） */
 const CUT_DETECT_MAX_BYTES = 50 * 1024 * 1024;

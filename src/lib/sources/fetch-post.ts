@@ -23,7 +23,7 @@ import { mapYtdlpInfo, ytdlpInfo, ytdlpPath } from "./ytdlp";
  * | 抖音 | Apify actor | 约 $0.008 / 条 |
  * | TikTok | 直接读视频页 | 免费 |
  * | Instagram | Apify 官方 actor | 约 $0.003 / 条 |
- * | YouTube | App 的播放接口（字幕 + 360p 视频）；被拦时（云服务器上）走 Apify，只有字幕 | 免费；走 Apify 时约 $0.004 / 条 |
+ * | YouTube | App 的播放接口（字幕 + 360p 视频）；被拦时（云服务器上）走 Apify：一个 actor 读信息和字幕，另一个把 360p 视频下下来 | 免费；走 Apify 时约 $0.004 / 条 + 视频每分钟 $0.00001 |
  * | X | FxTwitter 公开接口 → 官方嵌入接口；提到的帖子和链接跟着读（见 follow.ts） | 免费 |
  * | Reddit | 第三方存档 Arctic Shift（帖子 + 评论）；链接帖指向的链接跟着读；存档读不到时按网页再试一次 | 免费 |
  * | 网页 | Jina Reader → 自己抓；本机有 yt-dlp 时认别的视频站 | Jina 带密钥时 $0.0005 |
@@ -32,7 +32,8 @@ import { mapYtdlpInfo, ytdlpInfo, ytdlpPath } from "./ytdlp";
 /**
  * YouTube 的播放接口不给读时换一条路，按这个顺序：
  * 1. 本机有 yt-dlp：让它再试一次（不花钱，还能把视频下下来）。
- * 2. 视频在、只是不给这台机器看（云服务器的机房 IP 被要求登录验证），又配了 APIFY_TOKEN：走 Apify（见 youtube-apify.ts）。
+ * 2. 视频在、只是不给这台机器看（云服务器的机房 IP 被要求登录验证），又配了 APIFY_TOKEN：走 Apify（见 youtube-apify.ts），
+ *    信息、字幕和视频本体都从那边拿。
  * 都不行就报原来的错（页面上可以贴文字）。
  */
 async function fetchYouTube(ref: LinkRef): Promise<FetchedPost> {
