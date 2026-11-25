@@ -108,7 +108,7 @@ export function setupChecks(f: SetupFacts): SetupCheck[] {
       label: "读抖音、Instagram，YouTube 的后备（Apify）",
       state: f.apify ? "ok" : "missing",
       detail: f.apify ? "已配置" : "没配 APIFY_TOKEN",
-      effect: "没有它，抖音和 Instagram 的链接读不了（可以手动把文案贴进来）。YouTube 不给这台机器读时（云服务器上会这样）也靠它读标题、简介和字幕。小红书、TikTok、X、网页不需要它。",
+      effect: "没有它，抖音和 Instagram 的链接读不了（可以手动把文案贴进来）。YouTube 不给这台机器读时（云服务器上会这样）也靠它：读标题、简介和字幕，并把视频下下来看画面、转写口播。小红书、TikTok、X、网页不需要它。",
       fix: "在 .env.local 里填 APIFY_TOKEN。",
     },
     {
@@ -124,7 +124,7 @@ export function setupChecks(f: SetupFacts): SetupCheck[] {
       label: "别的视频站（yt-dlp）",
       state: f.ytdlp ? "ok" : "optional",
       detail: f.ytdlp ?? "没装",
-      effect: "没有它，B 站、Vimeo 这类链接只按网页读文字；YouTube 的播放接口不给读时只能走 Apify（没有画面）。",
+      effect: "没有它，B 站、Vimeo 这类链接只按网页读文字；YouTube 不靠它（播放接口不给读时走 Apify）。",
       fix: "macOS：brew install yt-dlp。Docker 部署的镜像里自带，不用另装。",
     },
     {

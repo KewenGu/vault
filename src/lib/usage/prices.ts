@@ -50,6 +50,7 @@ export const UNIT_USD: Record<string, number> = {
   apify_douyin_post: 0.01,
   apify_instagram_post: 0.003,
   apify_youtube_video: 0.004,
+  apify_youtube_download_minute: 0.000011,
   [ASR_COUNT_KEY]: cnyToUsd(4.5 / 3600),
   [ASR2_COUNT_KEY]: cnyToUsd(0.8 / 3600),
   [OPENAI_ASR_COUNT_KEY]: 0.006 / 60,
