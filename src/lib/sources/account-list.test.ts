@@ -161,6 +161,19 @@ describe("列一个 TikTok / 抖音账号的作品（Apify）", () => {
     expect(counts).toEqual({ apify_douyin_profile_post: 1 });
   });
 
+  it("YouTube：视频和 Shorts 各要 N 条，收费上限和取结果的条数按两倍算；合起来挑最新的 N 条", async () => {
+    vi.stubEnv("APIFY_TOKEN", "apify_secret_1");
+    const yt = (id: string, date: string, type = "video") => ({ id, type, title: id, date, channelName: "3Blue1Brown", channelUsername: "3blue1brown", channelTotalVideos: 250 });
+    const calls = apify(["SUCCEEDED"], [yt("aaaaaaaaaa1", "2026-11-22T00:00:00Z"), yt("aaaaaaaaaa2", "2026-10-01T00:00:00Z"), yt("bbbbbbbbbb1", "2026-11-17T00:00:00Z", "shorts"), yt("bbbbbbbbbb2", "2026-09-01T00:00:00Z", "shorts")]);
+    const channel: AccountRef = { platform: "youtube", externalId: "@3blue1brown", handle: "@3blue1brown", url: "https://www.youtube.com/@3blue1brown" };
+    const { steps, counts } = await listAll(channel, 2);
+    expect(steps.at(-1)?.posts.map((p) => p.url)).toEqual(["https://www.youtube.com/watch?v=aaaaaaaaaa1", "https://www.youtube.com/shorts/bbbbbbbbbb1"]);
+    expect(calls[0].url).toBe("https://api.apify.com/v2/acts/streamers~youtube-scraper/runs?timeout=900&maxTotalChargeUsd=0.12");
+    expect(calls.at(-1)?.url).toBe("https://api.apify.com/v2/datasets/DS1/items?clean=true&offset=0&limit=54");
+    // 列出来几条收几条的钱（这里 4 条）
+    expect(counts).toEqual({ apify_youtube_channel_video: 4 });
+  });
+
   it("运行没跑成：已经列出来的照样用、记一句；一条都没有就是失败", async () => {
     vi.stubEnv("APIFY_TOKEN", "apify_secret_1");
     apify(["FAILED"], [video(1), video(2)]);

@@ -1,7 +1,8 @@
 -- 博主（2026-11-26）：把一个账号发过的作品整个存下来。
 --
--- creators：收藏的一个账号（X / TikTok / 抖音 / 小红书），一个人同一个账号只有一行。
---   external_id：X、TikTok 是小写的用户名，抖音是 sec_uid，小红书是用户 id（见 lib/sources/link.ts 的 AccountRef）。
+-- creators：收藏的一个账号（X / TikTok / 抖音 / 小红书 / Instagram / YouTube），一个人同一个账号只有一行。
+--   external_id：X、TikTok、Instagram 是小写的用户名，抖音是 sec_uid，小红书是用户 id，YouTube 是 @名字 或频道 id
+--   （见 lib/sources/link.ts 的 AccountRef）。
 --   status：listing 后台在列他的作品 → saving 在一条一条存 → ready（存完了，或者停下了）；failed = 这一轮没列成（error 里是原因）。
 --   want：这一轮要列最近的多少条。notes：没列到的、没要的（转发、列到一半读不动…），页面上列出来。
 --   usage / cost_usd：历次列作品用掉的量（每条作品自己的花费记在 items 上）。

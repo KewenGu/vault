@@ -16,6 +16,8 @@ import { SOURCE_PLATFORM_LABEL, SourceFetchError } from "./types";
  * | TikTok | Apify actor（account-apify.ts） | 约 $0.002 / 条 |
  * | 抖音 | Apify actor（account-apify.ts） | 约 $0.005 / 条 |
  * | 小红书 | Apify actor（account-apify.ts） | 约 $0.005 / 条 |
+ * | Instagram | Apify actor（account-apify.ts） | 约 $0.003 / 条 |
+ * | YouTube | Apify actor（account-apify.ts）：视频和 Shorts 各列 N 条 | 约 $0.004 / 条，最多 2N 条 |
  *
  * 列一次要翻很多页 / 等 actor 跑完，放在一次调用里会很久，所以拆成一步一步：每调一次 listAccountStep 往前走一步，
  * 返回这一步拿到的作品、接下来的状态（原样传给下一次）、下一次之前要等几秒。后台任务（workflows/collect-creator.ts）
@@ -93,14 +95,16 @@ async function listX(ref: AccountRef, want: number, state: Extract<ListState, { 
   return { done: false, state: next, waitS: 0, info, posts, notes: [] };
 }
 
-async function listViaApify(ref: AccountRef & { platform: "tiktok" | "douyin" | "xiaohongshu" }, want: number, state: Extract<ListState, { via: "apify" }> | null): Promise<ListStep> {
+async function listViaApify(ref: AccountRef & { platform: keyof typeof PROFILE_ACTORS }, want: number, state: Extract<ListState, { via: "apify" }> | null): Promise<ListStep> {
   const spec = PROFILE_ACTORS[ref.platform];
   // 英文的平台名和前后的中文之间留空格
   const name = SOURCE_PLATFORM_LABEL[ref.platform];
   const label = /^[a-z]/i.test(name) ? ` ${name} ` : name;
   const token = apifyToken(`列${label}账号的作品`.trim());
+  // actor 最多会给多少条（YouTube 的视频和 Shorts 各要 want 条）
+  const rows = want * (spec.rowsPerPost ?? 1);
   if (!state) {
-    const run = await startActorRun(token, spec.actor(), spec.input(ref, want), { timeoutS: APIFY_TIMEOUT_S, maxChargeUsd: want * spec.perItemUsd * 1.5 + 0.1 });
+    const run = await startActorRun(token, spec.actor(), spec.input(ref, want), { timeoutS: APIFY_TIMEOUT_S, maxChargeUsd: rows * spec.perItemUsd * 1.5 + 0.1 });
     return { done: false, state: { via: "apify", runId: run.id, datasetId: run.datasetId, polls: 0 }, waitS: 8, info: null, posts: [], notes: [] };
   }
   const run = await getActorRun(token, state.runId);
@@ -112,7 +116,7 @@ async function listViaApify(ref: AccountRef & { platform: "tiktok" | "douyin" | 
     notes.push(`列作品等了 ${Math.round((APIFY_MAX_POLLS * 10) / 60)} 分钟还没跑完，停下了：只拿到它已经列出来的`);
   } else if (run.status !== "SUCCEEDED") notes.push(`列作品的那次运行没跑完（${run.status}${run.statusMessage ? `：${run.statusMessage.slice(0, 100)}` : ""}）：只拿到它已经列出来的`);
   // 多取一点：置顶的会重复出现，账号信息也可能单独占一条
-  const items = await readDatasetItems(token, state.datasetId, want + 50);
+  const items = await readDatasetItems(token, state.datasetId, rows + 50);
   // 跑了就计费，按数据集里的条数
   recordCall(spec.countKey, items.length);
   const { info, posts: all } = spec.read(items, ref);

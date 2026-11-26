@@ -52,6 +52,8 @@ export const UNIT_USD: Record<string, number> = {
   apify_douyin_profile_post: 0.005,
   apify_tiktok_profile_post: 0.002,
   apify_xhs_profile_post: 0.005,
+  apify_instagram_profile_post: 0.003,
+  apify_youtube_channel_video: 0.004,
   // 不带访问口令读一篇小红书笔记（lib/sources/xhs-apify.ts）
   apify_xhs_note: 0.005,
   apify_instagram_post: 0.003,

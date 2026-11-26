@@ -19,12 +19,15 @@ import type { SourcePlatform } from "./types";
  * - Reddit：`/r/<版块>/comments/<id>/…`（后面带着某条评论的也算这条帖子）、`/comments/<id>`、`/gallery/<id>`、`redd.it/<id>`
  *   （id 是一串小写字母和数字）。i.redd.it、v.redd.it 是图片和视频文件的地址，不是帖子，按网页处理。
  *
- * 账号的主页（存一个博主的全部作品用，见 lib/vault/creator-service.ts）只认这四个平台：
+ * 账号的主页（存一个博主的全部作品用，见 lib/vault/creator-service.ts）认这六个平台：
  * - X：`x.com/<用户名>`（后面带 `/with_replies`、`/media` 这些分栏的也算）。
  * - TikTok：`tiktok.com/@<用户名>`。
  * - 抖音：`douyin.com/user/<sec_uid>`、分享出来的 `iesdouyin.com/share/user/<sec_uid>`（App 里「分享主页 → 复制链接」
  *   得到的 v.douyin.com 短链跳到这里）。
  * - 小红书：`xiaohongshu.com/user/profile/<用户 id>`（24 位十六进制；App 里「分享主页」的 xhslink.com 短链跳到这里）。
+ * - Instagram：`instagram.com/<用户名>`（后面带 `/reels`、`/tagged` 这些分栏的也算）。
+ * - YouTube：频道的 `youtube.com/@<名字>`、`/channel/<UC 开头的 id>`、`/c/<名字>`、`/user/<名字>`（后面带 `/videos`、`/shorts`
+ *   这些分栏的也算）。同一个频道用不同写法贴进来认不出是同一个。
  * 一条链接既认得出帖子又像主页时（抖音主页上打开的视频 `…/user/<sec_uid>?modal_id=<id>`、小红书从主页点开的笔记
  * `…/user/profile/<用户 id>/<笔记 id>`）算帖子。
  */
@@ -159,14 +162,20 @@ function siteRef(site: Site, url: URL): LinkRef | null {
 }
 
 /** 能整个存下来的账号是哪几个平台的（列一个账号的作品见 account-list.ts） */
-export const ACCOUNT_PLATFORMS = ["x", "tiktok", "douyin", "xiaohongshu"] as const;
+export const ACCOUNT_PLATFORMS = ["x", "tiktok", "douyin", "xiaohongshu", "instagram", "youtube"] as const;
 export type AccountPlatform = (typeof ACCOUNT_PLATFORMS)[number];
 
-/** 一个账号的主页。externalId：X、TikTok 是小写的用户名，抖音是 sec_uid，小红书是用户 id；handle 是给人看的（`@karpathy`，抖音、小红书没有就是空）。 */
+/**
+ * 一个账号的主页。externalId：X、TikTok、Instagram 是小写的用户名，抖音是 sec_uid，小红书是用户 id，
+ * YouTube 是 `@名字`（小写）/ 频道 id / `c/名字` / `user/名字`；handle 是给人看的（`@karpathy`，抖音、小红书没有就是空）。
+ */
 export type AccountRef = { platform: AccountPlatform; externalId: string; handle: string; url: string };
 
 /** x.com 下面不是用户名的那些路径 */
 const X_RESERVED = new Set(["home", "explore", "search", "notifications", "messages", "settings", "compose", "i", "intent", "share", "hashtag", "login", "logout", "signup", "tos", "privacy", "about", "jobs", "download", "account", "premium", "communities", "lists", "bookmarks", "topics", "who_to_follow"]);
+
+/** instagram.com 下面不是用户名的那些路径 */
+const IG_RESERVED = new Set(["p", "reel", "reels", "tv", "explore", "stories", "accounts", "direct", "share", "about", "developer", "legal", "privacy", "terms", "web", "api", "challenge", "emails", "press", "directory", "graphql", "oauth", "tags", "locations", "popular", "session", "ar", "audio"]);
 
 /** 链接是不是一个账号的主页（纯函数，不发请求）。 */
 function accountRef(site: Site, url: URL): AccountRef | null {
@@ -189,6 +198,30 @@ function accountRef(site: Site, url: URL): AccountRef | null {
     // 主页链接里的 xsec_token 是这次分享的口令，不留（列作品不用它）
     const m = /xhslink\.com$/i.test(url.hostname) ? null : /^\/user\/profile\/([0-9a-f]{24})\/?$/i.exec(path);
     return m ? { platform: "xiaohongshu", externalId: m[1].toLowerCase(), handle: "", url: `https://www.xiaohongshu.com/user/profile/${m[1].toLowerCase()}` } : null;
+  }
+  if (site === "instagram") {
+    const m = /^\/([\w.]{1,30})(?:\/(?:reels|tagged|feed|guides|channel|saved))?\/?$/.exec(path);
+    if (!m || IG_RESERVED.has(m[1].toLowerCase())) return null;
+    return { platform: "instagram", externalId: m[1].toLowerCase(), handle: `@${m[1]}`, url: `https://www.instagram.com/${m[1]}/` };
+  }
+  if (site === "youtube") {
+    if (/youtu\.be$/i.test(url.hostname)) return null;
+    const tab = "(?:\\/(?:videos|shorts|streams|featured|playlists|community|posts|about|live|podcasts|releases))?\\/?$";
+    const at = new RegExp(`^\\/@([^/?#\\s]{1,100})${tab}`).exec(path);
+    if (at) {
+      // 名字可以不是英文（地址里是转义过的）
+      let name = at[1];
+      try {
+        name = decodeURIComponent(at[1]);
+      } catch {
+        // 转义不对：原样用
+      }
+      return { platform: "youtube", externalId: `@${name.toLowerCase()}`, handle: `@${name}`, url: `https://www.youtube.com/@${encodeURIComponent(name)}` };
+    }
+    const id = new RegExp(`^\\/channel\\/(UC[\\w-]{22})${tab}`).exec(path);
+    if (id) return { platform: "youtube", externalId: id[1], handle: "", url: `https://www.youtube.com/channel/${id[1]}` };
+    const legacy = new RegExp(`^\\/(c|user)\\/([\\w.-]{1,100})${tab}`).exec(path);
+    return legacy ? { platform: "youtube", externalId: `${legacy[1]}/${legacy[2].toLowerCase()}`, handle: "", url: `https://www.youtube.com/${legacy[1]}/${legacy[2]}` } : null;
   }
   return null;
 }

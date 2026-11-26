@@ -245,9 +245,34 @@ describe("账号的主页（存一个博主的全部作品用）", () => {
     expect(parseAccountLink("https://xhslink.com/m/Ap1vXtgAixh")).toBeNull();
   });
 
+  it("Instagram：instagram.com/<用户名>，带分栏的也算；帖子、功能页、快拍不算", () => {
+    expect(parseAccountLink("https://www.instagram.com/NatGeo/?hl=en")).toEqual({ platform: "instagram", externalId: "natgeo", handle: "@NatGeo", url: "https://www.instagram.com/NatGeo/" });
+    expect(parseAccountLink("https://instagram.com/nat.geo_1/reels/")?.externalId).toBe("nat.geo_1");
+    expect(parseAccountLink("https://www.instagram.com/natgeo/tagged")?.url).toBe("https://www.instagram.com/natgeo/");
+    for (const path of ["p/DgLcatkmlPq/", "reel/Chunk8-jurw/", "natgeo/p/DgLcatkmlPq/", "natgeo/reel/Chunk8-jurw/", "explore/", "reels/", "stories/natgeo/", "accounts/login/", "share/reel/BAbc123xyz", "natgeo/followers/"]) {
+      expect(parseAccountLink(`https://www.instagram.com/${path}`), path).toBeNull();
+    }
+    expect(parseLink("https://www.instagram.com/natgeo/p/DgLcatkmlPq/")?.externalId).toBe("DgLcatkmlPq");
+  });
+
+  it("YouTube：频道的四种写法，带分栏的也算；视频、播放列表、别的页面不算", () => {
+    expect(parseAccountLink("https://www.youtube.com/@3Blue1Brown")).toEqual({ platform: "youtube", externalId: "@3blue1brown", handle: "@3Blue1Brown", url: "https://www.youtube.com/@3Blue1Brown" });
+    expect(parseAccountLink("https://m.youtube.com/@3blue1brown/videos?view=0")?.url).toBe("https://www.youtube.com/@3blue1brown");
+    expect(parseAccountLink("https://www.youtube.com/@3blue1brown/shorts/")?.externalId).toBe("@3blue1brown");
+    // 名字不是英文的（地址里转义过）
+    expect(parseAccountLink("https://www.youtube.com/@%E8%80%81%E9%AB%98")).toEqual({ platform: "youtube", externalId: "@老高", handle: "@老高", url: "https://www.youtube.com/@%E8%80%81%E9%AB%98" });
+    // 频道 id 区分大小写，原样留着
+    expect(parseAccountLink("https://www.youtube.com/channel/UCYO_jab_esuFRV4b17AJtAw/featured")).toEqual({ platform: "youtube", externalId: "UCYO_jab_esuFRV4b17AJtAw", handle: "", url: "https://www.youtube.com/channel/UCYO_jab_esuFRV4b17AJtAw" });
+    expect(parseAccountLink("https://www.youtube.com/c/3Blue1Brown")?.externalId).toBe("c/3blue1brown");
+    expect(parseAccountLink("https://www.youtube.com/user/Vsauce/videos")?.url).toBe("https://www.youtube.com/user/Vsauce");
+    for (const path of ["watch?v=jNQXAC9IVRw", "shorts/jNQXAC9IVRw", "playlist?list=PL123", "feed/subscriptions", "results?search_query=math", "channel/notAnId", "@3blue1brown/videos/extra", "hashtag/math"]) {
+      expect(parseAccountLink(`https://www.youtube.com/${path}`), path).toBeNull();
+    }
+    expect(parseAccountLink("https://youtu.be/@3blue1brown")).toBeNull();
+  });
+
   it("别的平台的主页、别的网站不算账号", () => {
-    expect(parseAccountLink("https://www.youtube.com/@3blue1brown")).toBeNull();
-    expect(parseAccountLink("https://www.instagram.com/instagram/")).toBeNull();
+    expect(parseAccountLink("https://www.reddit.com/user/someone")).toBeNull();
     expect(parseAccountLink("https://example.com/@someone")).toBeNull();
     expect(parseAccountLink("随便一段话")).toBeNull();
   });

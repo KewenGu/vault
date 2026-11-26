@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { PROFILE_ACTORS, readDouyinProfile, readTikTokProfile, readXhsProfile } from "./account-apify";
+import { describe, expect, it, vi } from "vitest";
+import { PROFILE_ACTORS, readDouyinProfile, readInstagramProfile, readTikTokProfile, readXhsProfile, readYouTubeChannel } from "./account-apify";
 import type { AccountRef } from "./link";
 
 /** 两个 actor 2026-11-26 实际返回的形状（各留用得到的字段）。 */
@@ -70,6 +70,48 @@ describe("列一个账号的作品：认 actor 的输出", () => {
     ]);
     expect(PROFILE_ACTORS.xiaohongshu.input(me, 50)).toEqual({ operation: "list_user_notes", profile_url: me.url, max_items: 50, auto_paginate: true });
     expect(PROFILE_ACTORS.xiaohongshu.actor()).toBe("socialdatax~socialdatax-xhs-data-api");
+  });
+
+  it("Instagram：帖子和 Reels 都是 /p/<短码>；和别人合发的也要；actor 说没读到的那一行不算", () => {
+    const me: AccountRef = { platform: "instagram", externalId: "natgeo", handle: "@natgeo", url: "https://www.instagram.com/natgeo/" };
+    const row = (code: string, over: Record<string, unknown> = {}) => ({ id: "1", type: "Image", shortCode: code, caption: "第一行 #tag\n第二行", url: `https://www.instagram.com/p/${code}/`, timestamp: "2026-11-25T20:59:16.000Z", ownerFullName: " National Geographic ", ownerUsername: "NatGeo", isPinned: false, ...over });
+    const { info, posts } = readInstagramProfile([row("DgLcatkmlPq", { type: "Sidecar", isPinned: true }), row("DgKwETOIeau", { type: "Video", ownerUsername: "someone_else", ownerFullName: "别人", timestamp: "" }), { shortCode: "不是 短码" }], me);
+    expect(info).toEqual({ name: "National Geographic", handle: "@NatGeo", bio: "", postCount: null });
+    expect(posts).toEqual([
+      { externalId: "DgLcatkmlPq", url: "https://www.instagram.com/p/DgLcatkmlPq/", kind: "image", title: "第一行", publishedAt: "2026-11-25T20:59:16.000Z", pinned: true },
+      { externalId: "DgKwETOIeau", url: "https://www.instagram.com/p/DgKwETOIeau/", kind: "video", title: "第一行", publishedAt: null, pinned: false },
+    ]);
+    // 账号不存在 / 私密：actor 给一行 error，没有帖子 → 当成没读到账号
+    expect(readInstagramProfile([{ error: "no_items", errorDescription: "Empty or private data for provided input" }], me)).toEqual({ info: null, posts: [] });
+    // 全是合发的：名字用链接里的用户名
+    expect(readInstagramProfile([row("DgKwETOIeau", { ownerUsername: "someone_else" })], me).info).toEqual({ name: "", handle: "@natgeo", bio: "", postCount: null });
+    expect(PROFILE_ACTORS.instagram.input(me, 50)).toEqual({ directUrls: ["https://www.instagram.com/natgeo/"], resultsType: "posts", resultsLimit: 50, addParentData: false });
+  });
+
+  it("YouTube：视频是 watch?v=、Shorts 是 /shorts/（和单独贴链接认出来的一样）；频道信息每一行都带着", () => {
+    const row = (id: string, over: Record<string, unknown> = {}) => ({ id, type: "video", title: ` 视频 ${id} `, url: `https://www.youtube.com/watch?v=${id}`, date: "2026-11-22T02:02:12.000Z", channelName: "3Blue1Brown", channelUsername: "3blue1brown", channelId: "UCYO_jab_esuFRV4b17AJtAw", channelDescription: " 讲数学的 ", channelTotalVideos: 250, duration: "00:13:38", ...over });
+    const { info, posts } = readYouTubeChannel([row("zqzk43bSdDI"), row("0IZcjWtWmDA", { type: "shorts", date: null }), row("zqzk43bSdDI"), row("太短")]);
+    expect(info).toEqual({ name: "3Blue1Brown", handle: "@3blue1brown", bio: "讲数学的", postCount: 250 });
+    expect(posts).toEqual([
+      { externalId: "zqzk43bSdDI", url: "https://www.youtube.com/watch?v=zqzk43bSdDI", kind: "video", title: "视频 zqzk43bSdDI", publishedAt: "2026-11-22T02:02:12.000Z", pinned: false },
+      { externalId: "0IZcjWtWmDA", url: "https://www.youtube.com/shorts/0IZcjWtWmDA", kind: "video", title: "视频 0IZcjWtWmDA", publishedAt: null, pinned: false },
+    ]);
+    // 视频和 Shorts 各要 N 条（所以最多收两倍的条数），直播回放不要，按最新的排
+    const ref: AccountRef = { platform: "youtube", externalId: "@3blue1brown", handle: "@3blue1brown", url: "https://www.youtube.com/@3blue1brown" };
+    expect(PROFILE_ACTORS.youtube.input(ref, 20)).toEqual({ startUrls: [{ url: ref.url }], maxResults: 20, maxResultsShorts: 20, maxResultStreams: 0, sortVideosBy: "NEWEST" });
+    expect(PROFILE_ACTORS.youtube.rowsPerPost).toBe(2);
+  });
+
+  it("读单条用的 actor 换了，列主页的跟着换；也可以单独换", () => {
+    expect(PROFILE_ACTORS.instagram.actor()).toBe("apify~instagram-scraper");
+    expect(PROFILE_ACTORS.youtube.actor()).toBe("streamers~youtube-scraper");
+    vi.stubEnv("APIFY_INSTAGRAM_ACTOR", "a~ig");
+    vi.stubEnv("APIFY_YOUTUBE_ACTOR", "a~yt");
+    expect([PROFILE_ACTORS.instagram.actor(), PROFILE_ACTORS.youtube.actor()]).toEqual(["a~ig", "a~yt"]);
+    vi.stubEnv("APIFY_INSTAGRAM_PROFILE_ACTOR", "b~ig");
+    vi.stubEnv("APIFY_YOUTUBE_PROFILE_ACTOR", "b~yt");
+    expect([PROFILE_ACTORS.instagram.actor(), PROFILE_ACTORS.youtube.actor()]).toEqual(["b~ig", "b~yt"]);
+    vi.unstubAllEnvs();
   });
 
   it("actor 的输入：TikTok 给用户名，抖音给主页链接，都按最近的 N 条要", () => {

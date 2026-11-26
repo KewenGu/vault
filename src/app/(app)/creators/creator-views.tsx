@@ -32,7 +32,7 @@ export function CreatorListView({ creators }: { creators: CreatorSummary[] }) {
       <section className="flex flex-col gap-3">
         <h1 className="text-xl font-semibold tracking-tight">博主</h1>
         <p className="text-sm leading-relaxed text-ink-muted">
-          觉得一个人讲得好，把他发过的作品整个存下来。支持 X、TikTok、抖音、小红书的账号：贴他主页的链接，选存最近的多少条。每一条都和单独存进来的一样读懂、归类，在收藏库里搜得到。
+          觉得一个人讲得好，把他发过的作品整个存下来。支持 X、TikTok、抖音、小红书、Instagram、YouTube 的账号：贴他主页的链接，选存最近的多少条。每一条都和单独存进来的一样读懂、归类，在收藏库里搜得到。
         </p>
         <FindCreatorForm />
       </section>
@@ -77,6 +77,8 @@ const WHAT: Record<AccountRef["platform"], string[]> = {
   x: ["只存他自己发的帖子：转发别人的不存，回别人的回复不存。", "一串帖子（他接着自己的帖子往下发的）算一条，后面几条读第一条时一起读进来。", "帖子里引用的帖子、贴的链接照常跟着读。"],
   tiktok: ["存他主页「视频」栏里的视频和图集；他转发的别人的视频不存。", "列作品走 Apify（要配 APIFY_TOKEN）。"],
   douyin: ["存他主页上公开的视频和图文。", "列作品、读每一条都走 Apify（要配 APIFY_TOKEN）。"],
+  instagram: ["存他主页上的帖子和 Reels（和别人合发的也算）；快拍（Stories）不存。", "列作品、读每一条都走 Apify（要配 APIFY_TOKEN）。", "轮播里的视频只存封面（读单条帖子也是这样）。"],
+  youtube: ["存他频道的视频和 Shorts：两栏合起来按时间挑最新的；直播回放不存。", "列作品走 Apify（要配 APIFY_TOKEN）；视频和 Shorts 各列一遍，所以列作品的钱最多按两倍条数算。", "长视频处理得慢、也贵（口播最多转写前 60 分钟）：先少存几条看看。"],
   xiaohongshu: ["存他主页上公开的笔记（图文和视频）。", "列作品、读每一篇都走 Apify（要配 APIFY_TOKEN）：列出来的笔记没有访问口令，直接读读不到。", "这条路读不到评论内容，只有评论数。"],
 };
 
@@ -85,7 +87,9 @@ export function NewCreatorView({ account: ref, had, hint, parallel }: { account:
   const label = SOURCE_PLATFORM_LABEL[ref.platform];
   // 英文的平台名和前后的中文之间留空格
   const spaced = /^[a-z]/i.test(label) ? ` ${label} ` : label;
-  const listUsd = ref.platform === "x" ? 0 : (UNIT_USD[PROFILE_ACTORS[ref.platform].countKey] ?? 0);
+  // 列作品每条大约多少钱（YouTube 的视频和 Shorts 各列一遍，按两倍算）
+  const actor = ref.platform === "x" ? null : PROFILE_ACTORS[ref.platform];
+  const listUsd = actor ? (UNIT_USD[actor.countKey] ?? 0) * (actor.rowsPerPost ?? 1) : 0;
   // 抖音读每一条也要走 Apify，这笔已经算在「已有内容平均每条」里了
   return (
     <div className="mx-auto flex max-w-xl flex-col gap-6">

@@ -4,7 +4,7 @@ import { cleanDesc } from "./xhs";
 import { XHS_ACTOR } from "./xhs-apify";
 
 /**
- * 列一个 TikTok / 抖音 / 小红书账号的作品：走 Apify 上的 actor（这几个平台的作品列表都要带签名的接口才给，直接读不到）。
+ * 列一个 TikTok / 抖音 / 小红书 / Instagram / YouTube 账号的作品：走 Apify 上的 actor（这几个平台的作品列表都要带签名的接口才给，直接读不到）。
  * 这里只有每个 actor 的输入怎么写、输出怎么认（纯函数）；怎么跑、怎么等在 account-list.ts。
  *
  * | 平台 | actor | 计费（BRONZE 档） | 实测（2026-11-26，云端容器） |
@@ -12,10 +12,14 @@ import { XHS_ACTOR } from "./xhs-apify";
  * | TikTok | clockworks~tiktok-profile-scraper（Store 里用量最大的 TikTok 主页采集器） | $0.002 / 条 | 3 条 23 秒 |
  * | 抖音 | zen-studio~douyin-profile-scraper（和读单条的 actor 是同一个作者，见 douyin.ts） | 每次运行 $0.001 + $0.005 / 条 | 3 条 12 秒 |
  * | 小红书 | socialdatax~socialdatax-xhs-data-api 的 list_user_notes（和不带口令读单篇的是同一个 actor，见 xhs-apify.ts） | $0.005 / 条 | 5 条 6 秒 |
+ * | Instagram | apify~instagram-scraper（和读单条帖子的是同一个，见 instagram.ts），给主页链接、`resultsType: "posts"` | $0.0023 / 条 | 4 条 29 秒 |
+ * | YouTube | streamers~youtube-scraper（和走 Apify 读单个视频的是同一个，见 youtube-apify.ts），给频道链接 | $0.003 / 条 | 视频 3 条 + Shorts 2 条 27 秒 |
  *
- * 都按「最近的 N 条」列（置顶的排在最前面，可能是很久以前发的）。TikTok、抖音每一条都带着账号信息（名字、简介、作品总数）；
- * 小红书只带着名字（简介、笔记总数这条路不给）。小红书列出来的笔记没有访问口令，读每一篇也要走 Apify（见 fetch-post.ts）。
- * 第三方 actor 可能改名 / 下架，用 env APIFY_TIKTOK_PROFILE_ACTOR / APIFY_DOUYIN_PROFILE_ACTOR / APIFY_XHS_PROFILE_ACTOR 换
+ * 都按「最近的 N 条」列（置顶的排在最前面，可能是很久以前发的）。TikTok、抖音、YouTube 每一条都带着账号信息（名字、简介、作品总数）；
+ * 小红书、Instagram 只带着名字（简介、作品总数这条路不给）。YouTube 的视频和 Shorts 是两栏，各要 N 条（所以最多收 2N 条的钱），
+ * 合起来挑最新的 N 条；直播回放不列。小红书列出来的笔记没有访问口令，读每一篇也要走 Apify（见 fetch-post.ts）。
+ * 第三方 actor 可能改名 / 下架，用 env APIFY_TIKTOK_PROFILE_ACTOR / APIFY_DOUYIN_PROFILE_ACTOR / APIFY_XHS_PROFILE_ACTOR /
+ * APIFY_INSTAGRAM_PROFILE_ACTOR / APIFY_YOUTUBE_PROFILE_ACTOR 换
  * （输入、输出形状要和默认的一样）。列几百条要多久、actor 一次最多给多少条没测过。
  */
 
@@ -25,6 +29,8 @@ export type ProfileActor = {
   countKey: string;
   /** 一条大约多少钱（给这次运行设收费上限用，按 FREE 档算，宁可高） */
   perItemUsd: number;
+  /** 要 N 条时 actor 最多会给（也就是收）几倍的条数：YouTube 的视频和 Shorts 各要 N 条再合起来挑最新的，是 2；不写是 1 */
+  rowsPerPost?: number;
   input: (ref: AccountRef, limit: number) => unknown;
   read: (items: unknown[], ref: AccountRef) => { info: AccountInfo | null; posts: ListedPost[] };
 };
@@ -32,6 +38,8 @@ export type ProfileActor = {
 export const TIKTOK_PROFILE_COUNT_KEY = "apify_tiktok_profile_post";
 export const DOUYIN_PROFILE_COUNT_KEY = "apify_douyin_profile_post";
 export const XHS_PROFILE_COUNT_KEY = "apify_xhs_profile_post";
+export const INSTAGRAM_PROFILE_COUNT_KEY = "apify_instagram_profile_post";
+export const YOUTUBE_CHANNEL_COUNT_KEY = "apify_youtube_channel_video";
 
 type Obj = Record<string, unknown>;
 const obj = (v: unknown): Obj => (v && typeof v === "object" && !Array.isArray(v) ? (v as Obj) : {});
@@ -118,7 +126,57 @@ export function readXhsProfile(items: unknown[], ref: AccountRef): { info: Accou
   return { info, posts: dedupe(posts) };
 }
 
-export const PROFILE_ACTORS: Record<"tiktok" | "douyin" | "xiaohongshu", ProfileActor> = {
+export function readInstagramProfile(items: unknown[], ref: AccountRef): { info: AccountInfo | null; posts: ListedPost[] } {
+  let info: AccountInfo | null = null;
+  const posts: ListedPost[] = [];
+  for (const raw of items) {
+    const it = obj(raw);
+    // actor 说没读到的那一行（账号不存在、私密、没有帖子）带着 error
+    if (it.error) continue;
+    const owner = str(it.ownerUsername);
+    if (!info && owner.toLowerCase() === ref.externalId) info = { name: str(it.ownerFullName).trim() || owner, handle: `@${owner}`, bio: "", postCount: null };
+    const code = str(it.shortCode);
+    if (!/^[\w-]{5,40}$/.test(code)) continue;
+    // 和别人合发的帖子（作者栏是别人）也在他的主页上，照样要
+    const published = Date.parse(str(it.timestamp));
+    posts.push({
+      externalId: code,
+      url: `https://www.instagram.com/p/${code}/`,
+      kind: str(it.type) === "Video" ? "video" : "image",
+      title: listedTitle(str(it.caption)),
+      publishedAt: Number.isFinite(published) ? new Date(published).toISOString() : null,
+      pinned: it.isPinned === true,
+    });
+  }
+  // 一条自己署名的都没有（全是合发的）：名字用链接里的用户名
+  if (!info && posts.length > 0) info = { name: "", handle: ref.handle, bio: "", postCount: null };
+  return { info, posts: dedupe(posts) };
+}
+
+export function readYouTubeChannel(items: unknown[]): { info: AccountInfo | null; posts: ListedPost[] } {
+  let info: AccountInfo | null = null;
+  const posts: ListedPost[] = [];
+  for (const raw of items) {
+    const it = obj(raw);
+    const channel = str(it.channelName);
+    if (!info && channel) info = { name: channel, handle: str(it.channelUsername) ? `@${str(it.channelUsername)}` : "", bio: str(it.channelDescription).trim(), postCount: count(it.channelTotalVideos) };
+    const id = str(it.id);
+    if (!/^[\w-]{11}$/.test(id)) continue;
+    const published = Date.parse(str(it.date));
+    posts.push({
+      externalId: id,
+      // 和单独贴这条链接认出来的写法一样（link.ts 的 siteRef）
+      url: str(it.type) === "shorts" ? `https://www.youtube.com/shorts/${id}` : `https://www.youtube.com/watch?v=${id}`,
+      kind: "video",
+      title: Array.from(str(it.title).trim()).slice(0, 80).join(""),
+      publishedAt: Number.isFinite(published) ? new Date(published).toISOString() : null,
+      pinned: false,
+    });
+  }
+  return { info, posts: dedupe(posts) };
+}
+
+export const PROFILE_ACTORS: Record<"tiktok" | "douyin" | "xiaohongshu" | "instagram" | "youtube", ProfileActor> = {
   tiktok: {
     actor: () => process.env.APIFY_TIKTOK_PROFILE_ACTOR?.trim() || "clockworks~tiktok-profile-scraper",
     countKey: TIKTOK_PROFILE_COUNT_KEY,
@@ -139,5 +197,23 @@ export const PROFILE_ACTORS: Record<"tiktok" | "douyin" | "xiaohongshu", Profile
     perItemUsd: 0.005,
     input: (ref, limit) => ({ operation: "list_user_notes", profile_url: ref.url, max_items: limit, auto_paginate: true }),
     read: readXhsProfile,
+  },
+  instagram: {
+    // 和读单条帖子的是同一个 actor（instagram.ts）；那边换了这边跟着换
+    actor: () => process.env.APIFY_INSTAGRAM_PROFILE_ACTOR?.trim() || process.env.APIFY_INSTAGRAM_ACTOR?.trim() || "apify~instagram-scraper",
+    countKey: INSTAGRAM_PROFILE_COUNT_KEY,
+    perItemUsd: 0.003,
+    input: (ref, limit) => ({ directUrls: [ref.url], resultsType: "posts", resultsLimit: limit, addParentData: false }),
+    read: readInstagramProfile,
+  },
+  youtube: {
+    // 和走 Apify 读单个视频的是同一个 actor（youtube-apify.ts）；那边换了这边跟着换
+    actor: () => process.env.APIFY_YOUTUBE_PROFILE_ACTOR?.trim() || process.env.APIFY_YOUTUBE_ACTOR?.trim() || "streamers~youtube-scraper",
+    countKey: YOUTUBE_CHANNEL_COUNT_KEY,
+    perItemUsd: 0.004,
+    rowsPerPost: 2,
+    // 视频和 Shorts 是两栏，各要最新的 N 条，合起来再挑最新的 N 条；直播回放不要（一场几个小时）。不要字幕：读每一条的时候再读
+    input: (ref, limit) => ({ startUrls: [{ url: ref.url }], maxResults: limit, maxResultsShorts: limit, maxResultStreams: 0, sortVideosBy: "NEWEST" }),
+    read: (items) => readYouTubeChannel(items),
   },
 };
