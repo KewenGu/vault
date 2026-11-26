@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { ytdlpInfo } from "./ytdlp";
+import { ytdlpInfo, ytdlpProbe } from "./ytdlp";
 
 const temporary: string[] = [];
 async function executable(source: string) {
@@ -34,6 +34,19 @@ describe.skipIf(process.platform === "win32")("yt-dlp real process boundary with
     expect(observed.args).toContain("--no-plugin-dirs");
     expect(observed.args[observed.args.indexOf("--proxy") + 1]).toMatch(/^http:\/\/127\.0\.0\.1:/);
     expect(observed.args[observed.args.indexOf("--downloader") + 1]).toBe("native");
+  });
+
+  it("tells apart a recognized site that failed, an unsupported URL, a slow read and a successful read", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    await executable(`process.stderr.write("ERROR: [BiliBili] 1ar421p7kw: Unable to download JSON metadata: HTTP Error 412: Precondition Failed\\n"); process.exit(1);`);
+    await expect(ytdlpProbe("https://example.com/video", 3000)).resolves.toEqual({ info: null, failed: { extractor: "BiliBili", why: "对方回了 HTTP 412（多半是这台服务器的 IP 被那个站拦了）" } });
+    await executable(`process.stderr.write("ERROR: Unsupported URL: https://example.com/page\\n"); process.exit(1);`);
+    await expect(ytdlpProbe("https://example.com/page", 3000)).resolves.toEqual({ info: null, failed: null });
+    await executable(`setInterval(() => {}, 1000);`);
+    await expect(ytdlpProbe("https://example.com/slow", 700)).resolves.toEqual({ info: null, failed: { extractor: "", why: "1 秒没读完" } });
+    await executable(`process.stdout.write(JSON.stringify({id:"synthetic",title:"local fixture"}));`);
+    await expect(ytdlpProbe("https://example.com/ok", 3000)).resolves.toMatchObject({ info: { id: "synthetic" }, failed: null });
+    vi.restoreAllMocks();
   });
 
   it("terminates an owned postprocessor when its parent exceeds the deadline", async () => {

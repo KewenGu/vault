@@ -237,7 +237,7 @@ describe("askVault — failures leave nothing half-saved", () => {
   it("checks the table exists before spending on the model", async () => {
     setup({}, { failSelect: { asks: { message: "Could not find the table 'public.asks' in the schema cache", code: "PGRST205" } } });
     found = [ITEM_A];
-    await expect(askVault(session, { question: "怎么理财" })).rejects.toMatchObject({ status: 503, message: expect.stringContaining("20261126000001_asks.sql") });
+    await expect(askVault(session, { question: "怎么理财" })).rejects.toMatchObject({ status: 503, message: expect.stringContaining("20261126000002_asks.sql") });
     await expect(listMyAsks(session)).rejects.toMatchObject({ status: 503 });
     expect(askClaude).not.toHaveBeenCalled();
   });

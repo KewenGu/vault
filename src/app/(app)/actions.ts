@@ -2,7 +2,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireSession } from "@/lib/auth/user";
-import { removeItem, reprocess, saveInput, savePage, startTrace, VaultError } from "@/lib/vault/service";
+import { AccountLinkError, removeItem, reprocess, saveInput, savePage, startTrace, VaultError } from "@/lib/vault/service";
 import { updateItemMeta } from "@/lib/vault/store";
 import { parseTagInput } from "@/lib/vault/taxonomy";
 
@@ -15,13 +15,17 @@ const fail = (e: unknown): ActionState => {
   return { error: "出错了，请稍后重试" };
 };
 
-/** 存一条粘贴的内容（链接 / 文字）。存好后留在当前页（列表刷新，新的一条显示在最前面）。 */
+/**
+ * 存一条粘贴的内容（链接 / 文字）。存好后留在当前页（列表刷新，新的一条显示在最前面）。
+ * 贴的是一个账号的主页：带去「存这个博主的作品」的确认页（先选存多少条）。
+ */
 export async function saveAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
   const session = await requireSession();
   let saved;
   try {
     saved = await saveInput(session, String(formData.get("input") ?? ""), String(formData.get("note") ?? ""));
   } catch (e) {
+    if (e instanceof AccountLinkError) redirect(`/creators/new?url=${encodeURIComponent(e.account.url)}`);
     return fail(e);
   }
   // 存过的：直接带他去看那条

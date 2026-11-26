@@ -55,7 +55,7 @@ export type AskSummary = Pick<Ask, "id" | "title" | "updatedAt"> & { turns: numb
  */
 function fail(what: string, error: { message: string; code?: string }): never {
   if (error.code === "42P01" || error.code === "PGRST205") {
-    throw new VaultError("数据库里还没有「问」用的那张表：把迁移 supabase/migrations/20261126000001_asks.sql 推到 Supabase（把文件内容贴进控制台的 SQL Editor 运行；或者 npx supabase link 之后 npx supabase db push --remote）", 503);
+    throw new VaultError("数据库里还没有「问」用的那张表：把迁移 supabase/migrations/20261126000002_asks.sql 推到 Supabase（把文件内容贴进控制台的 SQL Editor 运行；或者 npx supabase link 之后 npx supabase db push --remote）", 503);
   }
   throw new Error(`${what}: ${error.message}`);
 }

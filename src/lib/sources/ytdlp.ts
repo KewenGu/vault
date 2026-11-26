@@ -142,9 +142,66 @@ export function mapYtdlpInfo(info: YtdlpInfo, ref: { platform: SourcePlatform; e
   };
 }
 
+/** yt-dlp 认出了这是哪个视频站的链接、但没读到：extractor 是站点解析器的名字（BiliBili、Vimeo…，没拿到是空），why 是原因。 */
+export type YtdlpFailure = { extractor: string; why: string };
+
+/**
+ * yt-dlp 的报错 → 它认出了哪个站、为什么没读到（纯函数）。不认得这个链接（`Unsupported URL`，普通网页都是这样）返回 null。
+ * 原因只归成几类：报错的原文是外面来的（站点返回的话也在里面），不抄进 notes；原文留在服务器日志里。
+ */
+export function ytdlpFailure(stderr: string): YtdlpFailure | null {
+  const line = [...stderr.matchAll(/ERROR: \[([\w:.+-]{1,40})\][^\n]*/g)].at(-1);
+  if (!line) return null;
+  const text = line[0];
+  const status = /HTTP Error (\d{3})/.exec(text)?.[1];
+  const why = status
+    ? `对方回了 HTTP ${status}${status === "412" || status === "403" || status === "429" ? "（多半是这台服务器的 IP 被那个站拦了）" : ""}`
+    : /certificate|SSL:/i.test(text)
+      ? "连接时证书校验没过（多半是这台服务器出网要走的代理的问题）"
+      : /timed? ?out/i.test(text)
+      ? "连接超时"
+      : /log ?in|cookies|sign in|members?[- ]only|premium|大会员|登录/i.test(text)
+        ? "要登录才能看"
+        : /geo|region|country|地区/i.test(text)
+          ? "这个地区看不了"
+          : /private|deleted|removed|unavailable|not exist|不存在|已删除/i.test(text)
+            ? "视频不在了，或者不公开"
+            : "原因没归上类（原文在服务器日志里）";
+  return { extractor: line[1], why };
+}
+
+/**
+ * 问 yt-dlp 这个链接是不是它认得的视频页。info：认得、读到了；failed：认得、但没读到（说清楚为什么——以前这种情况和
+ * 「不认得」一样悄悄按网页读，2026-11-26 线上一条 B 站视频就这样成了一篇英文的「网页」，看不出是哪一步没成）；
+ * 两个都是 null：不认得（普通网页）、本机没装、yt-dlp 自己起不来。
+ */
+export async function ytdlpProbe(url: string, timeoutMs = 45_000): Promise<{ info: YtdlpInfo | null; failed: YtdlpFailure | null }> {
+  const bin = ytdlpPath();
+  if (!bin) return { info: null, failed: null };
+  let result: RunResult;
+  try {
+    result = await run(bin, ["-J", ...COMMON, "--", url], timeoutMs);
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    console.error(`yt-dlp 没跑成: ${message}`);
+    // 普通网页约 1 秒就报「不认识」；跑到超时的是认出来了、卡在读取上
+    return { info: null, failed: message.includes("跑太久") ? { extractor: "", why: `${Math.round(timeoutMs / 1000)} 秒没读完` } : null };
+  }
+  if (result.code !== 0) {
+    const failed = ytdlpFailure(result.stderr);
+    if (failed) console.error(`yt-dlp 认出了 ${failed.extractor} 但没读到: ${result.stderr.trim().split("\n").pop()?.slice(0, 500) ?? ""}`);
+    return { info: null, failed };
+  }
+  try {
+    return { info: parseYtdlpInfo(JSON.parse(result.stdout)), failed: null };
+  } catch {
+    return { info: null, failed: null };
+  }
+}
+
 /**
  * 问 yt-dlp 这个链接是不是它认得的视频页。认得返回视频信息；不认得（普通网页）、视频读不到、本机没装都返回 null——
- * 调用方接着按网页读。
+ * 调用方接着按网页读。要知道「认得但没读到」的原因用 ytdlpProbe。
  */
 export async function ytdlpInfo(url: string, timeoutMs = 45_000): Promise<YtdlpInfo | null> {
   const bin = ytdlpPath();

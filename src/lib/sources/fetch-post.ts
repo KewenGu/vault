@@ -1,7 +1,8 @@
 import "server-only";
 import { fetchDouyinVideo } from "./douyin";
 import { fetchInstagramPost } from "./instagram";
-import { followMentions, type FollowDeps, type Followed } from "./follow";
+import { fetchXThreadIds } from "./account-x";
+import { followMentions, type FollowDeps, type Followed, type Mention } from "./follow";
 import { resolveLink, type LinkRef } from "./link";
 import { VIDEO_MAX_BYTES } from "@/lib/media/files";
 import { RedditArchiveMiss, readRedditPost } from "./reddit";
@@ -9,6 +10,7 @@ import { fetchTikTokVideo } from "./tiktok";
 import { SourceFetchError, type SourcePlatform, type FetchedPost } from "./types";
 import { fetchWebPage } from "./web";
 import { fetchXhsNote } from "./xhs";
+import { canReadXhsViaApify, fetchXhsViaApify } from "./xhs-apify";
 import { readXPost } from "./x";
 import { YouTubeBlockedError, fetchYouTubeVideo } from "./youtube";
 import { fetchYouTubeViaApify } from "./youtube-apify";
@@ -19,12 +21,12 @@ import { mapYtdlpInfo, ytdlpInfo, ytdlpPath } from "./ytdlp";
  *
  * | 平台 | 怎么读 | 花费 |
  * |---|---|---|
- * | 小红书 | 直接读分享页（要链接里的口令） | 免费 |
+ * | 小红书 | 直接读分享页（要链接里的口令）；没有口令（从博主那里存进来的笔记）或口令过期时走 Apify | 免费；走 Apify 时约 $0.005 / 条 |
  * | 抖音 | Apify actor | 约 $0.008 / 条 |
  * | TikTok | 直接读视频页 | 免费 |
  * | Instagram | Apify 官方 actor | 约 $0.003 / 条 |
  * | YouTube | App 的播放接口（字幕 + 360p 视频）；被拦时（云服务器上）走 Apify：一个 actor 读信息和字幕，另一个把 360p 视频下下来 | 免费；走 Apify 时约 $0.004 / 条 + 视频每分钟 $0.00001 |
- * | X | FxTwitter 公开接口 → 官方嵌入接口；提到的帖子和链接跟着读（见 follow.ts） | 免费 |
+ * | X | FxTwitter 公开接口 → 官方嵌入接口；提到的帖子和链接跟着读（见 follow.ts）；从博主那里存进来的还读他接在后面发的那一串 | 免费 |
  * | Reddit | 第三方存档 Arctic Shift（帖子 + 评论）；链接帖指向的链接跟着读；存档读不到时按网页再试一次 | 免费 |
  * | 网页 | Jina Reader → 自己抓；本机有 yt-dlp 时认别的视频站 | Jina 带密钥时 $0.0005 |
  */
@@ -46,6 +48,24 @@ async function fetchYouTube(ref: LinkRef): Promise<FetchedPost> {
     if (info) return mapYtdlpInfo(info, ref);
     if (e instanceof YouTubeBlockedError && process.env.APIFY_TOKEN?.trim()) return fetchYouTubeViaApify(ref);
     throw e;
+  }
+}
+
+/**
+ * 小红书：链接里有访问口令就直接读分享页（不花钱，还带几条高赞评论）。没有口令（从博主那里存进来的笔记只有 id）、
+ * 或者直接读读不到（口令过期是最常见的：小红书的分享链接隔一阵就失效），又配了 APIFY_TOKEN：按笔记 id 走 Apify（见 xhs-apify.ts）。
+ * Apify 那边也说没有这篇，才是真的读不到。
+ */
+async function fetchXhs(ref: LinkRef): Promise<FetchedPost> {
+  const hasToken = /[?&]xsec_token=[^&]/.test(ref.url);
+  if (!canReadXhsViaApify()) return fetchXhsNote(ref, VIDEO_MAX_BYTES);
+  if (!hasToken) return fetchXhsViaApify(ref);
+  try {
+    return await fetchXhsNote(ref, VIDEO_MAX_BYTES);
+  } catch (e) {
+    if (!(e instanceof SourceFetchError)) throw e;
+    const post = await fetchXhsViaApify(ref);
+    return { ...post, notes: ["链接里的访问口令失效了，这次是按笔记 id 另一条路读的", ...post.notes] };
   }
 }
 
@@ -78,21 +98,36 @@ async function readReddit(ref: LinkRef): Promise<Followed> {
  */
 const FOLLOW: FollowDeps = {
   readX: (r) => readXPost(r, VIDEO_MAX_BYTES),
-  readOther: async (r) => (r.platform === "reddit" ? (await readReddit(r)).post : FETCHERS[r.platform](r)),
+  readOther: async (r) => (r.platform === "reddit" ? (await readReddit(r)).post : FETCHERS[r.platform](r, {})),
   resolve: (url) => resolveLink(url),
 };
 
-const FETCHERS: Record<SourcePlatform, (ref: LinkRef) => Promise<FetchedPost>> = {
-  xiaohongshu: (ref) => fetchXhsNote(ref, VIDEO_MAX_BYTES),
+/**
+ * 一条 X 帖子，连同作者接在它后面发的那一串：后几条当成「提到的东西」排在最前面跟着读，并在正文后面（一串帖子是一条内容）。
+ * 查不到是不是一串不算失败，记一句。
+ */
+async function readXWithThread(ref: LinkRef): Promise<Followed> {
+  const read = await readXPost(ref, VIDEO_MAX_BYTES);
+  const ids = await fetchXThreadIds(ref.externalId);
+  if (ids === null) return { post: { ...read.post, notes: [...read.post.notes, "没查到作者有没有接在这条后面继续发（查一串帖子的接口这会儿读不了）"] }, mentions: read.mentions };
+  const thread: Mention[] = ids.map((id) => ({ how: "thread", url: `https://x.com/i/status/${id}`, ref: { platform: "x", externalId: id, url: `https://x.com/i/status/${id}` } }));
+  return { post: read.post, mentions: [...thread, ...read.mentions] };
+}
+
+/** thread：X 帖子把作者接在后面发的那一串也读进来（别的平台不管它） */
+export type FetchOptions = { thread?: boolean };
+
+const FETCHERS: Record<SourcePlatform, (ref: LinkRef, opts: FetchOptions) => Promise<FetchedPost>> = {
+  xiaohongshu: fetchXhs,
   douyin: (ref) => fetchDouyinVideo(ref),
   tiktok: (ref) => fetchTikTokVideo(ref, VIDEO_MAX_BYTES),
   instagram: (ref) => fetchInstagramPost(ref),
   youtube: fetchYouTube,
-  x: async (ref) => followMentions(await readXPost(ref, VIDEO_MAX_BYTES), FOLLOW),
+  x: async (ref, opts) => followMentions(opts.thread ? await readXWithThread(ref) : await readXPost(ref, VIDEO_MAX_BYTES), FOLLOW),
   reddit: async (ref) => followMentions(await readReddit(ref), FOLLOW),
   web: (ref) => fetchWebPage(ref),
 };
 
-export function fetchPost(ref: LinkRef): Promise<FetchedPost> {
-  return FETCHERS[ref.platform](ref);
+export function fetchPost(ref: LinkRef, opts: FetchOptions = {}): Promise<FetchedPost> {
+  return FETCHERS[ref.platform](ref, opts);
 }

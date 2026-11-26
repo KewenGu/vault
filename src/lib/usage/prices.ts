@@ -48,6 +48,17 @@ export const UNIT_USD: Record<string, number> = {
   [CLAUDE_WEB_SEARCH_KEY]: 0.01,
   jina_fetch: 0.0005,
   apify_douyin_post: 0.01,
+  // 列一个账号的作品（lib/sources/account-apify.ts）：按列出来的条数
+  apify_douyin_profile_post: 0.005,
+  apify_tiktok_profile_post: 0.002,
+  apify_xhs_profile_post: 0.005,
+  apify_instagram_profile_post: 0.003,
+  apify_youtube_channel_video: 0.004,
+  apify_bilibili_profile_video: 0.003,
+  // 这台服务器读不了 B 站视频时走 Apify 读一条（lib/sources/bilibili-apify.ts）
+  apify_bilibili_video: 0.003,
+  // 不带访问口令读一篇小红书笔记（lib/sources/xhs-apify.ts）
+  apify_xhs_note: 0.005,
   apify_instagram_post: 0.003,
   apify_youtube_video: 0.004,
   apify_youtube_download_minute: 0.000011,

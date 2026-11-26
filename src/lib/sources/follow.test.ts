@@ -145,3 +145,19 @@ describe("收藏夹：跟着读帖子提到的东西", () => {
     expect(got).toMatchObject({ title: "标题2", kind: "image" });
   });
 });
+
+describe("一串帖子（存一个博主的全部帖子时，作者接在后面发的那几条）", () => {
+  it("后几条按顺序接在正文后面，排在引用和链接前面；它们自己的链接照常跟着读", async () => {
+    const d = deps({
+      "2": { post: post("x", "2", { notes: ["这是回 @karpathy 的一条回复，上文没读到", "读不到回复的内容，只有回复数"] }), mentions: [to("web", "w1")] },
+      "3": { post: post("x", "3", { notes: ["这条帖子有 2 个视频，只存了第一个"] }), mentions: [] },
+      "9": { post: post("x", "9"), mentions: [] },
+    });
+    const merged = await followMentions({ post: post("x", "1"), mentions: [to("x", "2", "thread"), to("x", "3", "thread"), to("x", "9", "quote")] }, d);
+    expect(merged.text).toBe(
+      ["正文1", "【这一串的下一条：作者2】\n正文2", "【这一串的下一条里链接的网页：作者w1】《标题w1》\n正文w1", "【这一串的下一条：作者3】\n正文3", "【引用的帖子：作者9】\n正文9"].join("\n\n")
+    );
+    // 「上文没读到」对一串帖子的后几条不成立，不带进来；别的情况照常带
+    expect(merged.notes).toEqual(["这一串的下一条（作者3）：这条帖子有 2 个视频，只存了第一个"]);
+  });
+});

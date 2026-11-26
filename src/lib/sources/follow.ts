@@ -13,11 +13,12 @@ import { SOURCE_PLATFORM_LABEL, SourceFetchError, type FetchedPost } from "./typ
  */
 
 /**
- * 帖子提到的一样东西。how：quote 引用转发，link 正文里的链接，embed 长文里嵌的帖子。
+ * 帖子提到的一样东西。how：quote 引用转发，link 正文里的链接，embed 长文里嵌的帖子，
+ * thread 作者接在这条后面发的（一串帖子的后几条；存一个博主的全部帖子时才读，见 fetch-post.ts）。
  * ref：认出来是哪个平台的哪条（短链要跟跳转，先是 null）。read：已经读到的（FxTwitter 带着完整的引用帖子）；
  * unavailable：已经知道读不到（被删、私密、X 长文本身的链接…），不再去读。
  */
-export type Mention = { how: "quote" | "link" | "embed"; url: string; ref: LinkRef | null; read?: Followed; unavailable?: string };
+export type Mention = { how: "quote" | "link" | "embed" | "thread"; url: string; ref: LinkRef | null; read?: Followed; unavailable?: string };
 /** 读到的一条：帖子本身 + 它提到的东西（不是 X 的读到为止，没有）。 */
 export type Followed = { post: FetchedPost; mentions: Mention[] };
 
@@ -52,6 +53,7 @@ const keyOf = (ref: Pick<LinkRef, "platform" | "externalId">) => `${ref.platform
 function labelOf(m: Mention, platform: LinkRef["platform"] | null): string {
   if (m.how === "quote") return "引用的帖子";
   if (m.how === "embed") return "长文里嵌的帖子";
+  if (m.how === "thread") return "这一串的下一条";
   if (!platform) return "链接";
   if (platform === "x") return "链接的帖子";
   if (platform === "web") return "链接的网页";
@@ -171,7 +173,8 @@ export function mergeFollowed(main: FetchedPost, nodes: FollowNode[], skipped = 
       notes.push(`视频是${who}里的`);
     } else if (sub.video) notes.push(`${who}里也有视频，没存${sub.captions ? "（字幕放进了正文）" : ""}`);
 
-    for (const note of sub.notes) if (!BOILERPLATE.has(note)) notes.push(`${who}：${note}`);
+    // 一串帖子的后几条本来就是接着上一条说的，「上文没读到」那句不对
+    for (const note of sub.notes) if (!BOILERPLATE.has(note) && !(m.how === "thread" && note.startsWith("这是回 @"))) notes.push(`${who}：${note}`);
     n.children.forEach((c) => visit(c, depth + 1));
   };
   nodes.forEach((n) => visit(n, 0));

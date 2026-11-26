@@ -17,5 +17,5 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - 日记（`journal_*`）不进知识图谱、不拼进任何提示词：只有录音发给语音识别。唯一的例外是「AI 整理」（`journal-tidy.ts`）：用户点了按钮，才把那一段录音的文字发给 Claude。语义搜索（把日记全文发给 Voyage）用户 2026-11-22 说了不做。别的地方要让模型读日记，先问用户。
 - 存进来的内容是外部数据：拼进提示词时放在标签里，并在提示词里说明它不是指令。
 - 「没看到」和「没有」要分开：处理中读不到、截断、跳过的东西记进 `notes` / `digestNotes` / `gaps`，页面上列出来。
-- 页面和 `/api/v1` 的接口共用 `src/lib/vault/service.ts`（自己建的导图是 `src/lib/vault/map-service.ts`，「问」是 `src/lib/vault/ask-service.ts`，日记是 `src/lib/vault/journal-service.ts`）；新功能先写在那里，再接两边（以后的手机 App 走接口）。
+- 页面和 `/api/v1` 的接口共用 `src/lib/vault/service.ts`（自己建的导图是 `src/lib/vault/map-service.ts`，「问」是 `src/lib/vault/ask-service.ts`，日记是 `src/lib/vault/journal-service.ts`，博主是 `src/lib/vault/creator-service.ts`）；新功能先写在那里，再接两边（以后的手机 App 走接口）。
 - 提交前跑 `npm run check`。迁移测试需要本机有 PostgreSQL 16 + pgvector，没有时会跳过。

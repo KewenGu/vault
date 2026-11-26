@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { LinkError, extractShareUrl, parseLink, platformOfHost, resolveLink } from "./link";
+import { LinkError, extractShareUrl, parseAccountLink, parseLink, platformOfHost, resolveLink, resolveTarget } from "./link";
 
 const redirectTo = (location: string) => new Response(null, { status: 302, headers: { location } });
 
@@ -205,3 +205,143 @@ vi.mock("@/lib/network/public-fetch", async (original) => ({
   ...await original<typeof import("@/lib/network/public-fetch")>(),
   publicFetch: (url: string, options: import("@/lib/network/public-fetch").PublicFetchOptions = {}) => fetch(url, { headers: options.headers, method: options.method, redirect: options.redirect, signal: options.signal ?? AbortSignal.timeout(options.timeoutMs ?? 20_000) }),
 }));
+
+describe("账号的主页（存一个博主的全部作品用）", () => {
+  const SEC = "MS4wLjABAAAAk1tZ-L085zZf2yW_H5dnVFZWyk8Rt8v4RAvf9KhTyPoVdMDxTs7Q_rvgTJGWXezS";
+
+  it("X：x.com/<用户名>，带分栏的也算；功能页、帖子不算", () => {
+    expect(parseAccountLink("https://x.com/Karpathy")).toEqual({ platform: "x", externalId: "karpathy", handle: "@Karpathy", url: "https://x.com/Karpathy" });
+    expect(parseAccountLink("https://twitter.com/karpathy/with_replies?lang=en")?.externalId).toBe("karpathy");
+    expect(parseAccountLink("https://x.com/karpathy/media/")?.url).toBe("https://x.com/karpathy");
+    for (const path of ["home", "explore", "search?q=ai", "i/bookmarks", "settings/account", "karpathy/status/2106418403661779046", "karpathy/followers", "this_name_is_way_too_long"]) {
+      expect(parseAccountLink(`https://x.com/${path}`), path).toBeNull();
+    }
+  });
+
+  it("TikTok：tiktok.com/@<用户名>；视频的链接不算", () => {
+    expect(parseAccountLink("https://www.tiktok.com/@TedToks?lang=en")).toEqual({ platform: "tiktok", externalId: "tedtoks", handle: "@TedToks", url: "https://www.tiktok.com/@TedToks" });
+    expect(parseAccountLink("https://www.tiktok.com/@scout2015/video/6718335390845095173")).toBeNull();
+    expect(parseAccountLink("https://www.tiktok.com/tag/cooking")).toBeNull();
+    expect(parseAccountLink("https://www.tiktok.com/@_")).toBeNull();
+  });
+
+  it("抖音：douyin.com/user/<sec_uid> 和分享出来的 iesdouyin.com/share/user/<sec_uid>；主页上打开的视频算帖子", () => {
+    const ref = { platform: "douyin", externalId: SEC, handle: "", url: `https://www.douyin.com/user/${SEC}` };
+    expect(parseAccountLink(`https://www.douyin.com/user/${SEC}?from_tab_name=main`)).toEqual(ref);
+    expect(parseAccountLink(`https://www.iesdouyin.com/share/user/${SEC}?u_code=abc&did=1`)).toEqual(ref);
+    expect(parseAccountLink("https://www.douyin.com/user/self")).toBeNull();
+    expect(parseAccountLink(`https://www.douyin.com/user/${SEC}?modal_id=7300000000000000000`)).toBeNull();
+    expect(parseLink(`https://www.douyin.com/user/${SEC}?modal_id=7300000000000000000`)?.externalId).toBe("7300000000000000000");
+  });
+
+  it("小红书：xiaohongshu.com/user/profile/<用户 id>，分享口令不留；从主页点开的笔记算帖子", () => {
+    const uid = "5c0892a5000000000500f3b6";
+    const ref = { platform: "xiaohongshu", externalId: uid, handle: "", url: `https://www.xiaohongshu.com/user/profile/${uid}` };
+    expect(parseAccountLink(`https://www.xiaohongshu.com/user/profile/${uid}?xsec_token=ABC&xsec_source=app_share`)).toEqual(ref);
+    expect(parseAccountLink(`https://www.xiaohongshu.com/user/profile/${uid.toUpperCase()}/`)).toEqual(ref);
+    expect(parseAccountLink(`https://www.xiaohongshu.com/user/profile/${uid}/6b055607000000002b010f45?xsec_token=ABC`)).toBeNull();
+    expect(parseLink(`https://www.xiaohongshu.com/user/profile/${uid}/6b055607000000002b010f45?xsec_token=ABC`)?.externalId).toBe("6b055607000000002b010f45");
+    expect(parseAccountLink("https://www.xiaohongshu.com/user/profile/abc")).toBeNull();
+    expect(parseAccountLink("https://xhslink.com/m/Ap1vXtgAixh")).toBeNull();
+  });
+
+  it("Instagram：instagram.com/<用户名>，带分栏的也算；帖子、功能页、快拍不算", () => {
+    expect(parseAccountLink("https://www.instagram.com/NatGeo/?hl=en")).toEqual({ platform: "instagram", externalId: "natgeo", handle: "@NatGeo", url: "https://www.instagram.com/NatGeo/" });
+    expect(parseAccountLink("https://instagram.com/nat.geo_1/reels/")?.externalId).toBe("nat.geo_1");
+    expect(parseAccountLink("https://www.instagram.com/natgeo/tagged")?.url).toBe("https://www.instagram.com/natgeo/");
+    for (const path of ["p/DgLcatkmlPq/", "reel/Chunk8-jurw/", "natgeo/p/DgLcatkmlPq/", "natgeo/reel/Chunk8-jurw/", "explore/", "reels/", "stories/natgeo/", "accounts/login/", "share/reel/BAbc123xyz", "natgeo/followers/"]) {
+      expect(parseAccountLink(`https://www.instagram.com/${path}`), path).toBeNull();
+    }
+    expect(parseLink("https://www.instagram.com/natgeo/p/DgLcatkmlPq/")?.externalId).toBe("DgLcatkmlPq");
+  });
+
+  it("YouTube：频道的四种写法，带分栏的也算；视频、播放列表、别的页面不算", () => {
+    expect(parseAccountLink("https://www.youtube.com/@3Blue1Brown")).toEqual({ platform: "youtube", externalId: "@3blue1brown", handle: "@3Blue1Brown", url: "https://www.youtube.com/@3Blue1Brown" });
+    expect(parseAccountLink("https://m.youtube.com/@3blue1brown/videos?view=0")?.url).toBe("https://www.youtube.com/@3blue1brown");
+    expect(parseAccountLink("https://www.youtube.com/@3blue1brown/shorts/")?.externalId).toBe("@3blue1brown");
+    // 名字不是英文的（地址里转义过）
+    expect(parseAccountLink("https://www.youtube.com/@%E8%80%81%E9%AB%98")).toEqual({ platform: "youtube", externalId: "@老高", handle: "@老高", url: "https://www.youtube.com/@%E8%80%81%E9%AB%98" });
+    // 频道 id 区分大小写，原样留着
+    expect(parseAccountLink("https://www.youtube.com/channel/UCYO_jab_esuFRV4b17AJtAw/featured")).toEqual({ platform: "youtube", externalId: "UCYO_jab_esuFRV4b17AJtAw", handle: "", url: "https://www.youtube.com/channel/UCYO_jab_esuFRV4b17AJtAw" });
+    expect(parseAccountLink("https://www.youtube.com/c/3Blue1Brown")?.externalId).toBe("c/3blue1brown");
+    expect(parseAccountLink("https://www.youtube.com/user/Vsauce/videos")?.url).toBe("https://www.youtube.com/user/Vsauce");
+    for (const path of ["watch?v=jNQXAC9IVRw", "shorts/jNQXAC9IVRw", "playlist?list=PL123", "feed/subscriptions", "results?search_query=math", "channel/notAnId", "@3blue1brown/videos/extra", "hashtag/math"]) {
+      expect(parseAccountLink(`https://www.youtube.com/${path}`), path).toBeNull();
+    }
+    expect(parseAccountLink("https://youtu.be/@3blue1brown")).toBeNull();
+  });
+
+  it("B 站：space.bilibili.com/<数字 id>，带分栏的也算；视频、别的页面不算", () => {
+    const ref = { platform: "bilibili", externalId: "88461692", handle: "", url: "https://space.bilibili.com/88461692" };
+    expect(parseAccountLink("https://space.bilibili.com/88461692?spm_id_from=333.337.0.0")).toEqual(ref);
+    expect(parseAccountLink("https://space.bilibili.com/88461692/video")).toEqual(ref);
+    expect(parseAccountLink("https://space.bilibili.com/88461692/upload/video/")).toEqual(ref);
+    expect(parseAccountLink("https://m.bilibili.com/space/88461692")).toEqual(ref);
+    for (const url of ["https://www.bilibili.com/video/BV1u7hQ6rEQB", "https://space.bilibili.com/", "https://space.bilibili.com/abc", "https://space.bilibili.com/88461692/video/extra/more", "https://www.bilibili.com/read/cv123", "https://space.bilibili.com.evil.io/88461692", "https://b23.tv/AbCdEf1"]) {
+      expect(parseAccountLink(url), url).toBeNull();
+    }
+  });
+
+  it("B 站的视频页整理成同一个写法（同一个视频只收藏一次）：来源参数、手机版域名、末尾的斜杠都不算不同；分 P 的留着", () => {
+    const canonical = parseLink("https://www.bilibili.com/video/BV1u7hQ6rEQB");
+    expect(canonical).toMatchObject({ platform: "web", url: "https://www.bilibili.com/video/BV1u7hQ6rEQB" });
+    for (const url of ["https://www.bilibili.com/video/BV1u7hQ6rEQB/?spm_id_from=333.1007.tianma.1-1-1.click&vd_source=abc123", "http://m.bilibili.com/video/BV1u7hQ6rEQB?share_source=copy_web&t=35", "https://bilibili.com/video/BV1u7hQ6rEQB/?p=1"]) {
+      expect(parseLink(url), url).toEqual(canonical);
+    }
+    const part = parseLink("https://www.bilibili.com/video/BV1u7hQ6rEQB/?p=3&vd_source=abc");
+    expect(part?.url).toBe("https://www.bilibili.com/video/BV1u7hQ6rEQB?p=3");
+    expect(part?.externalId).not.toBe(canonical?.externalId);
+    // 不是 BV 号的视频页、别的站不动
+    expect(parseLink("https://www.bilibili.com/video/av170001/?a=1")?.url).toBe("https://www.bilibili.com/video/av170001/?a=1");
+    expect(parseLink("https://notbilibili.com/video/BV1u7hQ6rEQB/?a=1")?.url).toBe("https://notbilibili.com/video/BV1u7hQ6rEQB/?a=1");
+  });
+
+  it("B 站的短链（b23.tv）：跟一次跳转，落在主页上才算账号；落在视频上、跳不动的照旧按网页存这条短链", async () => {
+    const toSpace = vi.fn<(service: string, url: string, init?: RequestInit) => Promise<Response>>(async () => redirectTo("https://space.bilibili.com/88461692?share_medium=android&share_source=copy_link"));
+    expect(await resolveTarget("https://b23.tv/AbCdEf1", toSpace)).toEqual({ kind: "account", ref: { platform: "bilibili", externalId: "88461692", handle: "", url: "https://space.bilibili.com/88461692" } });
+    expect(toSpace.mock.calls[0][0]).toBe("B 站短链");
+    const toVideo = vi.fn(async () => redirectTo("https://www.bilibili.com/video/BV1u7hQ6rEQB?share_source=copy_link"));
+    expect(await resolveTarget("https://b23.tv/AbCdEf1", toVideo)).toMatchObject({ kind: "post", ref: { platform: "web", url: "https://b23.tv/AbCdEf1" } });
+    const broken = vi.fn(async () => {
+      throw new Error("连接失败");
+    });
+    expect(await resolveTarget("https://b23.tv/AbCdEf1", broken)).toMatchObject({ kind: "post", ref: { platform: "web", url: "https://b23.tv/AbCdEf1" } });
+    // 别的网站不发请求
+    const never = vi.fn(async () => new Response("", { status: 200 }));
+    await resolveTarget("https://example.com/a", never);
+    expect(never).not.toHaveBeenCalled();
+  });
+
+  it("B 站的主页在跟着读别的帖子提到的链接时照旧当网页（它不是认得的平台）", async () => {
+    const never = vi.fn(async () => new Response("", { status: 200 }));
+    expect(await resolveLink("https://space.bilibili.com/88461692/video", never)).toMatchObject({ platform: "web", url: "https://space.bilibili.com/88461692" });
+    expect((await resolveTarget("https://space.bilibili.com/88461692/video", never)).kind).toBe("account");
+  });
+
+  it("别的平台的主页、别的网站不算账号", () => {
+    expect(parseAccountLink("https://www.reddit.com/user/someone")).toBeNull();
+    expect(parseAccountLink("https://example.com/@someone")).toBeNull();
+    expect(parseAccountLink("随便一段话")).toBeNull();
+  });
+
+  it("resolveTarget：帖子和主页分得开；App 里「分享主页」的短链跟着跳转认出账号", async () => {
+    const never = vi.fn(async () => new Response("<html>", { status: 200 }));
+    expect(await resolveTarget("https://x.com/karpathy", never)).toEqual({ kind: "account", ref: { platform: "x", externalId: "karpathy", handle: "@karpathy", url: "https://x.com/karpathy" } });
+    expect(await resolveTarget("https://x.com/karpathy/status/2106418403661779046", never)).toMatchObject({ kind: "post", ref: { platform: "x", externalId: "2106418403661779046" } });
+    expect(await resolveTarget("https://example.com/a", never)).toMatchObject({ kind: "post", ref: { platform: "web" } });
+    // 直接认得出的不发请求
+    expect(never).not.toHaveBeenCalled();
+    const douyin = vi.fn<(service: string, url: string, init?: RequestInit) => Promise<Response>>(async () => redirectTo(`https://www.iesdouyin.com/share/user/${SEC}?iid=1&u_code=2`));
+    expect(await resolveTarget("https://v.douyin.com/iAbCdEf/", douyin)).toEqual({ kind: "account", ref: { platform: "douyin", externalId: SEC, handle: "", url: `https://www.douyin.com/user/${SEC}` } });
+    const tiktok = vi.fn<(service: string, url: string, init?: RequestInit) => Promise<Response>>(async () => redirectTo("https://www.tiktok.com/@tedtoks?_t=abc&_r=1"));
+    expect((await resolveTarget("https://vm.tiktok.com/ZMabc123/", tiktok)).kind).toBe("account");
+    const xhs = vi.fn<(service: string, url: string, init?: RequestInit) => Promise<Response>>(async () => redirectTo("https://www.xiaohongshu.com/user/profile/5c0892a5000000000500f3b6?xsec_token=ABC&xsec_source=app_share&xhsshare=CopyLink"));
+    expect(await resolveTarget("https://xhslink.com/m/Ap1vXtgAixh", xhs)).toMatchObject({ kind: "account", ref: { platform: "xiaohongshu", externalId: "5c0892a5000000000500f3b6" } });
+  });
+
+  it("resolveLink（跟着读别的帖子提到的链接时用）不把主页当帖子：照旧说认不出", async () => {
+    const never = vi.fn(async () => new Response("<html>", { status: 200 }));
+    await expect(resolveLink("https://x.com/karpathy", never)).rejects.toThrow(/没认出这是哪条帖子/);
+    await expect(resolveLink("https://www.tiktok.com/@tedtoks", never)).rejects.toThrow(/没认出这是哪个视频/);
+  });
+});
