@@ -3,7 +3,7 @@ import { publicHttpUrl } from "@/lib/network/public-ip";
 import "server-only";
 import { nativeEnvironment, nativePythonSetupError, spawnNative, stopNativeProcess } from "@/lib/node/native-process";
 import { existsSync } from "node:fs";
-import { readdir, readFile, stat } from "node:fs/promises";
+import { copyFile, readdir, rename, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { assertFfmpegBinary, ffmpegPath, withTempDir } from "@/lib/media/ffmpeg";
@@ -216,8 +216,12 @@ export async function ytdlpInfo(url: string, timeoutMs = 45_000): Promise<YtdlpI
 }
 
 /**
- * 挑哪一档下：不超过上限的最好画质（≤ 1080p）。有 ffmpeg 时可以把分开的画面 + 声音合成一个 mp4（画面留 72% 的额度，
+ * 挑哪一档下（第一步，见 ytdlpDownloadToFile）：不超过上限的最好画质（≤ 1080p）。有 ffmpeg 时可以把分开的画面 + 声音合成一个 mp4（画面留 72% 的额度，
  * 剩下给声音）；没有 ffmpeg 只能下本来就是一个文件的 mp4。大小未知的档放最后，由 --max-filesize 兜着。
+ *
+ * 声音也按额度挑（2026-11-26 起）：以前只管画面，声音一律要最好的——B 站一条 40 分钟的视频，画面挑了 30 MB 的 720p，
+ * 配上 160 kbps 的声音（48 MB）合起来 77 MB，下完才发现超了。现在先找「画面和声音各在额度里」的搭配（那条视频是
+ * 720p + 46 kbps，约 44 MB），找不到再退回只管画面的老办法。短视频最好的声音本来就在额度里，挑到的不变。
  */
 export const YTDLP_PROTOCOL_FILTER = '[protocol~="^(https?|http_dash_segments|m3u8_native)$"]';
 const publicFormats = (formats: string[]) => formats.map((format) => format.split("+").map((part) => `${part}${YTDLP_PROTOCOL_FILTER}`).join("+")).join("/");
@@ -225,12 +229,17 @@ const publicFormats = (formats: string[]) => formats.map((format) => format.spli
 export function formatSelector(maxBytes: number, canMerge: boolean): string {
   const whole = `${Math.floor(maxBytes / 1e6)}M`;
   const part = `${Math.floor((maxBytes * 0.72) / 1e6)}M`;
+  const sound = `${Math.floor((maxBytes * 0.28) / 1e6)}M`;
   const single = [`b[ext=mp4][height<=1080][filesize<${whole}]`, `b[ext=mp4][height<=1080][filesize_approx<${whole}]`];
   if (!canMerge) return publicFormats([...single, "b[ext=mp4][height<=720]"]);
   return publicFormats([
+    `bv*[vcodec^=avc1][height<=1080][filesize<${part}]+ba[ext=m4a][filesize<${sound}]`,
+    `bv*[vcodec^=avc1][height<=1080][filesize_approx<${part}]+ba[ext=m4a][filesize_approx<${sound}]`,
     `bv*[vcodec^=avc1][height<=1080][filesize<${part}]+ba[ext=m4a]`,
     `bv*[vcodec^=avc1][height<=1080][filesize_approx<${part}]+ba[ext=m4a]`,
     ...single,
+    `bv*[height<=1080][filesize<${part}]+ba[filesize<${sound}]`,
+    `bv*[height<=1080][filesize_approx<${part}]+ba[filesize_approx<${sound}]`,
     `bv*[height<=1080][filesize<${part}]+ba`,
     `bv*[height<=1080][filesize_approx<${part}]+ba`,
     "b[height<=720]",
@@ -238,21 +247,43 @@ export function formatSelector(maxBytes: number, canMerge: boolean): string {
   ]);
 }
 
-/** 用 yt-dlp 把视频下下来（mp4）。超过上限抛 TooLargeError；本机没装 / 下不了抛普通错误。 */
-export async function ytdlpDownload(url: string, maxBytes: number, timeoutMs = 240_000): Promise<Uint8Array> {
-  const bin = ytdlpPath();
-  if (!bin) throw new Error("这台机器没有 yt-dlp");
-  const ffmpeg = ffmpegPath();
-  if (ffmpeg) await assertFfmpegBinary(ffmpeg);
+/**
+ * 存档上限以内挑不出来（视频太长）时挑哪一档：这时只是为了读内容（抽画面、转写），要小的——360p 以内的最好画质，
+ * 没有 360p 以内的再 480p、720p；这些都对不上（有的站不报画面高度）就要最差的那一档。
+ * 大小不看标称的（很多站不给），由 --max-filesize（读取上限）兜着。
+ */
+export function readFormatSelector(canMerge: boolean): string {
+  const heights = [360, 480, 720];
+  if (!canMerge) return publicFormats([...heights.map((h) => `b[ext=mp4][height<=${h}]`), "w[ext=mp4]"]);
+  // 声音不用最好的：转写用 128 kbps 以内的就够，长视频能小几十 MB（站点不报码率时退回最好的）
+  const merged = (h: number) => [`bv*[vcodec^=avc1][height<=${h}]+ba[ext=m4a][abr<=128]`, `bv*[vcodec^=avc1][height<=${h}]+ba[ext=m4a]`, `b[ext=mp4][height<=${h}]`, `bv*[height<=${h}]+ba`, `b[height<=${h}]`];
+  return publicFormats([...heights.flatMap(merged), "w[ext=mp4]", "w"]);
+}
+
+/** 把下好的文件搬到调用方要的位置（跨了文件系统就复制）。 */
+async function moveFile(from: string, to: string): Promise<void> {
+  try {
+    await rename(from, to);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "EXDEV") throw e;
+    await copyFile(from, to);
+  }
+}
+
+/**
+ * 按一种挑法下一次，下到 dest，返回字节数。partMaxBytes：yt-dlp 下的每一个文件（画面、声音各算一个）最多多大；
+ * acceptBytes：合好的文件最多多大。挑不出来、合出来超了抛 TooLargeError。
+ */
+async function downloadOnce(bin: string, ffmpeg: string | null, url: string, dest: string, selector: string, partMaxBytes: number, acceptBytes: number, timeoutMs: number): Promise<number> {
   return withTempDir(async (dir) => {
     const args = [
       ...COMMON,
       "-q",
       "--no-progress",
       "-f",
-      formatSelector(maxBytes, ffmpeg !== null),
+      selector,
       "--max-filesize",
-      String(maxBytes),
+      String(partMaxBytes),
       ...(ffmpeg ? ["--ffmpeg-location", ffmpeg, "--merge-output-format", "mp4", "--remux-video", "mp4"] : []),
       "-o",
       path.join(dir, "dl.%(ext)s"),
@@ -269,7 +300,36 @@ export async function ytdlpDownload(url: string, maxBytes: number, timeoutMs = 2
     }
     const full = path.join(dir, file);
     const { size } = await stat(full);
-    if (size > maxBytes) throw new TooLargeError(size);
-    return new Uint8Array(await readFile(full));
+    if (size > acceptBytes) throw new TooLargeError(size);
+    await moveFile(full, dest);
+    return size;
   });
+}
+
+/**
+ * 用 yt-dlp 把视频下到 dest（mp4），返回字节数。文件直接落在磁盘上，不进内存。分两步挑清晰度：
+ *
+ * 1. 先要存得进存储桶的：不超过存档上限（storeMaxBytes）的最好画质（formatSelector）。短视频都走这一步，页面上放的就是它。
+ *    下下来合好才发现超了存档上限的（站点报的大小不准、没报）：没超读取上限就用这一份，不重新下。
+ * 2. 挑不出来（视频太长，最低的一档也超过存档上限）：只为了读内容，下一档小的（readFormatSelector），最多到读取上限
+ *    （readMaxBytes）。
+ * 超过存档上限的那一份，调用方会留在服务器的磁盘上（和别的平台的大视频一样）。
+ *
+ * 2026-11-26 以前只有第 1 步：超过存档上限（默认 50 MB）的一律不下，B 站一条 34 分钟的讲解刚好卡在线上，
+ * 再长的只读得到标题和简介。超过读取上限抛 TooLargeError；本机没装 / 下不了抛普通错误。
+ */
+export async function ytdlpDownloadToFile(url: string, dest: string, limits: { storeMaxBytes: number; readMaxBytes: number }): Promise<number> {
+  const bin = ytdlpPath();
+  if (!bin) throw new Error("这台机器没有 yt-dlp");
+  const ffmpeg = ffmpegPath();
+  if (ffmpeg) await assertFfmpegBinary(ffmpeg);
+  try {
+    return await downloadOnce(bin, ffmpeg, url, dest, formatSelector(limits.storeMaxBytes, ffmpeg !== null), limits.storeMaxBytes, Math.max(limits.storeMaxBytes, limits.readMaxBytes), 240_000);
+  } catch (e) {
+    // 「没有对得上的档」也算第一步挑不出来：标了大小的档都超了、剩下的又不报画面高度时 yt-dlp 是这么说的
+    const nothingFits = e instanceof TooLargeError || (e instanceof Error && /Requested format is not available/i.test(e.message));
+    if (!nothingFits || limits.readMaxBytes <= limits.storeMaxBytes) throw e;
+  }
+  // 大文件下得久：和直接下载的视频一样给 10 分钟
+  return downloadOnce(bin, ffmpeg, url, dest, readFormatSelector(ffmpeg !== null), limits.readMaxBytes, limits.readMaxBytes, 600_000);
 }
