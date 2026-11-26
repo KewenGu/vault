@@ -5,6 +5,7 @@ import { AutoRefresh } from "@/components/auto-refresh";
 import { ImageCarousel } from "@/components/image-carousel";
 import { LocalDate } from "@/components/local-date";
 import { MindMap } from "@/components/mind-map";
+import { RelatedItems } from "@/components/related-items";
 import { PLAYER_ID, SeekTime } from "@/components/seek-time";
 import { requireSession } from "@/lib/auth/user";
 import { entitiesOfItem } from "@/lib/graph/data";
@@ -13,6 +14,7 @@ import { POST_STAT_KEYS, formatCount, postNotes, statLabel, type ItemMedia } fro
 import { audioOf, displayTitle, getItem, imagesOf, inProgress, isStuck, itemFileUrl, sheetsOf, sourceLabel, videoOf } from "@/lib/vault/store";
 import { creatorOfItem, creatorTitle } from "@/lib/vault/creator-store";
 import { VaultError } from "@/lib/vault/errors";
+import { findRelated, type Related } from "@/lib/vault/related";
 import { CATEGORY_LABEL, CONTENT_TYPE_INFO, ENTITY_TYPE_INFO } from "@/lib/vault/taxonomy";
 import { hasTraceMaterial } from "@/lib/vault/trace";
 import { getTrace, traceRunning, type ItemTrace } from "@/lib/vault/trace-store";
@@ -79,6 +81,16 @@ export default async function ItemPage({ params }: Props) {
   const busy = inProgress(item);
   const stuck = isStuck(item);
   const failed = item.status === "failed" || stuck;
+  // 相关的内容：这条处理好了才找（不调模型）。找的时候出错只影响这一块，别的照常显示
+  let related: Related = { items: [], notes: [] };
+  if (item.status === "ready") {
+    try {
+      related = await findRelated(db, user.id, item, entities);
+    } catch (e) {
+      console.error(`详情页：找相关内容出错 item=${id}: ${e instanceof Error ? e.message : String(e)}`);
+      related = { items: [], notes: ["这次没能找相关的内容（出错了），刷新再试"] };
+    }
+  }
   const canSeek = !!(video || audio);
   const transcript = item.transcript ? parseTranscript(item.transcript) : [];
   const body = item.userText || item.post.text;
@@ -286,6 +298,8 @@ export default async function ItemPage({ params }: Props) {
             </ul>
           </Section>
         )}
+
+        <RelatedItems related={related} />
 
         <MetaForm id={item.id} note={item.note} tags={item.tags} />
 
