@@ -5,7 +5,7 @@ import { assertSafeUrl } from "@/lib/network/safe-url";
 import type { LinkRef } from "./link";
 import { downloadRemote } from "@/lib/media/files";
 import { SourceFetchError, emptyStats, type FetchedPost, type PostLink, type RemoteFile } from "./types";
-import { mapYtdlpInfo, ytdlpInfo } from "./ytdlp";
+import { mapYtdlpInfo, ytdlpProbe } from "./ytdlp";
 import type { PageCapture } from "@/lib/vault/page-capture";
 
 /**
@@ -229,12 +229,25 @@ export function parseHtmlPage(html: string, url: string): PageRead {
   };
 }
 
+/**
+ * 这个站要按中文浏览器去读：不说的话 Jina 那边的浏览器是英文的，B 站会给一份机器翻译成英文的页面
+ * （标题、简介、界面都是英文。2026-11-26 线上一条 B 站视频存成了英文标题；带上 `x-locale: zh-CN` 实测拿到的是原文）。
+ * 只列确认过的站：别的网站按中文去读，有的会换成机器翻译的中文版。
+ */
+const wantsChinese = (url: string): boolean => {
+  try {
+    return /(^|\.)bilibili\.com$/i.test(new URL(url).hostname);
+  } catch {
+    return false;
+  }
+};
+
 /** 问一次 Jina Reader。返回读到的网页；null = 这次没读成（status 说为什么）。 */
 async function jina(url: string, key: string | null): Promise<{ status: number; page: PageRead | null }> {
   let res: Response;
   try {
     res = await publicFetch(`https://r.jina.ai/${url}`, {
-      headers: { accept: "application/json", "x-return-format": "markdown", "x-with-images-summary": "true", ...(key ? { authorization: `Bearer ${key}` } : {}) },
+      headers: { accept: "application/json", "x-return-format": "markdown", "x-with-images-summary": "true", ...(wantsChinese(url) ? { "x-locale": "zh-CN" } : {}), ...(key ? { authorization: `Bearer ${key}` } : {}) },
       signal: AbortSignal.timeout(30_000),
     });
   } catch {
@@ -343,11 +356,24 @@ export function mapPage(page: PageRead, ref: LinkRef): FetchedPost {
 export async function fetchWebPage(ref: LinkRef): Promise<FetchedPost> {
   if (!assertSafeUrl(ref.url)) throw new SourceFetchError("这个地址读不了（指向本机或内网）");
   // 认得的视频站（本机有 yt-dlp 才问得到）
-  const video = await ytdlpInfo(ref.url).catch(() => null);
+  const { info: video, failed } = await ytdlpProbe(ref.url).catch(() => ({ info: null, failed: null }));
   if (video && !video.isLive && video.durationS) {
     const post = mapYtdlpInfo(video, ref);
     return { ...post, title: post.title || new URL(ref.url).hostname };
   }
+  // yt-dlp 认出这是视频、但没读到：照样按网页读，但要说清楚（不然看起来就是一篇普通的网页）
+  if (failed) return withVideoMiss(await readWebPage(ref), failed);
+  return readWebPage(ref);
+}
+
+/** 这个链接本来是个视频，yt-dlp 没读到：记一句是哪一步没成、这次少了什么。 */
+function withVideoMiss(post: FetchedPost, failed: { extractor: string; why: string }): FetchedPost {
+  const site = failed.extractor ? `（${failed.extractor}）` : "";
+  return { ...post, notes: [`这个链接是一个视频${site}，这台服务器上的 yt-dlp 没读到：${failed.why}。这次只按网页读了页面上的字，视频的画面和里面说的话都没读到`, ...post.notes] };
+}
+
+/** 按网页读（Jina → 自己抓）。 */
+async function readWebPage(ref: LinkRef): Promise<FetchedPost> {
   const page = await readPage(ref.url);
   const blocked = !page || looksLikeVerifyWall(page);
   if (blocked && isWeixin(ref.url)) throw new SourceFetchError(WEIXIN_BLOCKED);

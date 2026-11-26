@@ -2,10 +2,10 @@ import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { meterInto } from "@/lib/usage/meter";
 import { SourceFetchError } from "./types";
 
-vi.mock("./ytdlp", async (orig) => ({ ...(await orig<object>()), ytdlpInfo: vi.fn() }));
+vi.mock("./ytdlp", async (orig) => ({ ...(await orig<object>()), ytdlpProbe: vi.fn() }));
 
 import { JINA_COUNT_KEY, WEIXIN_BLOCKED, cleanMarkdown, dropPreamble, fetchWebPage, looksLikeLoginWall, looksLikeVerifyWall, mapCapture, mapJinaData, mapPage, markdownLinks, outboundLinks, parseHtmlPage, readPage, usableImage, type PageRead } from "./web";
-import { ytdlpInfo } from "./ytdlp";
+import { ytdlpProbe } from "./ytdlp";
 
 const body = "这是一篇讲怎么做内容的长文。".repeat(20);
 /** 按 r.jina.ai 真实返回的形状缩出来的（2026-10）。 */
@@ -23,7 +23,8 @@ const jina = (data: unknown, status = 200) => new Response(JSON.stringify({ code
 const ref = { platform: "web" as const, externalId: "h", url: "https://simonwillison.net/2024/Dec/31/llms-in-2024/" };
 const page = (over: Partial<PageRead> = {}): PageRead => ({ title: "标题", description: "摘要", text: body, cover: null, images: [], author: "", site: "", publishedAt: null, via: "jina", ...over });
 
-beforeEach(() => vi.mocked(ytdlpInfo).mockReset().mockResolvedValue(null));
+const noVideo = { info: null, failed: null };
+beforeEach(() => vi.mocked(ytdlpProbe).mockReset().mockResolvedValue(noVideo));
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
@@ -175,17 +176,17 @@ describe("收藏夹：读网页", () => {
     expect(await fetchWebPage(ref)).toMatchObject({ kind: "article", title: "Things we learned about LLMs in 2024", author: { name: "Simon Willison · Simon Willison’s Weblog" } });
 
     const info = { id: "BV1", title: "", description: "简介", uploader: "UP主", uploaderId: null, durationS: 272.5, publishedAt: null, views: 10, likes: 2, comments: null, shares: null, thumbnail: null, width: 1920, height: 1080, tags: [], extractor: "BiliBili", isLive: false };
-    vi.mocked(ytdlpInfo).mockResolvedValue(info);
+    vi.mocked(ytdlpProbe).mockResolvedValue({ info, failed: null });
     const video = await fetchWebPage({ ...ref, url: "https://www.bilibili.com/video/BV1" });
     expect(video).toMatchObject({ platform: "web", externalId: "h", kind: "video", title: "www.bilibili.com", video: { url: "https://www.bilibili.com/video/BV1", via: "ytdlp" }, stats: { views: 10, likes: 2 } });
     // 直播、没有时长的不按视频收：照常读网页
-    vi.mocked(ytdlpInfo).mockResolvedValue({ ...info, isLive: true });
+    vi.mocked(ytdlpProbe).mockResolvedValue({ info: { ...info, isLive: true }, failed: null });
     expect((await fetchWebPage(ref)).kind).toBe("article");
     // yt-dlp 出错不影响读网页
-    vi.mocked(ytdlpInfo).mockRejectedValue(new Error("yt-dlp 跑太久被停掉了"));
+    vi.mocked(ytdlpProbe).mockRejectedValue(new Error("yt-dlp 的 Python 依赖无法加载"));
     expect((await fetchWebPage(ref)).kind).toBe("article");
 
-    vi.mocked(ytdlpInfo).mockResolvedValue(null);
+    vi.mocked(ytdlpProbe).mockResolvedValue(noVideo);
     vi.stubGlobal("fetch", vi.fn(async () => jina(jinaData({ title: "Threads • Log in", content: "Log in to see this post. ".repeat(20) }))));
     await expect(fetchWebPage(ref)).rejects.toThrow("这个网页要登录才能看（读到的是登录页）。把内容复制下来贴进来直接分析");
     vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 500 })));
@@ -285,5 +286,28 @@ describe("正文里的链接（溯源用）", () => {
     const many = Array.from({ length: 100 }, (_, i) => ({ text: `l${i}`, url: `https://ref${i}.example/` }));
     expect(outboundLinks(many, page)).toHaveLength(80);
     expect(outboundLinks(many, "不是地址")).toEqual([]);
+  });
+
+  it("yt-dlp 认出这是视频、但没读到：照样按网页读，并说清楚是哪一步没成、这次少了什么（不悄悄当成一篇普通的网页）", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => jina(jinaData())));
+    vi.mocked(ytdlpProbe).mockResolvedValue({ info: null, failed: { extractor: "BiliBili", why: "对方回了 HTTP 412（多半是这台服务器的 IP 被那个站拦了）" } });
+    const post = await fetchWebPage({ ...ref, url: "https://www.bilibili.com/video/BV1ar421p7kw" });
+    expect(post.kind).toBe("article");
+    expect(post.notes[0]).toBe("这个链接是一个视频（BiliBili），这台服务器上的 yt-dlp 没读到：对方回了 HTTP 412（多半是这台服务器的 IP 被那个站拦了）。这次只按网页读了页面上的字，视频的画面和里面说的话都没读到");
+    // 跑到超时的：不知道是哪个站，照样说
+    vi.mocked(ytdlpProbe).mockResolvedValue({ info: null, failed: { extractor: "", why: "45 秒没读完" } });
+    expect((await fetchWebPage(ref)).notes[0]).toMatch(/^这个链接是一个视频，这台服务器上的 yt-dlp 没读到：45 秒没读完。/);
+  });
+
+  it("B 站的页面按中文浏览器去读（不然拿到的是机器翻译成英文的页面）；别的网站不带这个", async () => {
+    const seen: Record<string, string | null> = {};
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      seen[new URL(url.replace("https://r.jina.ai/", "")).hostname] = new Headers(init?.headers).get("x-locale");
+      return jina(jinaData());
+    }));
+    await fetchWebPage({ ...ref, url: "https://www.bilibili.com/video/BV1ar421p7kw" });
+    await fetchWebPage({ ...ref, url: "https://space.bilibili.com/88461692" });
+    await fetchWebPage(ref);
+    expect(seen).toEqual({ "www.bilibili.com": "zh-CN", "space.bilibili.com": "zh-CN", "simonwillison.net": null });
   });
 });
