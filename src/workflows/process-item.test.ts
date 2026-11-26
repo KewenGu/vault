@@ -10,7 +10,7 @@ import type { Understanding } from "@/lib/vault/understand";
 let fake: FakeSupabase;
 vi.mock("@/lib/supabase/service", () => ({ getServiceClient: () => fake.db }));
 vi.mock("@/lib/sources/fetch-post", () => ({ fetchPost: vi.fn() }));
-vi.mock("@/lib/sources/ytdlp", async (orig) => ({ ...(await orig<object>()), ytdlpDownload: vi.fn() }));
+vi.mock("@/lib/sources/ytdlp", async (orig) => ({ ...(await orig<object>()), ytdlpDownloadToFile: vi.fn() }));
 vi.mock("@/lib/media/files", async (orig) => ({ ...(await orig<object>()), downloadRemote: vi.fn(), downloadRemoteToFile: vi.fn(), archiveImage: vi.fn(), visionImage: vi.fn(async (data: Uint8Array) => data), visionSlices: vi.fn(async (data: Uint8Array) => ({ slices: [data], total: 1 })) }));
 vi.mock("@/lib/media/frames", async (orig) => ({ ...(await orig<object>()), canDigestVideo: vi.fn(), digestVideo: vi.fn(), digestVideoFile: vi.fn(), contactSheets: vi.fn() }));
 vi.mock("@/lib/asr/volc", async (orig) => ({ ...(await orig<object>()), asrConfig: vi.fn(), transcribe: vi.fn() }));
@@ -26,6 +26,7 @@ import { linkItemEntities } from "@/lib/graph/merge";
 import { TooLargeError, VIDEO_MAX_BYTES, archiveImage, downloadRemote, downloadRemoteToFile, visionSlices } from "@/lib/media/files";
 import { canDigestVideo, contactSheets, digestVideo, digestVideoFile } from "@/lib/media/frames";
 import { fetchPost } from "@/lib/sources/fetch-post";
+import { ytdlpDownloadToFile } from "@/lib/sources/ytdlp";
 import { understand } from "@/lib/vault/understand";
 import { processItem } from "./process-item";
 
@@ -321,6 +322,52 @@ describe("an item deleted while it is still being processed", () => {
     await processItem(ID);
     expect(existsSync(localVideo())).toBe(true);
     expect([...fake.files.keys()].length).toBeGreaterThan(0);
+  });
+});
+
+describe("a video that only yt-dlp can download (another video site)", () => {
+  const viaYtdlp = () => post({ platform: "web", video: { url: "https://www.bilibili.com/video/BV1ar421p7kw", via: "ytdlp", width: 1920, height: 1080, bytes: null, durationS: 2401 } });
+  const ytdlpOnDisk = (bytes: number) =>
+    vi.mocked(ytdlpDownloadToFile).mockImplementation(async (_url, dest) => {
+      await writeFile(dest, jpeg);
+      return bytes;
+    });
+  beforeEach(() => vi.mocked(fetchPost).mockResolvedValue(viaYtdlp()));
+
+  it("is asked for with both limits: the archive limit first, the read limit as the fallback", async () => {
+    ytdlpOnDisk(3 * MB);
+    await processItem(ID);
+    const [url, , limits] = vi.mocked(ytdlpDownloadToFile).mock.calls[0];
+    expect(url).toBe("https://www.bilibili.com/video/BV1ar421p7kw");
+    expect(limits.storeMaxBytes).toBe(VIDEO_MAX_BYTES);
+    expect(limits.readMaxBytes).toBeGreaterThan(VIDEO_MAX_BYTES);
+    expect(downloadRemoteToFile).not.toHaveBeenCalled();
+    // 存得下：进存储桶；宽高不照搬视频信息里的（那是最好的那一档），留给探测
+    expect([...fake.files.keys()].some((k) => k.endsWith("video.mp4"))).toBe(true);
+    expect(item().media.find((m) => m.role === "video")).toMatchObject({ bytes: 3 * MB });
+    expect(item().media.find((m) => m.role === "video")?.local).toBeUndefined();
+  });
+
+  it("a long one comes back larger than the archive limit: it stays on this server's disk and is read from there", async () => {
+    ytdlpOnDisk(VIDEO_MAX_BYTES + 150 * MB);
+    vi.mocked(digestVideoFile).mockResolvedValue(digest({ probe: { duration: 2401, hasAudio: true, width: 640, height: 360, fps: 30 } }) as never);
+    await processItem(ID);
+    expect(new Uint8Array(await readFile(localVideo()))).toEqual(jpeg);
+    expect([...fake.files.keys()].some((k) => k.endsWith("video.mp4"))).toBe(false);
+    expect(vi.mocked(digestVideoFile).mock.calls[0][0]).toBe(localVideo());
+    // 尺寸是实际下到的那一档的（探测出来的），不是视频信息里写的 1080p
+    expect(item().media.find((m) => m.role === "video")).toEqual({ role: "video", path: `${USER}/${ID}/video.mp4`, mime: "video/mp4", width: 640, height: 360, bytes: VIDEO_MAX_BYTES + 150 * MB, durationS: 2401, local: true });
+    expect(item().transcript).toBe("[1:05] 第一，别人的评价只是信息");
+    expect(item().post.notes).toEqual(["这条路读不到评论内容，只有评论数"]);
+    expect(item().status).toBe("ready");
+  });
+
+  it("beyond the read limit: not downloaded, and the page says so", async () => {
+    vi.mocked(ytdlpDownloadToFile).mockRejectedValue(new TooLargeError(null));
+    await processItem(ID);
+    expect(roles()).toEqual(["image"]);
+    expect(item().post.notes[1]).toBe("视频太大，超过 600 MB 没有下载，只看了封面和文字");
+    expect(item().status).toBe("ready");
   });
 });
 

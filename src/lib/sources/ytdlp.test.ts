@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { existsSync } from "node:fs";
-import { formatSelector, YTDLP_PROTOCOL_FILTER, mapYtdlpInfo, parseYtdlpInfo, ytdlpFailure, ytdlpPath } from "./ytdlp";
+import { formatSelector, readFormatSelector, YTDLP_PROTOCOL_FILTER, mapYtdlpInfo, parseYtdlpInfo, ytdlpFailure, ytdlpPath } from "./ytdlp";
 
 /** 按 `yt-dlp -J` 真实输出的形状缩出来的（B 站，2026-10）。 */
 const raw = {
@@ -92,9 +92,22 @@ describe("收藏夹：本机的 yt-dlp", () => {
     const protectedSelector = formatSelector(50 * 1024 * 1024, true);
     expect(protectedSelector.split(/[+/]/).every((part) => part.endsWith(YTDLP_PROTOCOL_FILTER))).toBe(true);
     const merged = protectedSelector.replaceAll(YTDLP_PROTOCOL_FILTER, "").split("/");
-    expect(merged[0]).toBe("bv*[vcodec^=avc1][height<=1080][filesize<37M]+ba[ext=m4a]");
+    // 画面和声音各在自己的额度里（72% / 28%）的搭配排最前；找不到再退回只管画面的
+    expect(merged.slice(0, 3)).toEqual(["bv*[vcodec^=avc1][height<=1080][filesize<37M]+ba[ext=m4a][filesize<14M]", "bv*[vcodec^=avc1][height<=1080][filesize_approx<37M]+ba[ext=m4a][filesize_approx<14M]", "bv*[vcodec^=avc1][height<=1080][filesize<37M]+ba[ext=m4a]"]);
     expect(merged).toContain("b[ext=mp4][height<=1080][filesize<52M]");
     expect(formatSelector(50 * 1024 * 1024, false).replaceAll(YTDLP_PROTOCOL_FILTER, "")).toBe("b[ext=mp4][height<=1080][filesize<52M]/b[ext=mp4][height<=1080][filesize_approx<52M]/b[ext=mp4][height<=720]");
+  });
+
+  it("存档上限以内挑不出来时（视频太长）：只为了读内容，先要 360p 以内的，没有再 480p、720p；不看标称的大小", () => {
+    const selector = readFormatSelector(true);
+    expect(selector.split(/[+/]/).every((part) => part.endsWith(YTDLP_PROTOCOL_FILTER))).toBe(true);
+    const merged = selector.replaceAll(YTDLP_PROTOCOL_FILTER, "").split("/");
+    expect(merged.slice(0, 6)).toEqual(["bv*[vcodec^=avc1][height<=360]+ba[ext=m4a][abr<=128]", "bv*[vcodec^=avc1][height<=360]+ba[ext=m4a]", "b[ext=mp4][height<=360]", "bv*[height<=360]+ba", "b[height<=360]", "bv*[vcodec^=avc1][height<=480]+ba[ext=m4a][abr<=128]"]);
+    // 有的站不报画面高度，上面的都对不上：要最差的那一档
+    expect(merged.slice(-3)).toEqual(["b[height<=720]", "w[ext=mp4]", "w"]);
+    expect(selector).not.toContain("filesize");
+    // 没有 ffmpeg 合不了：只要本来就是一个文件的 mp4
+    expect(readFormatSelector(false).replaceAll(YTDLP_PROTOCOL_FILTER, "")).toBe("b[ext=mp4][height<=360]/b[ext=mp4][height<=480]/b[ext=mp4][height<=720]/w[ext=mp4]");
   });
 
   it("yt-dlp 的报错：认出了站点但没读到的，说出是哪个站、归成哪一类原因；不认得的链接（普通网页）不算", () => {

@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { getServiceClient } from "@/lib/supabase/service";
 import { meterInto } from "@/lib/usage/meter";
 import { estimateUsd } from "@/lib/usage/prices";
@@ -14,7 +14,7 @@ import { clockTenths, frameNote, likelyChinese, parseTranscript, speechAt, speec
 import { fetchPost } from "@/lib/sources/fetch-post";
 import { mapCapture } from "@/lib/sources/web";
 import { emptyStats, type FetchedPost, type ItemMedia, type PostSnapshot } from "@/lib/sources/types";
-import { ytdlpDownload } from "@/lib/sources/ytdlp";
+import { ytdlpDownloadToFile } from "@/lib/sources/ytdlp";
 import { buildEmbeddingText, buildSearchText } from "@/lib/vault/indexing";
 import { SPEECH_MAX_SECONDS, transcribeSpeech } from "@/lib/vault/speech";
 import { BUCKET, audioOf, bucketFileLimit, framesOf, getItemById, imagesOf, itemDir, removeItemFiles, sheetsOf, tagCounts, videoOf, type Item } from "@/lib/vault/store";
@@ -141,15 +141,14 @@ async function storeMedia(db: Db, dir: string, post: FetchedPost, tmp: string): 
   if (post.video) {
     const readMax = videoReadMaxBytes();
     try {
-      // 视频写到磁盘上的临时目录，不进内存。没有能直接下的地址的（别的视频站）交给本机的 yt-dlp：
-      // 它按大小挑清晰度，挑的就是存得下的那一档，拿回来的数据也写到同一个位置，后面只有一条路
+      // 视频写到磁盘上的临时目录，不进内存。没有能直接下的地址的（别的视频站）交给本机的 yt-dlp：它按大小挑清晰度，
+      // 先挑存得进存储桶的那一档；视频太长挑不出来时下一档小的、最多到读取上限（和直接下载的一样）。
+      // 下到的文件写在同一个位置，后面只有一条路
       const file = `${tmp}/source.mp4`;
-      let bytes: number;
-      if (post.video.via === "ytdlp") {
-        const data = await ytdlpDownload(post.video.url, VIDEO_MAX_BYTES);
-        await writeFile(file, data);
-        bytes = data.byteLength;
-      } else bytes = await downloadRemoteToFile(post.video, file, readMax, 600_000);
+      const viaYtdlp = post.video.via === "ytdlp";
+      let bytes = viaYtdlp ? await ytdlpDownloadToFile(post.video.url, file, { storeMaxBytes: VIDEO_MAX_BYTES, readMaxBytes: readMax }) : await downloadRemoteToFile(post.video, file, readMax, 600_000);
+      // yt-dlp 下的是按大小挑的那一档，宽高和视频信息里写的（最好的那一档）不一定一样：留空，抽画面时按实际的补
+      const sized = viaYtdlp ? { width: null, height: null } : { width: post.video.width ?? null, height: post.video.height ?? null };
       // 声音在另一个文件里的（Reddit）：下下来合进去。合不成不算失败，留着没有声音的画面，说清楚
       if (post.video.audio) {
         try {
@@ -165,8 +164,6 @@ async function storeMedia(db: Db, dir: string, post: FetchedPost, tmp: string): 
         try {
           // 存档上限以内的才整个读进内存（要传给存储服务）
           await upload(db, path, new Uint8Array(await readFile(file)), "video/mp4");
-          // yt-dlp 下的是按大小挑的那一档，宽高和视频信息里写的不一定一样：留空，抽画面时按实际的补
-          const sized = post.video.via === "ytdlp" ? { width: null, height: null } : { width: post.video.width ?? null, height: post.video.height ?? null };
           media.push({ role: "video", path, mime: "video/mp4", ...sized, bytes, durationS: post.video.durationS });
         } catch (e) {
           // 存储那边不收（最常见：存储桶或项目的单文件上限比这里的小）。视频已经在手上了，照样读，只是不留原片
@@ -182,7 +179,7 @@ async function storeMedia(db: Db, dir: string, post: FetchedPost, tmp: string): 
         const path = `${dir}/video.mp4`;
         try {
           unstored = { file: await keepLocalFile(file, path), bytes };
-          media.push({ role: "video", path, mime: "video/mp4", width: post.video.width ?? null, height: post.video.height ?? null, bytes, durationS: post.video.durationS, local: true });
+          media.push({ role: "video", path, mime: "video/mp4", ...sized, bytes, durationS: post.video.durationS, local: true });
         } catch (e) {
           // 留不下（磁盘满了、目录没权限）：照样从临时目录里的这份读，读完就没了
           unstored = { file, bytes };
