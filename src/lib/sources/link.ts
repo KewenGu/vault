@@ -231,14 +231,14 @@ export function weiboBid(mid: string): string {
 }
 
 /** 能整个存下来的账号是哪几个平台的（列一个账号的作品见 account-list.ts） */
-export const ACCOUNT_PLATFORMS = ["x", "tiktok", "douyin", "xiaohongshu", "instagram", "youtube", "bilibili", "weibo"] as const;
+export const ACCOUNT_PLATFORMS = ["x", "tiktok", "douyin", "xiaohongshu", "instagram", "youtube", "bilibili", "weibo", "reddit"] as const;
 export type AccountPlatform = (typeof ACCOUNT_PLATFORMS)[number];
 
 /**
  * 一个账号的主页。externalId：X、TikTok、Instagram 是小写的用户名，抖音是 sec_uid，小红书是用户 id，
  * YouTube 是 `@名字`（小写）/ 频道 id / `c/名字` / `user/名字`，B 站是数字 id（mid），
- * 微博是数字 id（个性域名 weibo.com/rmrb 的是小写的域名：和数字 id 的写法认不出是同一个账号）；
- * handle 是给人看的（`@karpathy`，抖音、小红书、B 站、微博没有就是空）。
+ * 微博是数字 id（个性域名 weibo.com/rmrb 的是小写的域名：和数字 id 的写法认不出是同一个账号），Reddit 是小写的用户名；
+ * handle 是给人看的（`@karpathy`、Reddit 是 `u/spez`，抖音、小红书、B 站、微博没有就是空）。
  */
 export type AccountRef = { platform: AccountPlatform; externalId: string; handle: string; url: string };
 
@@ -288,6 +288,13 @@ function accountRef(site: Site, url: URL): AccountRef | null {
     // 个性域名 weibo.com/<名字>（weibo.com/rmrb）。和数字 id 的写法认不出是同一个账号
     const custom = /(^|\.)weibo\.com$/.test(host) ? /^\/([A-Za-z][\w-]{1,29})\/?$/.exec(path) : null;
     return custom && !WEIBO_RESERVED.has(custom[1].toLowerCase()) ? { platform: "weibo", externalId: custom[1].toLowerCase(), handle: "", url: `https://weibo.com/${custom[1]}` } : null;
+  }
+  if (site === "reddit") {
+    // reddit.com/user/<用户名>、/u/<用户名>，带分栏的也算；他主页上的某一条帖子（/user/<用户名>/comments/<id>）是帖子，不在这里。
+    // 版块（/r/…）是很多人发帖的地方，不是一个账号
+    const m = /^redd\.it$/i.test(url.hostname) ? null : /^\/(?:user|u)\/([\w-]{3,20})(?:\/(?:submitted|posts|overview|comments|gilded))?\/?$/i.exec(path);
+    if (!m || /^(me|\[deleted\])$/i.test(m[1])) return null;
+    return { platform: "reddit", externalId: m[1].toLowerCase(), handle: `u/${m[1]}`, url: `https://www.reddit.com/user/${m[1]}` };
   }
   if (site === "youtube") {
     if (/youtu\.be$/i.test(url.hostname)) return null;
@@ -357,7 +364,7 @@ const NOT_A_POST: Record<Site, string> = {
   instagram: "没认出这是哪个帖子：在 Instagram 里点「分享 → 复制链接」再贴进来（要帖子或 Reels 的链接，主页和快拍读不了）",
   youtube: "没认出这是哪个视频：贴视频页面的链接（youtube.com/watch?v=… 或 youtu.be/…），频道主页和播放列表读不了",
   x: "没认出这是哪条帖子：在 X 里点「分享 → 复制链接」再贴进来（x.com/…/status/… 这样的链接，主页读不了）",
-  reddit: "没认出这是哪个帖子：在 Reddit 里点「分享 → 复制链接」再贴进来（要帖子的链接，版块主页、用户主页读不了）",
+  reddit: "没认出这是哪个帖子：在 Reddit 里点「分享 → 复制链接」再贴进来（要帖子的链接；版块主页读不了）",
   weibo: "没认出这是哪条微博：在微博里点「分享 → 复制链接」再贴进来（weibo.com/一串数字/一串字母 这样的链接；视频页、话题页、搜索页读不了）",
 };
 const X_ARTICLE_LINK = "这是 X 长文本身的链接，读不了：在 X 里打开发这篇长文的那条帖子，点「分享 → 复制链接」贴帖子的链接（x.com/…/status/…），长文的全文会一起读到";

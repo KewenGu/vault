@@ -185,7 +185,7 @@ describe("收藏夹：链接识别", () => {
     const reddit = vi.fn<(service: string, url: string, init?: RequestInit) => Promise<Response>>(async () => redirectTo("https://www.reddit.com/r/Cooking/comments/1xv8a46/vegetable_side/?share_id=abc&utm_name=ioscss"));
     expect(await resolveLink("https://www.reddit.com/r/Cooking/s/AbCdEf1234", reddit)).toEqual({ platform: "reddit", externalId: "1xv8a46", url: "https://www.reddit.com/comments/1xv8a46" });
     expect(reddit.mock.calls[0][0]).toBe("Reddit短链");
-    await expect(resolveLink("https://www.reddit.com/r/Cooking/", none)).rejects.toThrow(/没认出这是哪个帖子.*版块主页、用户主页读不了/);
+    await expect(resolveLink("https://www.reddit.com/r/Cooking/", none)).rejects.toThrow(/没认出这是哪个帖子.*版块主页读不了/);
   });
 
   it("微博：短码和数字 id 是同一个数的两种写法，来回换得对（actor 2026-11-26 给的真实的几对）", () => {
@@ -393,8 +393,37 @@ describe("账号的主页（存一个博主的全部作品用）", () => {
     expect(never).not.toHaveBeenCalled();
   });
 
+  it("Reddit：reddit.com/user/<用户名> 和 /u/<用户名>，带分栏的也算，用户名不分大小写；他主页上的帖子算帖子；版块不是账号", async () => {
+    const spez = { platform: "reddit", externalId: "spez", handle: "u/Spez", url: "https://www.reddit.com/user/Spez" };
+    for (const url of ["https://www.reddit.com/user/Spez", "https://reddit.com/u/Spez/", "https://old.reddit.com/user/Spez/submitted/", "https://www.reddit.com/user/Spez/comments/?sort=new", "https://www.reddit.com/user/Spez/overview"]) {
+      expect(parseAccountLink(url), url).toEqual(spez);
+    }
+    expect(parseAccountLink("https://www.reddit.com/user/some-one_2")).toMatchObject({ externalId: "some-one_2", handle: "u/some-one_2" });
+    for (const url of [
+      "https://www.reddit.com/user/Spez/comments/1xiupm0/about_that_login_screen/",
+      "https://www.reddit.com/r/Cooking/",
+      "https://www.reddit.com/r/Cooking/comments/1xv8a46/x",
+      "https://www.reddit.com/user/me",
+      "https://www.reddit.com/user/Spez/m/multi",
+      "https://www.reddit.com/user/ab",
+      "https://www.reddit.com/u/Spez/s/AbCdEf1234",
+      "https://redd.it/1xv8a46",
+    ]) {
+      expect(parseAccountLink(url), url).toBeNull();
+    }
+    const never = vi.fn(async () => new Response("<html>", { status: 200 }));
+    expect(await resolveTarget("https://www.reddit.com/user/Spez", never)).toEqual({ kind: "account", ref: spez });
+    expect(await resolveTarget("https://www.reddit.com/user/Spez/comments/1xiupm0/about_that_login_screen/", never)).toMatchObject({ kind: "post", ref: { platform: "reddit", externalId: "1xiupm0" } });
+    expect(never).not.toHaveBeenCalled();
+    // App 里「分享主页」的短链：跟一次跳转
+    const share = vi.fn<(service: string, url: string, init?: RequestInit) => Promise<Response>>(async () => redirectTo("https://www.reddit.com/user/Spez/?share_id=abc&utm_name=ioscss"));
+    expect(await resolveTarget("https://www.reddit.com/u/Spez/s/AbCdEf1234", share)).toEqual({ kind: "account", ref: spez });
+    // 跟着读别的帖子提到的链接时，主页不当帖子
+    await expect(resolveLink("https://www.reddit.com/user/Spez", never)).rejects.toThrow(/没认出这是哪个帖子/);
+  });
+
   it("别的平台的主页、别的网站不算账号", () => {
-    expect(parseAccountLink("https://www.reddit.com/user/someone")).toBeNull();
+    expect(parseAccountLink("https://www.reddit.com/r/Cooking")).toBeNull();
     expect(parseAccountLink("https://example.com/@someone")).toBeNull();
     expect(parseAccountLink("随便一段话")).toBeNull();
   });

@@ -33,7 +33,7 @@ export function CreatorListView({ creators }: { creators: CreatorSummary[] }) {
       <section className="flex flex-col gap-3">
         <h1 className="text-xl font-semibold tracking-tight">博主</h1>
         <p className="text-sm leading-relaxed text-ink-muted">
-          觉得一个人讲得好，把他发过的作品整个存下来。支持 X、TikTok、抖音、小红书、Instagram、YouTube、B 站、微博的账号：贴他主页的链接，选存最近的多少条。每一条都和单独存进来的一样读懂、归类，在收藏库里搜得到。
+          觉得一个人讲得好，把他发过的作品整个存下来。支持 X、TikTok、抖音、小红书、Instagram、YouTube、B 站、微博、Reddit 的账号：贴他主页的链接，选存最近的多少条。每一条都和单独存进来的一样读懂、归类，在收藏库里搜得到。
         </p>
         <FindCreatorForm />
       </section>
@@ -88,6 +88,12 @@ const WHAT: Record<AccountRef["platform"], string[]> = {
     "长视频超过存档上限（默认 50 MB）的，原片留在服务器的磁盘上。",
   ],
   xiaohongshu: ["存他主页上公开的笔记（图文和视频）。", "列作品、读每一篇都走 Apify（要配 APIFY_TOKEN）：列出来的笔记没有访问口令，直接读读不到。", "这条路读不到评论内容，只有评论数。"],
+  reddit: [
+    "存他发的帖子：发在各个版块里的、发在他自己主页上的、转帖。他写的评论不存。",
+    "列帖子、读每一条都走第三方存档（Arctic Shift），不花钱：Reddit 自己不让服务器读。",
+    "存档是快照：刚发的帖子可能还没收录；被删、被移除的帖子存档里还留着，也会存进来（会注明）。",
+    "帖子本身是个链接的，那个链接照常跟着读。",
+  ],
   weibo: [
     "存他自己发的微博（文字、配图、视频）；他转发的别人的微博不存。",
     "列微博、读每一条都走 Apify（要配 APIFY_TOKEN），各约 $0.005 一条：微博的网页要登录才能看，直接读不到。",
@@ -102,7 +108,7 @@ export function NewCreatorView({ account: ref, had, hint, parallel, warning = nu
   // 英文的平台名和前后的中文之间留空格
   const spaced = accountLabelInText(ref.platform);
   // 列作品每条大约多少钱（YouTube 的视频和 Shorts 各列一遍，按两倍算）
-  const actor = ref.platform === "x" ? null : PROFILE_ACTORS[ref.platform];
+  const actor = ref.platform === "x" || ref.platform === "reddit" ? null : PROFILE_ACTORS[ref.platform];
   const listUsd = actor ? (UNIT_USD[actor.countKey] ?? 0) * (actor.rowsPerPost ?? 1) : 0;
   // 抖音读每一条也要走 Apify，这笔已经算在「已有内容平均每条」里了
   return (
@@ -236,7 +242,7 @@ export function CreatorDetailView({ detail }: { detail: CreatorDetail }) {
               </div>
             )}
             <SyncForm id={c.id} defaultWant={c.want} />
-            <p className="text-xs leading-relaxed text-ink-muted">找他新发的，选小的数；往回多存一些，选大的。存过的不会重复，列作品{c.platform === "x" ? "不花钱" : "按条数收一点 Apify 的钱"}。</p>
+            <p className="text-xs leading-relaxed text-ink-muted">找他新发的，选小的数；往回多存一些，选大的。存过的不会重复，列作品{c.platform === "x" || c.platform === "reddit" ? "不花钱" : "按条数收一点 Apify 的钱"}。</p>
           </div>
         )}
         {failed > 0 && <p className="text-danger">这一页里有 {failed} 条没处理成：点开那一条看原因、重试。</p>}
