@@ -3,8 +3,10 @@ import { meterInto } from "@/lib/usage/meter";
 import { SourceFetchError } from "./types";
 
 vi.mock("./ytdlp", async (orig) => ({ ...(await orig<object>()), ytdlpProbe: vi.fn() }));
+vi.mock("./bilibili-apify", async (orig) => ({ ...(await orig<object>()), fetchBilibiliViaApify: vi.fn() }));
 
 import { JINA_COUNT_KEY, WEIXIN_BLOCKED, cleanMarkdown, dropPreamble, fetchWebPage, looksLikeLoginWall, looksLikeVerifyWall, mapCapture, mapJinaData, mapPage, markdownLinks, outboundLinks, parseHtmlPage, readPage, usableImage, type PageRead } from "./web";
+import { fetchBilibiliViaApify } from "./bilibili-apify";
 import { ytdlpProbe } from "./ytdlp";
 
 const body = "这是一篇讲怎么做内容的长文。".repeat(20);
@@ -309,5 +311,44 @@ describe("正文里的链接（溯源用）", () => {
     await fetchWebPage({ ...ref, url: "https://space.bilibili.com/88461692" });
     await fetchWebPage(ref);
     expect(seen).toEqual({ "www.bilibili.com": "zh-CN", "space.bilibili.com": "zh-CN", "simonwillison.net": null });
+  });
+
+  it("B 站视频、这台服务器读不了：配了 APIFY_TOKEN 就走 Apify（带上 yt-dlp 没读到的原因）；yt-dlp 读到了、不是 B 站视频的不走", async () => {
+    const bili = { ...ref, url: "https://www.bilibili.com/video/BV1ar421p7kw" };
+    const viaApify = { ...mapPage({ title: "标题", description: "", text: body, cover: null, images: [], author: "", site: "", publishedAt: null, via: "jina" }, bili), kind: "video" as const, title: "Apify 读到的" };
+    vi.mocked(fetchBilibiliViaApify).mockReset().mockResolvedValue(viaApify);
+    vi.stubGlobal("fetch", vi.fn(async () => jina(jinaData())));
+    vi.stubEnv("APIFY_TOKEN", "t");
+    // yt-dlp 被 B 站拦了
+    vi.mocked(ytdlpProbe).mockResolvedValue({ info: null, failed: { extractor: "BiliBili", why: "对方回了 HTTP 412" } });
+    expect((await fetchWebPage(bili)).title).toBe("Apify 读到的");
+    expect(vi.mocked(fetchBilibiliViaApify).mock.calls).toEqual([[bili, "对方回了 HTTP 412"]]);
+    // 本机没有 yt-dlp
+    vi.mocked(ytdlpProbe).mockResolvedValue(noVideo);
+    expect((await fetchWebPage(bili)).title).toBe("Apify 读到的");
+    expect(vi.mocked(fetchBilibiliViaApify).mock.calls[1]).toEqual([bili, null]);
+    // 别的网页、B 站别的页面不走
+    vi.mocked(fetchBilibiliViaApify).mockClear();
+    await fetchWebPage(ref);
+    await fetchWebPage({ ...ref, url: "https://space.bilibili.com/88461692" });
+    expect(fetchBilibiliViaApify).not.toHaveBeenCalled();
+    // yt-dlp 读到了：不用 Apify
+    const info = { id: "BV1ar421p7kw", title: "yt-dlp 读到的", description: "", uploader: "UP主", uploaderId: null, durationS: 60, publishedAt: null, views: null, likes: null, comments: null, shares: null, thumbnail: null, width: null, height: null, tags: [], extractor: "BiliBili", isLive: false };
+    vi.mocked(ytdlpProbe).mockResolvedValue({ info, failed: null });
+    expect((await fetchWebPage(bili)).title).toBe("yt-dlp 读到的");
+    expect(fetchBilibiliViaApify).not.toHaveBeenCalled();
+  });
+
+  it("B 站视频走 Apify 也没读到：按网页读，两步各没成在哪都记下来", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const bili = { ...ref, url: "https://www.bilibili.com/video/BV1ar421p7kw" };
+    vi.stubGlobal("fetch", vi.fn(async () => jina(jinaData())));
+    vi.stubEnv("APIFY_TOKEN", "t");
+    vi.mocked(ytdlpProbe).mockResolvedValue({ info: null, failed: { extractor: "BiliBili", why: "对方回了 HTTP 412" } });
+    vi.mocked(fetchBilibiliViaApify).mockReset().mockRejectedValue(new SourceFetchError("这个 B 站视频读不到：可能被删了、不公开，或者要登录才能看"));
+    const post = await fetchWebPage(bili);
+    expect(post.kind).toBe("article");
+    expect(post.notes[0]).toMatch(/^这个链接是一个视频（BiliBili），这台服务器上的 yt-dlp 没读到：对方回了 HTTP 412。/);
+    expect(post.notes.at(-1)).toBe("改走 Apify 也没读到这个视频（这个 B 站视频读不到：可能被删了、不公开，或者要登录才能看）");
   });
 });
