@@ -142,6 +142,18 @@ systemctl list-timers vault-auto-update
 sudo bash deploy/install-auto-update.sh --uninstall
 ```
 
+### 从中国境内连不连得上
+
+浏览器要连两个地方：你的域名（页面、登录、接口），和 Supabase 的项目地址（存储桶里的图片和视频、上传）。两个都通才算能用。在自己的电脑上跑（只要 Python 3，不用装别的）：
+
+```bash
+python3 deploy/check-china.py 你的域名 你的项目.supabase.co
+```
+
+它经 [Globalping](https://globalping.io) 从中国境内的 15 个探测点（电信、联通、移动的家用宽带，加阿里云、腾讯云的机房）各发一次 HTTPS 请求，逐个列出通不通和耗时；先测百度和 Google 当对照，对照不对时会说这一轮不要信。主机名会发给 Globalping，测量记录凭 ID 谁都能查到；只发主机名，不带密钥。
+
+它只说明连得上，不说明上传、放视频快不快。防火墙的规则会变，云服务商的 IP 段偶尔被整段拦，要去之前再跑一次。
+
 ## 这套部署里的几个决定
 
 - **大视频的原片也在这个卷里**（`vault-data` 的 `/data/media`）。`docker compose down` 不会删卷，`down -v` 会连原片一起删。要腾地方：`docker compose exec vault sh -c 'du -sh /data/media/*/*'` 看哪条占得多，删掉对应的目录（`<用户>/<内容 id>`），那条内容还在，只是不能播放。
@@ -170,6 +182,11 @@ sudo bash deploy/install-auto-update.sh --uninstall
 
 - 用应用自己的读取代码读一条 41 分钟、没有字幕的中文视频：YouTube 直接读被拦，走 Apify，24 秒读到信息，再起一次运行下视频，2 分 20 秒后拿到 38 MB 的 360p 文件（H.264 + AAC），经应用的受控出口存到磁盘；ffmpeg 从里面抽出了画面和音轨。Apify 记了 $0.003（读信息）+ $0.0004（下视频）。
 - 没验证的：这条视频接着走转存、抽画面、转写、理解；一两个小时的长视频要下多久；在真实服务器上跑。
+
+2026-11-25，从中国境内连（`deploy/check-china.py`，15 个探测点）：
+
+- 部署在美国机房的站点和 Supabase 的项目地址都是 15/15 连通，域名解析到的 IP 是对的；同一批探测点上百度 15/15、Google 0/15。到站点建立连接要 210–275 毫秒，一次请求 0.8–1.3 秒。
+- 没验证的：登录后在境内实际用一遍；上传文件、放视频这类大流量的速度；晚高峰的情况。
 
 没验证的：在真实服务器上跑、Let's Encrypt 证书申请、1 核机器上的实际耗时。那次测试里没有 Anthropic 密钥，「理解内容」这一步在镜像里没跑（这一步和部署方式无关，本机跑通过）。
 
