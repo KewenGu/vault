@@ -24,11 +24,17 @@ export async function POST(request: Request) {
   });
 }
 
-/** 列出 / 搜索：`?q=` 关键词 + 语义；`kind` `type` `category` `tag` `platform` `source` `entity` 筛选；`limit` 最多 200。 */
+/**
+ * 列出 / 搜索：`?q=` 关键词 + 语义；`kind` `type` `category` `tag` `platform` `source` `entity` 筛选；`limit` 一次要多少条（默认 60，最多 200）；
+ * `offset` 从第几条开始（翻页：下一页是 offset + 这次拿到的条数）。返回 `{ items, total, capped, terms, semantic }`：
+ * `total` 是符合条件的一共多少条。只是列出 / 筛选时按存进来的时间倒序，能一直翻到最早的一条；带了 `q` 或 `entity` 时按相关程度排，
+ * 最多只有最相关的 200 条——到了这个上限 `capped` 是 true，实际符合的可能更多。
+ */
 export async function GET(request: Request) {
   return withSession(request, async (session) => {
     const p = new URL(request.url).searchParams;
     const limit = Number(p.get("limit"));
+    const offset = Number(p.get("offset"));
     const result = await searchItems(session.db, session.user.id, {
       q: p.get("q") ?? "",
       filters: {
@@ -41,7 +47,9 @@ export async function GET(request: Request) {
         entityId: p.get("entity") ?? undefined,
       },
       limit: Number.isFinite(limit) && limit > 0 ? limit : undefined,
+      // 接口一律按翻页的方式查（不给 offset 就是从头）：这样 total 总是「一共多少条」
+      offset: Number.isFinite(offset) && offset > 0 ? offset : 0,
     });
-    return NextResponse.json({ items: result.hits.map(hitSummary), terms: result.terms, semantic: result.semantic });
+    return NextResponse.json({ items: result.hits.map(hitSummary), total: result.total, capped: result.capped, terms: result.terms, semantic: result.semantic });
   });
 }
