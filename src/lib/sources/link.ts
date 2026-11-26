@@ -57,6 +57,7 @@ const HOSTS: Record<Site, RegExp> = {
   youtube: /(^|\.)(youtube\.com|youtu\.be|youtube-nocookie\.com)$/,
   x: /(^|\.)(x\.com|twitter\.com|fxtwitter\.com|vxtwitter\.com|fixupx\.com)$/,
   reddit: /(^|\.)reddit\.com$|^redd\.it$/,
+  weibo: /(^|\.)(weibo\.com|weibo\.cn)$/,
 };
 const SITES = Object.keys(HOSTS) as Site[];
 
@@ -64,6 +65,16 @@ const SITES = Object.keys(HOSTS) as Site[];
 export function platformOfHost(hostname: string): Site | null {
   const h = hostname.toLowerCase();
   return SITES.find((s) => HOSTS[s].test(h)) ?? null;
+}
+
+/**
+ * 这个地址按哪个平台读。和 platformOfHost 只差一样：微博的文章（weibo.com/ttarticle/…、card.weibo.com/article/…）
+ * 不是一条微博，读微博的那条路读不了它，按网页读。
+ */
+function siteOf(url: URL): Site | null {
+  const site = platformOfHost(url.hostname);
+  if (site === "weibo" && (/^\/ttarticle\//.test(url.pathname) || /^card\./i.test(url.hostname))) return null;
+  return site;
 }
 
 function toUrl(raw: string): URL | null {
@@ -77,7 +88,7 @@ function toUrl(raw: string): URL | null {
 
 /** 没带 http 的链接（有人只复制了 xhslink.com/xxx、youtu.be/xxx）：只认这几个平台的域名 */
 const BARE_LINK =
-  /(?<![\w./@-])((?:[\w-]+\.)*(?:xhslink\.com|xiaohongshu\.com|douyin\.com|tiktok\.com|instagram\.com|youtube\.com|youtu\.be|twitter\.com|x\.com|reddit\.com|redd\.it)\/[\x21-\x7e]+)/gi;
+  /(?<![\w./@-])((?:[\w-]+\.)*(?:xhslink\.com|xiaohongshu\.com|douyin\.com|tiktok\.com|instagram\.com|youtube\.com|youtu\.be|twitter\.com|x\.com|reddit\.com|redd\.it|weibo\.com|weibo\.cn)\/[\x21-\x7e]+)/gi;
 
 /**
  * 从粘贴的内容里找链接。App 里「复制链接」得到的是一段话（「7.94 复制打开抖音，看看【…】 https://v.douyin.com/xxx/ k@P.xx」），
@@ -169,18 +180,65 @@ function siteRef(site: Site, url: URL): LinkRef | null {
     // 读到之后换成带版块和标题的那个地址（见 reddit.ts）
     return m ? { platform: site, externalId: m[1].toLowerCase(), url: `https://www.reddit.com/comments/${m[1].toLowerCase()}` } : null;
   }
+  if (site === "weibo") {
+    // weibo.com/<用户 id>/<短码或数字 id>、m.weibo.cn/<用户 id>/<数字 id>
+    const owned = /^\/(\d{5,11})\/([0-9A-Za-z]{8,10}|\d{14,19})\/?$/.exec(path);
+    const bare = /^\/(?:detail|status|statuses)\/([0-9A-Za-z]{8,10}|\d{14,19})\/?$/.exec(path);
+    // App 里分享出来的 share.api.weibo.cn/share/…?weibo_id=<数字 id>
+    const shared = url.searchParams.get("weibo_id") ?? "";
+    const id = owned?.[2] ?? bare?.[1] ?? (/^\d{14,19}$/.test(shared) ? shared : null);
+    const mid = id ? (/^\d{14,19}$/.test(id) ? id : weiboMid(id)) : null;
+    if (!mid) return null;
+    return { platform: site, externalId: mid, url: owned ? `https://weibo.com/${owned[1]}/${weiboBid(mid)}` : `https://m.weibo.cn/detail/${mid}` };
+  }
   const m = /^\/(?:(\w{1,15})\/status(?:es)?|i\/(?:web\/)?status)\/(\d{5,25})(?:\/(?:photo|video)\/\d+)?\/?$/.exec(path);
   return m ? { platform: "x", externalId: m[2], url: `https://x.com/${m[1] ?? "i"}/status/${m[2]}` } : null;
 }
 
+const BASE62 = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+
+/**
+ * 微博一条帖子有两个 id：链接里的短码（`RtdFoAAyb`）和数字 id（`5369640508720311`），是同一个数的两种写法——
+ * 短码从右往左每 4 个字符是一段 62 进制，对应数字 id 从右往左每 7 位。收藏按数字 id 认（两种链接是同一条）。
+ * 不是短码（有 62 进制以外的字符、换出来不是 14–19 位）返回 null。
+ */
+export function weiboMid(bid: string): string | null {
+  if (!/^[0-9A-Za-z]{8,10}$/.test(bid)) return null;
+  let mid = "";
+  for (let end = bid.length; end > 0; end -= 4) {
+    const start = Math.max(0, end - 4);
+    let n = 0;
+    for (const ch of bid.slice(start, end)) n = n * 62 + BASE62.indexOf(ch);
+    mid = (start > 0 ? String(n).padStart(7, "0") : String(n)) + mid;
+  }
+  return /^[1-9]\d{13,18}$/.test(mid) ? mid : null;
+}
+
+/** 数字 id → 短码（weiboMid 反过来）。 */
+export function weiboBid(mid: string): string {
+  let bid = "";
+  for (let end = mid.length; end > 0; end -= 7) {
+    const start = Math.max(0, end - 7);
+    let n = Number(mid.slice(start, end));
+    let part = "";
+    do {
+      part = BASE62[n % 62] + part;
+      n = Math.floor(n / 62);
+    } while (n > 0);
+    bid = (start > 0 ? part.padStart(4, "0") : part) + bid;
+  }
+  return bid;
+}
+
 /** 能整个存下来的账号是哪几个平台的（列一个账号的作品见 account-list.ts） */
-export const ACCOUNT_PLATFORMS = ["x", "tiktok", "douyin", "xiaohongshu", "instagram", "youtube", "bilibili"] as const;
+export const ACCOUNT_PLATFORMS = ["x", "tiktok", "douyin", "xiaohongshu", "instagram", "youtube", "bilibili", "weibo"] as const;
 export type AccountPlatform = (typeof ACCOUNT_PLATFORMS)[number];
 
 /**
  * 一个账号的主页。externalId：X、TikTok、Instagram 是小写的用户名，抖音是 sec_uid，小红书是用户 id，
- * YouTube 是 `@名字`（小写）/ 频道 id / `c/名字` / `user/名字`，B 站是数字 id（mid）；
- * handle 是给人看的（`@karpathy`，抖音、小红书、B 站没有就是空）。
+ * YouTube 是 `@名字`（小写）/ 频道 id / `c/名字` / `user/名字`，B 站是数字 id（mid），
+ * 微博是数字 id（个性域名 weibo.com/rmrb 的是小写的域名：和数字 id 的写法认不出是同一个账号）；
+ * handle 是给人看的（`@karpathy`，抖音、小红书、B 站、微博没有就是空）。
  */
 export type AccountRef = { platform: AccountPlatform; externalId: string; handle: string; url: string };
 
@@ -189,6 +247,9 @@ const X_RESERVED = new Set(["home", "explore", "search", "notifications", "messa
 
 /** instagram.com 下面不是用户名的那些路径 */
 const IG_RESERVED = new Set(["p", "reel", "reels", "tv", "explore", "stories", "accounts", "direct", "share", "about", "developer", "legal", "privacy", "terms", "web", "api", "challenge", "emails", "press", "directory", "graphql", "oauth", "tags", "locations", "popular", "session", "ar", "audio"]);
+
+/** weibo.com 下面不是个性域名的那些路径 */
+const WEIBO_RESERVED = new Set(["u", "n", "p", "tv", "ttarticle", "article", "detail", "status", "statuses", "login", "signup", "newlogin", "hot", "search", "at", "comment", "like", "fav", "messages", "set", "settings", "home", "mygroups", "a", "aj", "ajax", "k", "d", "video", "pub", "friends", "discover", "profile", "sorry", "apps", "page", "book", "game", "live", "vip", "verify", "help", "service"]);
 
 /** 链接是不是一个账号的主页（纯函数，不发请求）。 */
 function accountRef(site: Site, url: URL): AccountRef | null {
@@ -216,6 +277,17 @@ function accountRef(site: Site, url: URL): AccountRef | null {
     const m = /^\/([\w.]{1,30})(?:\/(?:reels|tagged|feed|guides|channel|saved))?\/?$/.exec(path);
     if (!m || IG_RESERVED.has(m[1].toLowerCase())) return null;
     return { platform: "instagram", externalId: m[1].toLowerCase(), handle: `@${m[1]}`, url: `https://www.instagram.com/${m[1]}/` };
+  }
+  if (site === "weibo") {
+    const host = url.hostname.toLowerCase();
+    if (/^(share\.api|video|passport|card|s|service)\./.test(host)) return null;
+    // weibo.com/u/<数字 id>、m.weibo.cn/u/<id>、m.weibo.cn/profile/<id>、weibo.com/<id>
+    // 老的写法 weibo.com/p/100505<id>（100505 是个人主页、100206 是机构号，后面跟着数字 id）
+    const uid = /^\/(?:u|profile)\/(\d{5,11})\/?$/.exec(path) ?? /^\/(\d{5,11})\/?$/.exec(path) ?? /^\/p\/100(?:505|206)(\d{5,11})(?:\/\w+)?\/?$/.exec(path);
+    if (uid) return { platform: "weibo", externalId: uid[1], handle: "", url: `https://weibo.com/u/${uid[1]}` };
+    // 个性域名 weibo.com/<名字>（weibo.com/rmrb）。和数字 id 的写法认不出是同一个账号
+    const custom = /(^|\.)weibo\.com$/.test(host) ? /^\/([A-Za-z][\w-]{1,29})\/?$/.exec(path) : null;
+    return custom && !WEIBO_RESERVED.has(custom[1].toLowerCase()) ? { platform: "weibo", externalId: custom[1].toLowerCase(), handle: "", url: `https://weibo.com/${custom[1]}` } : null;
   }
   if (site === "youtube") {
     if (/youtu\.be$/i.test(url.hostname)) return null;
@@ -255,7 +327,7 @@ function bilibiliAccount(url: URL): AccountRef | null {
 export function parseAccountLink(raw: string): AccountRef | null {
   const url = toUrl(raw);
   if (!url) return null;
-  const site = platformOfHost(url.hostname);
+  const site = siteOf(url);
   if (!site) return bilibiliAccount(url);
   return siteRef(site, url) ? null : accountRef(site, url);
 }
@@ -267,7 +339,7 @@ export function parseAccountLink(raw: string): AccountRef | null {
 export function parseLink(raw: string): LinkRef | null {
   const url = toUrl(raw);
   if (!url) return null;
-  const site = platformOfHost(url.hostname);
+  const site = siteOf(url);
   return site ? siteRef(site, url) : webRef(url);
 }
 
@@ -286,9 +358,10 @@ const NOT_A_POST: Record<Site, string> = {
   youtube: "没认出这是哪个视频：贴视频页面的链接（youtube.com/watch?v=… 或 youtu.be/…），频道主页和播放列表读不了",
   x: "没认出这是哪条帖子：在 X 里点「分享 → 复制链接」再贴进来（x.com/…/status/… 这样的链接，主页读不了）",
   reddit: "没认出这是哪个帖子：在 Reddit 里点「分享 → 复制链接」再贴进来（要帖子的链接，版块主页、用户主页读不了）",
+  weibo: "没认出这是哪条微博：在微博里点「分享 → 复制链接」再贴进来（weibo.com/一串数字/一串字母 这样的链接；视频页、话题页、搜索页读不了）",
 };
 const X_ARTICLE_LINK = "这是 X 长文本身的链接，读不了：在 X 里打开发这篇长文的那条帖子，点「分享 → 复制链接」贴帖子的链接（x.com/…/status/…），长文的全文会一起读到";
-const SHORT_LINK_LABEL: Record<Site, string> = { xiaohongshu: "小红书", douyin: "抖音", tiktok: "TikTok", instagram: "Instagram", youtube: "YouTube", x: "X", reddit: "Reddit" };
+const SHORT_LINK_LABEL: Record<Site, string> = { xiaohongshu: "小红书", douyin: "抖音", tiktok: "TikTok", instagram: "Instagram", youtube: "YouTube", x: "X", reddit: "Reddit", weibo: "微博" };
 
 const MAX_HOPS = 5;
 
@@ -303,7 +376,7 @@ type FetchImpl = (service: string, input: string, init?: RequestInit) => Promise
 export async function resolveTarget(raw: string, fetchImpl: FetchImpl = labeledFetch): Promise<LinkTarget> {
   let current = toUrl(raw);
   if (!current) throw new LinkError("这不是一条链接");
-  const site = platformOfHost(current.hostname);
+  const site = siteOf(current);
   if (!site) {
     const account = bilibiliAccount(current) ?? (await bilibiliShortLink(current, fetchImpl));
     if (account) return { kind: "account", ref: account };

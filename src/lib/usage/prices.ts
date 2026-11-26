@@ -57,6 +57,9 @@ export const UNIT_USD: Record<string, number> = {
   apify_bilibili_profile_video: 0.003,
   // 这台服务器读不了 B 站视频时走 Apify 读一条（lib/sources/bilibili-apify.ts）
   apify_bilibili_video: 0.003,
+  // 微博：列一个账号的微博（account-apify.ts）、读一条微博（lib/sources/weibo.ts），同一个 actor
+  apify_weibo_profile_post: 0.005,
+  apify_weibo_post: 0.005,
   // 不带访问口令读一篇小红书笔记（lib/sources/xhs-apify.ts）
   apify_xhs_note: 0.005,
   apify_instagram_post: 0.003,

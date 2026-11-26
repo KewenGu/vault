@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { SourceFetchError, emptyStats, type FetchedPost } from "./types";
+import { SOURCE_PLATFORMS, SourceFetchError, emptyStats, type FetchedPost } from "./types";
 
 vi.mock("./xhs", () => ({ fetchXhsNote: vi.fn() }));
 vi.mock("./xhs-apify", async (orig) => ({ ...(await orig<object>()), fetchXhsViaApify: vi.fn() }));
@@ -12,6 +12,7 @@ vi.mock("./youtube-apify", () => ({ fetchYouTubeViaApify: vi.fn() }));
 vi.mock("./x", () => ({ readXPost: vi.fn() }));
 vi.mock("./reddit", async (orig) => ({ ...(await orig<object>()), readRedditPost: vi.fn() }));
 vi.mock("./web", () => ({ fetchWebPage: vi.fn() }));
+vi.mock("./weibo", async (orig) => ({ ...(await orig<object>()), readWeiboPost: vi.fn() }));
 vi.mock("./ytdlp", async (orig) => ({ ...(await orig<object>()), ytdlpPath: vi.fn(), ytdlpInfo: vi.fn() }));
 
 import { fetchDouyinVideo } from "./douyin";
@@ -21,6 +22,7 @@ import { VIDEO_MAX_BYTES } from "@/lib/media/files";
 import { RedditArchiveMiss, readRedditPost } from "./reddit";
 import { fetchTikTokVideo } from "./tiktok";
 import { fetchWebPage } from "./web";
+import { readWeiboPost } from "./weibo";
 import { readXPost } from "./x";
 import { fetchXhsNote } from "./xhs";
 import { fetchXhsViaApify } from "./xhs-apify";
@@ -44,6 +46,7 @@ beforeEach(() => {
   vi.mocked(readXPost).mockReset().mockResolvedValue({ post: post("x"), mentions: [] });
   vi.mocked(readRedditPost).mockReset().mockResolvedValue({ post: post("reddit"), mentions: [] });
   vi.mocked(fetchWebPage).mockReset().mockResolvedValue(post("web"));
+  vi.mocked(readWeiboPost).mockReset().mockResolvedValue({ post: post("weibo"), mentions: [] });
   vi.mocked(ytdlpPath).mockReset().mockReturnValue(null);
   vi.mocked(ytdlpInfo).mockReset().mockResolvedValue(null);
   vi.mocked(fetchYouTubeViaApify).mockReset().mockResolvedValue({ ...post("youtube"), title: "Apify 读到的" });
@@ -56,7 +59,7 @@ afterEach(() => {
 
 describe("收藏夹：按平台读帖子", () => {
   it("每个平台走自己的读法；能挑视频档位的都带上转存上限", async () => {
-    for (const p of ["xiaohongshu", "douyin", "tiktok", "instagram", "youtube", "x", "reddit", "web"] as const) expect((await fetchPost(ref(p))).title).toBe(p);
+    for (const p of SOURCE_PLATFORMS) expect((await fetchPost(ref(p))).title).toBe(p);
     expect(vi.mocked(fetchXhsNote)).toHaveBeenCalledWith(ref("xiaohongshu"), VIDEO_MAX_BYTES);
     expect(vi.mocked(fetchTikTokVideo)).toHaveBeenCalledWith(ref("tiktok"), VIDEO_MAX_BYTES);
     expect(vi.mocked(readXPost)).toHaveBeenCalledWith(ref("x"), VIDEO_MAX_BYTES);
@@ -65,6 +68,26 @@ describe("收藏夹：按平台读帖子", () => {
     expect(vi.mocked(fetchInstagramPost)).toHaveBeenCalledWith(ref("instagram"));
     expect(vi.mocked(fetchWebPage)).toHaveBeenCalledWith(ref("web"));
     expect(vi.mocked(readRedditPost)).toHaveBeenCalledWith(ref("reddit"));
+    expect(vi.mocked(readWeiboPost)).toHaveBeenCalledWith(ref("weibo"));
+  });
+
+  it("微博带的文章：跟着读（按网页），内容接在正文后面；没读到记一句", async () => {
+    const article = { platform: "web" as const, externalId: "a1", url: "https://card.weibo.com/article/m/show/id/2309405369631686132718" };
+    vi.mocked(readWeiboPost).mockResolvedValue({ post: { ...post("weibo"), kind: "text", text: "【夜读】与你共勉。" }, mentions: [{ how: "link", url: article.url, ref: article }] });
+    const picture = "https://wx4.sinaimg.cn/large/0033ImPzly1ijfx6vj68zj60zk0k0gmn02.jpg";
+    vi.mocked(fetchWebPage).mockResolvedValue({ ...post("web"), kind: "article", title: "头条文章", text: "不要低估每次微小的努力", author: { id: null, name: "" }, images: [{ url: "https://tvax4.sinaimg.cn/crop.0.0.1018.1018.180/avatar.jpg" }, { url: picture }, { url: "https://face.t.sinajs.cn/t4/appstyle/expression/ext/normal/7e/good.png" }, { url: "https://example.com/a.png" }] });
+    const got = await fetchPost(ref("weibo"));
+    // 文章里的图也在微博的图床上：下载要带 Referer；别处的图不带；页面上的头像、表情不算配图
+    expect(got.images).toEqual([{ url: picture, headers: { referer: "https://weibo.com/" } }, { url: "https://example.com/a.png" }]);
+    expect(got.kind).toBe("image");
+    expect(got.platform).toBe("weibo");
+    expect(got.text).toBe("【夜读】与你共勉。\n\n【链接的网页：card.weibo.com】《头条文章》\n不要低估每次微小的努力");
+    expect(vi.mocked(fetchWebPage)).toHaveBeenCalledWith(article);
+    // 文章页上只有头像：这条微博还是只有文字
+    vi.mocked(fetchWebPage).mockResolvedValue({ ...post("web"), kind: "article", text: "正文", images: [{ url: "https://tvax4.sinaimg.cn/crop.0.0.1018.1018.180/avatar.jpg" }] });
+    expect(await fetchPost(ref("weibo"))).toMatchObject({ kind: "text", images: [] });
+    vi.mocked(fetchWebPage).mockRejectedValue(new SourceFetchError("这个网页读不到"));
+    expect((await fetchPost(ref("weibo"))).notes).toContain(`链接的网页没读到（${article.url}）：这个网页读不到`);
   });
 
   it("Reddit 的链接帖：指向的链接跟着读（走那个平台的读法），内容接在正文后面", async () => {

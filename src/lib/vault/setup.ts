@@ -105,10 +105,10 @@ export function setupChecks(f: SetupFacts): SetupCheck[] {
     localMediaCheck(f.localMedia),
     {
       key: "apify",
-      label: "读抖音、Instagram，YouTube 的后备（Apify）",
+      label: "读抖音、Instagram、微博，YouTube 的后备（Apify）",
       state: f.apify ? "ok" : "missing",
       detail: f.apify ? "已配置" : "没配 APIFY_TOKEN",
-      effect: "没有它，抖音和 Instagram 的链接读不了（可以手动把文案贴进来）。YouTube 不给这台机器读时（云服务器上会这样）也靠它：读标题、简介和字幕，并把视频下下来看画面、转写口播。小红书、TikTok、X、网页不需要它。",
+      effect: "没有它，抖音、Instagram 和微博的链接读不了（可以手动把文案贴进来）。YouTube 不给这台机器读时（云服务器上会这样）也靠它：读标题、简介和字幕，并把视频下下来看画面、转写口播。小红书、TikTok、X、网页不需要它。",
       fix: "在 .env.local 里填 APIFY_TOKEN。",
     },
     {
