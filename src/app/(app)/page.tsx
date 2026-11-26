@@ -106,11 +106,18 @@ export default async function VaultPage({ searchParams }: { searchParams: Promis
             {filtered ? `找到 ${result.hits.length} 条` : `共 ${facets.total} 条`}
             {current.q && !result.semantic ? "（只按关键词搜；没配语义搜索）" : ""}
           </p>
-          {filtered && (
-            <Link href="/" className="text-accent hover:underline">
-              清除筛选
-            </Link>
-          )}
+          <span className="flex shrink-0 gap-4">
+            {current.q && (
+              <Link href={`/ask?q=${encodeURIComponent(current.q)}`} prefetch={false} className="text-accent hover:underline" title="让 AI 根据收藏库里的内容回答这句话（带出处）">
+                拿这句话去问
+              </Link>
+            )}
+            {filtered && (
+              <Link href="/" className="text-accent hover:underline">
+                清除筛选
+              </Link>
+            )}
+          </span>
         </div>
         {result.hits.length === 0 ? (
           <p className="panel px-6 py-14 text-center text-sm leading-relaxed text-ink-muted">
