@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { LinkError, extractShareUrl, parseAccountLink, parseLink, platformOfHost, resolveLink, resolveTarget } from "./link";
+import { LinkError, extractShareUrl, parseAccountLink, parseLink, platformOfHost, resolveLink, resolveTarget, weiboBid, weiboMid } from "./link";
 
 const redirectTo = (location: string) => new Response(null, { status: 302, headers: { location } });
 
@@ -188,6 +188,57 @@ describe("收藏夹：链接识别", () => {
     await expect(resolveLink("https://www.reddit.com/r/Cooking/", none)).rejects.toThrow(/没认出这是哪个帖子.*版块主页、用户主页读不了/);
   });
 
+  it("微博：短码和数字 id 是同一个数的两种写法，来回换得对（actor 2026-11-26 给的真实的几对）", () => {
+    const pairs = [
+      ["RtdFoAAyb", "5369640508720311"],
+      ["RtdraBhkz", "5369631688884759"],
+      ["Rtd77aybr", "5369619252514685"],
+      ["RtcU8svj6", "5369611206793532"],
+      ["RsqZh1mTl", "5367769270326327"],
+      ["Rn9635Sg5", "5355165151400213"],
+      ["R4Z6e7CX8", "5311881821818034"],
+      ["R3ALP2VKB", "5308563330698653"],
+    ];
+    for (const [bid, mid] of pairs) {
+      expect(weiboMid(bid), bid).toBe(mid);
+      expect(weiboBid(mid), mid).toBe(bid);
+    }
+    // 不是短码：有别的字符、太短、换出来不是一个微博 id
+    for (const bad of ["Rtd-oAAyb", "abc", "00000000", "RtdFoAAyb1x"]) expect(weiboMid(bad), bad).toBeNull();
+  });
+
+  it("微博：各种写法都认成同一条（按数字 id 认）；带用户 id 的规范成 weibo.com/<用户 id>/<短码>", () => {
+    const post = { platform: "weibo", externalId: "5369640508720311", url: "https://weibo.com/2803301701/RtdFoAAyb" };
+    expect(platformOfHost("weibo.com")).toBe("weibo");
+    expect(platformOfHost("m.weibo.cn")).toBe("weibo");
+    expect(platformOfHost("notweibo.com")).toBeNull();
+    expect(parseLink("https://weibo.com/2803301701/RtdFoAAyb")).toEqual(post);
+    expect(parseLink("https://www.weibo.com/2803301701/RtdFoAAyb?refer_flag=1001030103_&type=comment#_rnd1795")).toEqual(post);
+    expect(parseLink("https://weibo.com/2803301701/5369640508720311")).toEqual(post);
+    expect(parseLink("https://m.weibo.cn/2803301701/5369640508720311")).toEqual(post);
+    // 没带用户 id 的写法：手机版的详情页
+    const bare = { platform: "weibo", externalId: "5369640508720311", url: "https://m.weibo.cn/detail/5369640508720311" };
+    expect(parseLink("https://m.weibo.cn/detail/5369640508720311")).toEqual(bare);
+    expect(parseLink("https://m.weibo.cn/status/RtdFoAAyb?jumpfrom=weibocom")).toEqual(bare);
+    expect(parseLink("https://weibo.com/detail/5369640508720311")).toEqual(bare);
+    // App 里「复制链接」给的
+    expect(parseLink("https://share.api.weibo.cn/share/575563061,5369640508720311.html?weibo_id=5369640508720311")).toEqual(bare);
+    expect(extractShareUrl("看这条 weibo.com/2803301701/RtdFoAAyb 写得好")).toBe("https://weibo.com/2803301701/RtdFoAAyb");
+    // 视频页、搜索、热搜不是一条微博
+    for (const url of ["https://weibo.com/tv/show/1034:5369618798411795", "https://video.weibo.com/show?fid=1034:5369618798411795", "https://s.weibo.com/weibo?q=%23x%23", "https://weibo.com/hot/search"]) expect(parseLink(url), url).toBeNull();
+  });
+
+  it("微博的文章不是一条微博：按网页读（不发请求）；认不出是哪条时说该贴什么", async () => {
+    const never = vi.fn(async () => new Response("<html>", { status: 200 }));
+    expect(parseLink("https://weibo.com/ttarticle/p/show?id=2309405369631686132718")).toMatchObject({ platform: "web", url: "https://weibo.com/ttarticle/p/show?id=2309405369631686132718" });
+    expect(await resolveTarget("https://card.weibo.com/article/m/show/id/2309405369631686132718", never)).toMatchObject({ kind: "post", ref: { platform: "web" } });
+    expect(parseAccountLink("https://weibo.com/ttarticle/p/show?id=2309405369631686132718")).toBeNull();
+    expect(never).not.toHaveBeenCalled();
+    await expect(resolveLink("https://weibo.com/tv/show/1034:5369618798411795", never)).rejects.toThrow(/没认出这是哪条微博.*视频页、话题页、搜索页读不了/);
+    // 主页不是帖子（跟着读别的帖子提到的链接时）
+    await expect(resolveLink("https://weibo.com/u/2803301701", never)).rejects.toThrow(/没认出这是哪条微博/);
+  });
+
   it("不是链接：报给用户看的错", async () => {
     await expect(resolveLink("随便一段话")).rejects.toThrow(new LinkError("这不是一条链接"));
   });
@@ -316,6 +367,30 @@ describe("账号的主页（存一个博主的全部作品用）", () => {
     const never = vi.fn(async () => new Response("", { status: 200 }));
     expect(await resolveLink("https://space.bilibili.com/88461692/video", never)).toMatchObject({ platform: "web", url: "https://space.bilibili.com/88461692" });
     expect((await resolveTarget("https://space.bilibili.com/88461692/video", never)).kind).toBe("account");
+  });
+
+  it("微博：weibo.com/u/<数字 id> 和它的各种写法是同一个账号；个性域名按域名认；帖子、功能页不算", async () => {
+    const rmrb = { platform: "weibo", externalId: "2803301701", handle: "", url: "https://weibo.com/u/2803301701" };
+    for (const url of [
+      "https://weibo.com/u/2803301701",
+      "https://www.weibo.com/u/2803301701?tabtype=feed",
+      "https://weibo.com/2803301701",
+      "https://m.weibo.cn/u/2803301701?jumpfrom=weibocom",
+      "https://m.weibo.cn/profile/2803301701",
+      "https://weibo.com/p/1002062803301701/home?from=page_100206",
+    ]) {
+      expect(parseAccountLink(url), url).toEqual(rmrb);
+    }
+    // 个性域名：和数字 id 的写法认不出是同一个账号
+    expect(parseAccountLink("https://weibo.com/rmrb")).toEqual({ platform: "weibo", externalId: "rmrb", handle: "", url: "https://weibo.com/rmrb" });
+    expect(parseAccountLink("https://weibo.com/RMRB/?is_all=1")).toEqual({ platform: "weibo", externalId: "rmrb", handle: "", url: "https://weibo.com/RMRB" });
+    for (const url of ["https://weibo.com/2803301701/RtdFoAAyb", "https://weibo.com/login", "https://weibo.com/hot/search", "https://weibo.com/n/%E4%BA%BA%E6%B0%91%E6%97%A5%E6%8A%A5", "https://s.weibo.com/top", "https://m.weibo.cn/rmrb", "https://video.weibo.com/show"]) {
+      expect(parseAccountLink(url), url).toBeNull();
+    }
+    const never = vi.fn(async () => new Response("<html>", { status: 200 }));
+    expect(await resolveTarget("https://weibo.com/u/2803301701", never)).toEqual({ kind: "account", ref: rmrb });
+    expect(await resolveTarget("https://weibo.com/2803301701/RtdFoAAyb", never)).toMatchObject({ kind: "post", ref: { platform: "weibo", externalId: "5369640508720311" } });
+    expect(never).not.toHaveBeenCalled();
   });
 
   it("别的平台的主页、别的网站不算账号", () => {

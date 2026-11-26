@@ -184,6 +184,22 @@ describe("列一个 TikTok / 抖音账号的作品（Apify）", () => {
     await expect(listAll(ref, 5)).rejects.toThrow("列作品的那次运行没跑完（FAILED：blocked by TikTok），一条都没列出来");
   });
 
+  it("微博：跳过的（转发别人的）记进 notes；运行失败、一条都没有时多说一句常见的原因", async () => {
+    vi.stubEnv("APIFY_TOKEN", "apify_secret_1");
+    const weibo: AccountRef = { platform: "weibo", externalId: "1195230310", handle: "", url: "https://weibo.com/u/1195230310" };
+    const row = (id: string, over: Record<string, unknown> = {}) => ({ post_id: id, content: `微博 ${id.slice(-2)}`, publish_time: 1795000000 + Number(id.slice(-2)) * 3600, images: [], play_count: null, author_user_id: "1195230310", author_name: "何炅", is_pinned: false, ...over });
+    const calls = apify(["SUCCEEDED"], [row("5367769270326301"), row("5367769270326303"), row("5367769270326302", { author_user_id: "1296241304", author_name: "别人" })]);
+    const { steps, counts } = await listAll(weibo, 5);
+    expect(calls[0].url).toContain("/acts/socialdatax~socialdatax-weibo-data-api/runs");
+    expect(calls[0].body).toEqual({ operation: "list_user_posts", profile_url: "https://weibo.com/u/1195230310", max_items: 5, auto_paginate: true });
+    expect(steps.at(-1)).toMatchObject({ done: true, info: { name: "何炅" }, notes: ["清单里有 1 条是他转发的别人的微博，没存"] });
+    expect(steps.at(-1)?.posts.map((p) => p.externalId)).toEqual(["5367769270326303", "5367769270326301"]);
+    // 按数据集里的条数记账（跳过的那条也收了钱）
+    expect(counts).toEqual({ apify_weibo_profile_post: 3 });
+    apify(["FAILED"], []);
+    await expect(listAll(weibo, 5)).rejects.toThrow("列作品的那次运行没跑完（FAILED：blocked by TikTok），一条都没列出来。微博账号不存在、或者贴的不是主页链接（weibo.com/u/一串数字）时会这样");
+  });
+
   it("跑完了但什么都没有：没有账号信息 = 账号读不到；有账号信息 = 他没有公开的作品", async () => {
     vi.stubEnv("APIFY_TOKEN", "apify_secret_1");
     apify(["SUCCEEDED"], []);

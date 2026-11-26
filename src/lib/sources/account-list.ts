@@ -120,12 +120,13 @@ async function listViaApify(ref: AccountRef & { platform: keyof typeof PROFILE_A
   const items = await readDatasetItems(token, state.datasetId, rows + 50);
   // 跑了就计费，按数据集里的条数
   recordCall(spec.countKey, items.length);
-  const { info, posts: all } = spec.read(items, ref);
+  const { info, posts: all, notes: skipped = [] } = spec.read(items, ref);
   if (all.length === 0) {
-    if (notes.length > 0) throw new Error(notes[0].replace("：只拿到它已经列出来的", "，一条都没列出来"));
+    if (notes.length > 0) throw new Error(notes[0].replace("：只拿到它已经列出来的", `，一条都没列出来${spec.failHint && items.length === 0 ? `。${spec.failHint}` : ""}`));
     if (!info) throw new SourceFetchError(`没读到这个${label}账号：可能不存在、设成了私密，或者链接不对。在${label}里打开他的主页，点「分享 → 复制链接」再贴一次`);
-    return { done: true, state: null, waitS: 0, info, posts: [], notes: ["这个账号没有公开的作品"] };
+    return { done: true, state: null, waitS: 0, info, posts: [], notes: ["这个账号没有公开的作品", ...skipped] };
   }
+  notes.push(...skipped);
   // 从新到旧（置顶的回到它本来的位置）；没有时间的排最后
   const posts = [...all].sort((a, b) => (b.publishedAt ?? "").localeCompare(a.publishedAt ?? "")).slice(0, want);
   if (info?.postCount && posts.length < want && posts.length < info.postCount) {

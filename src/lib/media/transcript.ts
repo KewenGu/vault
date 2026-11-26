@@ -211,7 +211,7 @@ export function parseTranscript(text: string): { at: number | null; text: string
  * 按词算不按字母算：中文标题里夹几个英文词（「我的 morning routine 分享」）还是中文。
  */
 export function likelyChinese(platform: string, text: string): boolean {
-  if (platform === "xiaohongshu" || platform === "douyin") return true;
+  if (platform === "xiaohongshu" || platform === "douyin" || platform === "weibo") return true;
   const clean = text.replace(/https?:\/\/\S+/g, "");
   if (/[\u3040-\u30ff]/.test(clean)) return false;
   const han = clean.match(/[\u3400-\u9fff]/g)?.length ?? 0;

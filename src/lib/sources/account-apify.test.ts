@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { accountLabel, accountLabelInText, listedFallbackTitle } from "./account";
-import { PROFILE_ACTORS, readBilibiliProfile, readDouyinProfile, readInstagramProfile, readTikTokProfile, readXhsProfile, readYouTubeChannel } from "./account-apify";
+import { PROFILE_ACTORS, readBilibiliProfile, readDouyinProfile, readInstagramProfile, readTikTokProfile, readWeiboProfile, readXhsProfile, readYouTubeChannel } from "./account-apify";
 import { parseLink } from "./link";
 import type { AccountRef } from "./link";
 
@@ -119,6 +119,34 @@ describe("列一个账号的作品：认 actor 的输出", () => {
     expect(PROFILE_ACTORS.bilibili.actor()).toBe("socialdatax~socialdatax-bilibili-data-api");
   });
 
+  it("微博：链接是 weibo.com/<用户 id>/<短码>（和单独贴链接认出来的一样）；他转发的别人的微博不要、记一句；文字 / 配图 / 视频认得出", () => {
+    const me: AccountRef = { platform: "weibo", externalId: "1195230310", handle: "", url: "https://weibo.com/u/1195230310" };
+    const row = (id: string, over: Record<string, unknown> = {}) => ({ operation: "list_user_posts", post_id: id, content: "第一期#声生不息天涯共此时# 上线。看了吗？ http://t.cn/AXTnnihj \u200b\u200b\u200b", publish_time: 1795705523, post_url: "https://weibo.com/1195230310/x", play_count: null, images: [], author_user_id: "1195230310", author_name: "何炅", is_pinned: false, ...over });
+    const rows = [
+      row("5367769270326327", { images: [{ url: "https://wx3.sinaimg.cn/orj960/a.jpg", width: 960, height: 1616 }], is_pinned: true }),
+      row("5355165151400213", { content: "致敬！", play_count: 15980526 }),
+      row("5308563330698653", { content: "【#你好，明天#｜#当校门口开卖纸质短剧#】“纸质短剧”悄然流行" }),
+      // 他转发的：actor 给的是被转发的那条原文，作者是别人
+      row("5311881821818034", { author_user_id: "1296241304", author_name: "苏醒AllenSu", post_url: "https://weibo.com/1296241304/R4Z6e7CX8" }),
+      row("5367769270326327"),
+      { post_id: "不是微博" },
+    ];
+    const { info, posts, notes } = readWeiboProfile(rows, me);
+    expect(info).toEqual({ name: "何炅", handle: "", bio: "", postCount: null });
+    expect(posts).toEqual([
+      { externalId: "5367769270326327", url: "https://weibo.com/1195230310/RsqZh1mTl", kind: "image", title: "第一期声生不息天涯共此时 上线。看了吗？", publishedAt: "2026-11-26T15:05:23.000Z", pinned: true },
+      { externalId: "5355165151400213", url: "https://weibo.com/1195230310/Rn9635Sg5", kind: "video", title: "致敬！", publishedAt: "2026-11-26T15:05:23.000Z", pinned: false },
+      { externalId: "5308563330698653", url: "https://weibo.com/1195230310/R3ALP2VKB", kind: "text", title: "你好，明天｜当校门口开卖纸质短剧", publishedAt: "2026-11-26T15:05:23.000Z", pinned: false },
+    ]);
+    expect(notes).toEqual(["清单里有 1 条是他转发的别人的微博，没存"]);
+    for (const p of posts) expect(parseLink(p.url)).toEqual({ platform: "weibo", externalId: p.externalId, url: p.url });
+    // 个性域名的账号不知道数字 id：清单里谁发的最多就是谁
+    const custom = readWeiboProfile(rows, { platform: "weibo", externalId: "hejiong", handle: "", url: "https://weibo.com/hejiong" });
+    expect(custom.posts.map((p) => p.externalId)).toEqual(["5367769270326327", "5355165151400213", "5308563330698653"]);
+    expect(readWeiboProfile([], me)).toEqual({ info: null, posts: [], notes: [] });
+    expect(PROFILE_ACTORS.weibo.input(me, 50)).toEqual({ operation: "list_user_posts", profile_url: "https://weibo.com/u/1195230310", max_items: 50, auto_paginate: true });
+  });
+
   it("平台叫什么：B 站不在认得的平台里，名字单独给；夹在中文里时英文的两边留空格", () => {
     expect([accountLabel("bilibili"), accountLabel("x"), accountLabel("douyin")]).toEqual(["B 站", "X", "抖音"]);
     expect(`这个${accountLabelInText("bilibili")}账号`).toBe("这个 B 站账号");
@@ -136,6 +164,11 @@ describe("列一个账号的作品：认 actor 的输出", () => {
     vi.stubEnv("APIFY_INSTAGRAM_PROFILE_ACTOR", "b~ig");
     vi.stubEnv("APIFY_YOUTUBE_PROFILE_ACTOR", "b~yt");
     expect([PROFILE_ACTORS.instagram.actor(), PROFILE_ACTORS.youtube.actor()]).toEqual(["b~ig", "b~yt"]);
+    expect(PROFILE_ACTORS.weibo.actor()).toBe("socialdatax~socialdatax-weibo-data-api");
+    vi.stubEnv("APIFY_WEIBO_ACTOR", "a~wb");
+    expect(PROFILE_ACTORS.weibo.actor()).toBe("a~wb");
+    vi.stubEnv("APIFY_WEIBO_PROFILE_ACTOR", "b~wb");
+    expect(PROFILE_ACTORS.weibo.actor()).toBe("b~wb");
     vi.unstubAllEnvs();
   });
 

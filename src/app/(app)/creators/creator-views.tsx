@@ -33,7 +33,7 @@ export function CreatorListView({ creators }: { creators: CreatorSummary[] }) {
       <section className="flex flex-col gap-3">
         <h1 className="text-xl font-semibold tracking-tight">博主</h1>
         <p className="text-sm leading-relaxed text-ink-muted">
-          觉得一个人讲得好，把他发过的作品整个存下来。支持 X、TikTok、抖音、小红书、Instagram、YouTube、B 站的账号：贴他主页的链接，选存最近的多少条。每一条都和单独存进来的一样读懂、归类，在收藏库里搜得到。
+          觉得一个人讲得好，把他发过的作品整个存下来。支持 X、TikTok、抖音、小红书、Instagram、YouTube、B 站、微博的账号：贴他主页的链接，选存最近的多少条。每一条都和单独存进来的一样读懂、归类，在收藏库里搜得到。
         </p>
         <FindCreatorForm />
       </section>
@@ -88,6 +88,12 @@ const WHAT: Record<AccountRef["platform"], string[]> = {
     "长视频超过存档上限（默认 50 MB）的，原片留在服务器的磁盘上。",
   ],
   xiaohongshu: ["存他主页上公开的笔记（图文和视频）。", "列作品、读每一篇都走 Apify（要配 APIFY_TOKEN）：列出来的笔记没有访问口令，直接读读不到。", "这条路读不到评论内容，只有评论数。"],
+  weibo: [
+    "存他自己发的微博（文字、配图、视频）；他转发的别人的微博不存。",
+    "列微博、读每一条都走 Apify（要配 APIFY_TOKEN），各约 $0.005 一条：微博的网页要登录才能看，直接读不到。",
+    "能列出多少由他的设置定：设了「半年可见」的只列得出半年内的。",
+    "微博带的文章、外链跟着读进来；读不到评论内容，只有评论数。",
+  ],
 };
 
 /** 确认页：是哪个账号、存的是什么、选存最近的多少条、估的花费。 */

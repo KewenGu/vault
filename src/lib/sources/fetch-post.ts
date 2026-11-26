@@ -9,6 +9,7 @@ import { RedditArchiveMiss, readRedditPost } from "./reddit";
 import { fetchTikTokVideo } from "./tiktok";
 import { SourceFetchError, type SourcePlatform, type FetchedPost } from "./types";
 import { fetchWebPage } from "./web";
+import { WEIBO_MEDIA_HEADERS, readWeiboPost } from "./weibo";
 import { fetchXhsNote } from "./xhs";
 import { canReadXhsViaApify, fetchXhsViaApify } from "./xhs-apify";
 import { readXPost } from "./x";
@@ -70,6 +71,22 @@ async function fetchXhs(ref: LinkRef): Promise<FetchedPost> {
 }
 
 /**
+ * 微博：带的文章、外链跟着读。文章是按网页读的，里面的图也在微博的图床上（sinaimg.cn），下载要带 Referer（不带回 403）；
+ * 文章页上作者和评论的人的头像（tvax*.sinaimg.cn）、表情（face.t.sinajs.cn）不算配图（2026-11-26 实测一篇文章 6 张里 5 张是这些）。
+ */
+async function fetchWeibo(ref: LinkRef): Promise<FetchedPost> {
+  const read = await readWeiboPost(ref);
+  const own = new Set(read.post.images.map((f) => f.url));
+  const post = await followMentions(read, FOLLOW);
+  const onImageBed = (url: string) => /^https:\/\/[\w.-]+\.sinaimg\.cn\//i.test(url);
+  const decoration = (url: string) => /^https:\/\/(tvax?\d*\.sinaimg\.cn|face\.t\.sinajs\.cn)\//i.test(url);
+  const images = post.images.filter((f) => own.has(f.url) || !decoration(f.url)).map((f) => (f.headers || !onImageBed(f.url) ? f : { ...f, headers: WEIBO_MEDIA_HEADERS }));
+  // 跟着读到的只有头像和表情：这条微博还是只有文字
+  const kind = read.post.kind === "text" && post.kind === "image" && images.length === 0 ? "text" : post.kind;
+  return { ...post, kind, images };
+}
+
+/**
  * Reddit：先问存档；存档里没有（刚发的帖子）或者存档出错，按网页再试一次（家用网络下有时读得到，机房 IP 读不到）。
  * 两边都不行，说清楚是哪种情况、接下来能怎么办。
  */
@@ -93,12 +110,12 @@ async function readReddit(ref: LinkRef): Promise<Followed> {
 }
 
 /**
- * 跟着读时各种链接怎么读。Reddit 帖子在这里读到为止，它自己指向的链接不再跟
+ * 跟着读时各种链接怎么读。Reddit 帖子、微博在这里读到为止，它自己指向的链接不再跟
  * （不然「X 帖子 → Reddit 帖子 → 又一条 X 帖子」各跟各的，读过的记不到一起）。
  */
 const FOLLOW: FollowDeps = {
   readX: (r) => readXPost(r, VIDEO_MAX_BYTES),
-  readOther: async (r) => (r.platform === "reddit" ? (await readReddit(r)).post : FETCHERS[r.platform](r, {})),
+  readOther: async (r) => (r.platform === "reddit" ? (await readReddit(r)).post : r.platform === "weibo" ? (await readWeiboPost(r)).post : FETCHERS[r.platform](r, {})),
   resolve: (url) => resolveLink(url),
 };
 
@@ -125,6 +142,7 @@ const FETCHERS: Record<SourcePlatform, (ref: LinkRef, opts: FetchOptions) => Pro
   youtube: fetchYouTube,
   x: async (ref, opts) => followMentions(opts.thread ? await readXWithThread(ref) : await readXPost(ref, VIDEO_MAX_BYTES), FOLLOW),
   reddit: async (ref) => followMentions(await readReddit(ref), FOLLOW),
+  weibo: fetchWeibo,
   web: (ref) => fetchWebPage(ref),
 };
 
