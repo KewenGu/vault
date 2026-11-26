@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { LinkError, extractShareUrl, parseLink, platformOfHost, resolveLink } from "./link";
+import { LinkError, extractShareUrl, parseAccountLink, parseLink, platformOfHost, resolveLink, resolveTarget } from "./link";
 
 const redirectTo = (location: string) => new Response(null, { status: 302, headers: { location } });
 
@@ -205,3 +205,58 @@ vi.mock("@/lib/network/public-fetch", async (original) => ({
   ...await original<typeof import("@/lib/network/public-fetch")>(),
   publicFetch: (url: string, options: import("@/lib/network/public-fetch").PublicFetchOptions = {}) => fetch(url, { headers: options.headers, method: options.method, redirect: options.redirect, signal: options.signal ?? AbortSignal.timeout(options.timeoutMs ?? 20_000) }),
 }));
+
+describe("账号的主页（存一个博主的全部作品用）", () => {
+  const SEC = "MS4wLjABAAAAk1tZ-L085zZf2yW_H5dnVFZWyk8Rt8v4RAvf9KhTyPoVdMDxTs7Q_rvgTJGWXezS";
+
+  it("X：x.com/<用户名>，带分栏的也算；功能页、帖子不算", () => {
+    expect(parseAccountLink("https://x.com/Karpathy")).toEqual({ platform: "x", externalId: "karpathy", handle: "@Karpathy", url: "https://x.com/Karpathy" });
+    expect(parseAccountLink("https://twitter.com/karpathy/with_replies?lang=en")?.externalId).toBe("karpathy");
+    expect(parseAccountLink("https://x.com/karpathy/media/")?.url).toBe("https://x.com/karpathy");
+    for (const path of ["home", "explore", "search?q=ai", "i/bookmarks", "settings/account", "karpathy/status/2106418403661779046", "karpathy/followers", "this_name_is_way_too_long"]) {
+      expect(parseAccountLink(`https://x.com/${path}`), path).toBeNull();
+    }
+  });
+
+  it("TikTok：tiktok.com/@<用户名>；视频的链接不算", () => {
+    expect(parseAccountLink("https://www.tiktok.com/@TedToks?lang=en")).toEqual({ platform: "tiktok", externalId: "tedtoks", handle: "@TedToks", url: "https://www.tiktok.com/@TedToks" });
+    expect(parseAccountLink("https://www.tiktok.com/@scout2015/video/6718335390845095173")).toBeNull();
+    expect(parseAccountLink("https://www.tiktok.com/tag/cooking")).toBeNull();
+    expect(parseAccountLink("https://www.tiktok.com/@_")).toBeNull();
+  });
+
+  it("抖音：douyin.com/user/<sec_uid> 和分享出来的 iesdouyin.com/share/user/<sec_uid>；主页上打开的视频算帖子", () => {
+    const ref = { platform: "douyin", externalId: SEC, handle: "", url: `https://www.douyin.com/user/${SEC}` };
+    expect(parseAccountLink(`https://www.douyin.com/user/${SEC}?from_tab_name=main`)).toEqual(ref);
+    expect(parseAccountLink(`https://www.iesdouyin.com/share/user/${SEC}?u_code=abc&did=1`)).toEqual(ref);
+    expect(parseAccountLink("https://www.douyin.com/user/self")).toBeNull();
+    expect(parseAccountLink(`https://www.douyin.com/user/${SEC}?modal_id=7300000000000000000`)).toBeNull();
+    expect(parseLink(`https://www.douyin.com/user/${SEC}?modal_id=7300000000000000000`)?.externalId).toBe("7300000000000000000");
+  });
+
+  it("别的平台的主页、别的网站不算账号", () => {
+    expect(parseAccountLink("https://www.youtube.com/@3blue1brown")).toBeNull();
+    expect(parseAccountLink("https://www.instagram.com/instagram/")).toBeNull();
+    expect(parseAccountLink("https://example.com/@someone")).toBeNull();
+    expect(parseAccountLink("随便一段话")).toBeNull();
+  });
+
+  it("resolveTarget：帖子和主页分得开；App 里「分享主页」的短链跟着跳转认出账号", async () => {
+    const never = vi.fn(async () => new Response("<html>", { status: 200 }));
+    expect(await resolveTarget("https://x.com/karpathy", never)).toEqual({ kind: "account", ref: { platform: "x", externalId: "karpathy", handle: "@karpathy", url: "https://x.com/karpathy" } });
+    expect(await resolveTarget("https://x.com/karpathy/status/2106418403661779046", never)).toMatchObject({ kind: "post", ref: { platform: "x", externalId: "2106418403661779046" } });
+    expect(await resolveTarget("https://example.com/a", never)).toMatchObject({ kind: "post", ref: { platform: "web" } });
+    // 直接认得出的不发请求
+    expect(never).not.toHaveBeenCalled();
+    const douyin = vi.fn<(service: string, url: string, init?: RequestInit) => Promise<Response>>(async () => redirectTo(`https://www.iesdouyin.com/share/user/${SEC}?iid=1&u_code=2`));
+    expect(await resolveTarget("https://v.douyin.com/iAbCdEf/", douyin)).toEqual({ kind: "account", ref: { platform: "douyin", externalId: SEC, handle: "", url: `https://www.douyin.com/user/${SEC}` } });
+    const tiktok = vi.fn<(service: string, url: string, init?: RequestInit) => Promise<Response>>(async () => redirectTo("https://www.tiktok.com/@tedtoks?_t=abc&_r=1"));
+    expect((await resolveTarget("https://vm.tiktok.com/ZMabc123/", tiktok)).kind).toBe("account");
+  });
+
+  it("resolveLink（跟着读别的帖子提到的链接时用）不把主页当帖子：照旧说认不出", async () => {
+    const never = vi.fn(async () => new Response("<html>", { status: 200 }));
+    await expect(resolveLink("https://x.com/karpathy", never)).rejects.toThrow(/没认出这是哪条帖子/);
+    await expect(resolveLink("https://www.tiktok.com/@tedtoks", never)).rejects.toThrow(/没认出这是哪个视频/);
+  });
+});

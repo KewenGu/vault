@@ -22,6 +22,7 @@
 | 目录和搜索 | 按类型、领域、来源、标签筛选；关键词 + 语义搜索，能搜到视频里说过的话和图片上的字，中英文互通。 |
 | 知识图谱 | 每条内容提到的人、机构、地方、产品、作品、概念、事件增量并入一张图：同名直接归并，疑似同一个的让模型判断。 |
 | 溯源 | 收藏的东西很多是转述：「某论文发现」「某公司宣布」「某个开源库能做到」。详情页点「溯源」，后台让 Claude 联网去查：① 找出这条内容引用、依据的东西（论文、文章、代码库、官方公告、数据、别人的帖子…）；② 搜每一样的第一手出处（论文本身、仓库本身、官方自己发的，不拿新闻和转述当出处）；③ 打开读原文，对一对这条内容里的说法是不是原文的意思。搜到的不都读：先看搜索结果的标题、地址、摘要判断是不是第一手的，是才打开；转述的不打开（搜不到第一手时，为了找原始链接最多打开两篇转述）。它实际还打开了哪些没列为出处的网页，结果底下列着。页面上列出每一样：出处的地址、结论（原文是这么说的 / 有出入 / 原文里没有 / 没读到原文 / 没找到）、原文怎么说的、一句原话，可以一键把原文也存进来。每个地址下面写着模型这次有没有真的打开过它（按接口返回的搜索和读取记录对出来的，不是模型自己报的）；没搜到、没读到、次数用完没查的单独列出来。点了才查（要联网，要另外花钱）。 |
+| 博主 | 「博主」页：觉得一个人讲得好，把他发过的作品整个存下来。贴他主页的链接（X、TikTok、抖音；在收藏库的存入框里贴主页链接也会带到这里），选存最近的多少条（20 / 50 / 100 / 300 / 最多 1000），看估的花费，确认了才开始。后台先列出他的作品，再从最新的开始一条条存：每一条都是收藏库里普通的一条内容，和单独贴链接存进来的一样读取、转写、理解、归类，以前单独存过的不会重复。X 只存他自己发的（转发别人的不存），一串帖子算一条。存的过程中能看到存到哪了、能随时停（还没存的搁下，以后可以接着存）；以后点「同步」重新列一遍，把新发的、或者更早的存进来。没列到、没存的在页面上列着。 |
 
 支持的来源：
 
@@ -102,8 +103,19 @@
 - 网页正文里的外链现在单独留下来（以前换成纯文字时地址丢了）：Markdown 和 HTML 两条路都有单元测试，没有对着真实的网页读过。
 - **没有用真实的 Claude 接口跑过一次溯源**：联网搜索和读网页这两个工具的参数、返回的结构是对着 2026-11-23 的官方文档和 SDK 1.10.0 的类型写的，没有实际请求过。
 
+2026-11-26，存一个博主的全部作品，在一台云端容器里（没有连 Supabase，没有 Anthropic 的密钥）：
+
+- 列作品，对着真实的接口，用应用自己的代码各跑了一遍：X 一个账号列了最近 45 条他自己发的（翻了 4 页，10 秒；另外用脚本连续翻过 12 页、233 条）；TikTok 一个账号列 5 条（Apify，19 秒，记了 $0.01）；抖音一个账号列 5 条（Apify，29 秒，记了 $0.025；5 条里 3 条是置顶的旧作品）。不存在的 TikTok 账号给出的是「没读到这个账号」。清单里的链接用读单条的老办法读得出来（TikTok、抖音各试了一条）。
+- X 的一串帖子：对着真实的接口读了一条带后续的帖子，后面那条和它里面链接的网页都并进了正文。
+- 发现并处理了一件事：FxTwitter 的账号信息和时间线两个接口对真实存在的账号偶尔也回 404（那天一个账号的账号信息 12 次里 2 次、时间线 7 次里 5 次），所以两个都多试几次再下结论；读单条帖子和一串帖子的接口各试了二十几次、十次，没出过。
+- 新的迁移（`creators`、`creator_posts`）和别的迁移一起在本机临时起的 PostgreSQL 16 + pgvector 上跑过（完整的迁移测试 13 个都跑了）：能重复执行；行级安全下看不到、改不了、删不了别人的博主和作品清单，不能替别人写，不能把作品挂到别人的博主上、也不能指着别人的内容；内容删了清单那一行留着（不再指着它），博主删了清单跟着删、内容留着。
+- 后台任务用内存里的假数据库和假的读取器测：列作品一步步落库、从最新的开始每次两条存、以前单独存过的不重新处理、建到一半断了重来、中途停下、一条失败不影响后面的、作品多时自己接着跑、碰不到别人的。
+- 后台任务的那几种写法（两步之间 sleep、一个任务里直接调另一个任务并且两条并行、存满一批后自己另起一次运行接着跑）用一个临时的假任务在生产构建 + 本地模式（和 Docker 部署一样）下真跑过，步骤的顺序和并行都对。用的是假任务，不是真实的博主。
+- 三个页面（列表、确认、详情）在浏览器里（Chromium，桌面和手机宽度、亮色和暗色）对着写死的数据看过：各种状态（正在列、正在存、存完、停下了、没列成、中断了）、没存的清单、翻页。按钮没有对着真实的后端点过。
+
 **没有验证的**：
 
+- 存一个博主的全部作品，从贴主页链接到存完的整条路（真实的 Supabase + 后台任务 + Claude）没有走过：那台容器不许连 Supabase，也没有 Anthropic 的密钥。具体是：迁移没有推到任何一个 Supabase 项目；建出来的内容接着走原来那套处理这一段只用假的测过；几十上百条连着存要多久、花多少、中途服务重启能不能接上，都没有实测。列几百条作品（两个 Apify actor 一次最多给多少、要等多久）、X 的时间线最多能往回翻多远、App 里「分享主页」的短链（只用假的跳转测过），也没有测。
 - 溯源在真实接口上的一切：找得准不准（会不会把转述当成第一手、会不会漏掉主要的引用）、核对的结论靠不靠得住、要等多久、一次花多少钱（见下面的粗估）、「这次打开读过」的记录和实际对不对得上（新版工具把搜索放在代码执行里跑，返回的结构是按文档写的）。从点按钮到页面上出结果的整条路（真实的 Supabase + 后台任务）也没走过。
 
 - Reddit：从存入到详情页走一遍（转存图片、视频合声音之后抽画面和转写、理解）；App 里「复制链接」给的短链（`/r/…/s/…`）只用假的跳转测过；家用网络下没试；存档收录一条新帖子要多久不知道。
@@ -209,11 +221,11 @@ npm run check
 
 ## 接口
 
-页面和接口共用同一套逻辑（`src/lib/vault/service.ts`，导图是 `src/lib/vault/map-service.ts`，日记是 `src/lib/vault/journal-service.ts`）。鉴权认浏览器的登录态，也认 `Authorization: Bearer <Supabase 访问令牌>`。失败时返回 `{ "error": "给用户看的一句话" }`。
+页面和接口共用同一套逻辑（`src/lib/vault/service.ts`，导图是 `src/lib/vault/map-service.ts`，日记是 `src/lib/vault/journal-service.ts`，博主是 `src/lib/vault/creator-service.ts`）。鉴权认浏览器的登录态，也认 `Authorization: Bearer <Supabase 访问令牌>`。失败时返回 `{ "error": "给用户看的一句话" }`。
 
 | 方法和路径 | 做什么 |
 |---|---|
-| `POST /api/v1/items` | 存一条。`{ input, note? }`，`input` 是链接、分享文案或文字。服务器读不到、客户端自己读到的网页传 `{ page: { url, title, text, description?, cover?, images?, author?, site?, publishedAt? }, note? }`（存过的同一个链接换上这份重新处理）。返回 `{ id, existing }` |
+| `POST /api/v1/items` | 存一条。`{ input, note? }`，`input` 是链接、分享文案或文字（是一个账号的主页时不存，回 400 和 `{ error, account: { platform, handle, url } }`：整个账号走下面的 `/api/v1/creators`）。服务器读不到、客户端自己读到的网页传 `{ page: { url, title, text, description?, cover?, images?, author?, site?, publishedAt? }, note? }`（存过的同一个链接换上这份重新处理）。返回 `{ id, existing }` |
 | `GET /api/v1/items` | 列出 / 搜索。`q`、`type`、`category`、`tag`、`platform`、`source`、`kind`、`entity`、`limit` |
 | `GET /api/v1/items/:id` | 详情：理解结果（`understanding.outline` 是思维导图的大纲：按顺序的一行行节点 `{ depth, at, text }`，没有时是空数组）、正文、口播、文件、关联的实体 |
 | `PATCH /api/v1/items/:id` | 改备注和标签。`{ note?, tags? }` |
@@ -223,6 +235,13 @@ npm run check
 | `POST /api/v1/items/:id/trace` | 开始溯源（溯源过的是重新查一遍）。后台做，一般一两分钟；返回 `{ trace }`（`running`），之后隔几秒用上面的 `GET` 看结果。正在查的时候再调回 409 |
 | `POST /api/v1/uploads` | 开始上传。`{ name, mime, size, sha256, note? }`，返回签名上传的 `{ bucket, path, token }`；已存过时 `upload` 为 `null` |
 | `POST /api/v1/uploads/:id/complete` | 文件传完，开始处理 |
+| `GET /api/v1/creators` | 加过的博主：`{ creators: [{ id, platform, handle, name, bio, url, postCount, status: "listing" \| "saving" \| "ready" \| "failed", busy, stuck, error, want, notes, counts: { pending, saved, held }, costUsd, syncedAt }] }`。`busy` = 后台正在跑；`stuck` = 状态是进行中但很久没动静（可以接着存）；`notes` 是没列到、没存的 |
+| `POST /api/v1/creators` | 加一个博主、开始存。`{ input, want }`：`input` 是主页的链接或分享文案（X、TikTok、抖音），`want` 是存最近的多少条（1–1000）。后台跑；返回 `{ id, existing }`。已经加过的：没在跑就按这次的条数再同步一遍 |
+| `GET /api/v1/creators/:id` | 一个博主：`{ creator, posts: [{ id, url, title, kind, publishedAt, pinned, status: "pending" \| "saved" \| "held", itemId }], items, page, pages }`。`posts` 是整份作品清单（`saved` 而 `itemId` 是空 = 存过后来删了）；`items` 是已经存下来的内容，一页 60 条，`page` 翻页 |
+| `POST /api/v1/creators/:id/sync` | 再同步。`{ want }`：重新列最近的这么多条，清单里没有的存进来（找新发的用小的数，往回多存用大的）。正在跑时回 409 |
+| `POST /api/v1/creators/:id/stop` | 停下：还排着队的搁下（`held`），正在处理的那一两条会处理完 |
+| `POST /api/v1/creators/:id/resume` | 接着存搁下的、中断时还排着队的，不重新列作品 |
+| `DELETE /api/v1/creators/:id` | 移除这个博主和他的作品清单；已经存进收藏库的内容留着 |
 | `GET /api/v1/graph` | 整张图谱：`{ nodes, links }` |
 | `GET /api/v1/maps` | 自己建的导图：`{ maps: [{ id, title, nodeCount, branches, updatedAt }] }` |
 | `POST /api/v1/maps` | 新建一张。`{ title?, itemId?, draft? }`：`itemId` = 从一条内容开始（抄它的大纲、挂成来源），`draft: true` = 建好后让 AI 按标题从收藏库里起草（要等模型）。返回 `{ id }` |
@@ -254,10 +273,11 @@ npm run check
 ## 代码结构
 
 ```
-supabase/migrations/        表（items、图谱的三张、item_traces、maps、日记的三张）、行级安全、搜索和图谱的数据库函数、存储桶
+supabase/migrations/        表（items、图谱的三张、item_traces、maps、日记的三张、博主的两张）、行级安全、搜索和图谱的数据库函数、存储桶
 src/workflows/process-item.ts   一条内容的后台处理：读取 → 看和听 → 理解 → 建索引并入图
 src/workflows/trace-item.ts     溯源的后台任务：联网找一条内容引用的东西的第一手出处、读原文核对
 src/workflows/process-journal-audio.ts   日记里的一段录音：转成能播的格式 → 转文字
+src/workflows/collect-creator.ts   存一个博主的作品：列作品 → 一条条建成内容、交给 process-item 处理
 src/instrumentation.ts      服务启动时把上次没跑完的后台任务重新排上队
 src/lib/
   vault/      capture（存进来的是什么）· store（items 表读写）· service（存 / 重跑 / 删）
@@ -269,18 +289,20 @@ src/lib/
               日记：journal-doc（一页的内容：正文的块、手帐层的格式、日期、搜索文字）· journal-edit（编辑器对块的操作）
               · journal-deco（手帐层的操作：贴纸、挂在哪一块上、笔画）· journal-store（三张表读写）
               · journal-service（新建 / 保存 / 搜 / 传文件 / 我的贴纸 / 删）· journal-audio（录音转成能播的格式）· journal-sticker-image（贴纸的图片处理）· journal-tidy（「AI 整理」的提示词和解析）
+              博主：creator-store（creators、creator_posts 两张表读写）· creator-service（加 / 同步 / 停 / 接着存 / 移除）
               speech（把说的话转成文字：收藏库和日记共用）
               indexing（搜索全文和向量文字）· search（关键词 + 语义）· facets（筛选栏计数）
   graph/      merge（实体增量并入）· data（图谱页的数据）
   ai/         claude（唯一的 Claude 调用出口；溯源时带上联网搜索和读网页两个工具）
-  sources/    各平台的链接读取器
+  sources/    各平台的链接读取器；列一个账号的作品（account-list：一步步列；account-x：X 的时间线和一串帖子；
+              account-apify：TikTok、抖音的 actor；apify：开始一次运行、问状态、取结果）
   media/      下载和统一图片、ffmpeg、抽帧和帧格、带时间的文字、音频、留在本机磁盘上的大视频原片、把单独的声音文件合进视频（Reddit）
   asr/        语音识别的三条路
   network/    读外部地址的受控出口（只许公网地址、限大小、可走可信代理）
   usage/      用量计量和价格
   auth/       登录网关、邮箱名单、会话
 src/app/
-  (app)/      收藏库首页、详情、日记（列表和编辑）、导图（列表和编辑）、图谱、状态、手机上用、分享确认页、上传页
+  (app)/      收藏库首页、详情、博主（列表、确认页、一个博主）、日记（列表和编辑）、导图（列表和编辑）、图谱、状态、手机上用、分享确认页、上传页
   (public)/   登录
   api/v1/     接口
   media/      文件读取
@@ -298,7 +320,7 @@ src/components/journal/   日记的编辑器（一页纸、录音、播放条）
 | `src/lib/network/`、`src/lib/node/` | 同名目录 |
 | `src/lib/embeddings.ts` | `src/lib/search/embeddings.ts` |
 
-`src/lib/sources/reddit.ts` 是这里新写的（SM-Intelligence 那边没有），读法是从 [last30days-skill](https://github.com/mvanhorn/last30days-skill)（MIT）学来的。
+`src/lib/sources/reddit.ts` 是这里新写的（SM-Intelligence 那边没有），读法是从 [last30days-skill](https://github.com/mvanhorn/last30days-skill)（MIT）学来的。`src/lib/sources/` 里 `account*.ts`、`apify.ts` 也是这里新写的；为它们改了搬来的三个文件：`link.ts`（认账号的主页、`resolveTarget`）、`follow.ts`（一串帖子的后几条）、`fetch-post.ts`（X 帖子带着那一串读）。
 
 和 SM-Intelligence 不一样的地方：
 
@@ -319,6 +341,16 @@ src/components/journal/   日记的编辑器（一页纸、录音、播放条）
   - 评论最多读存档里的 500 条，留赞数最高的 12 条（回复也算），每条给模型看前 600 字；评论搜不到，页面上也不显示。
   - 投票的选项和票数不读；动图只存静止的画面；浏览量、转发数没有。被移除的帖子能读到存档里留下的内容。
   - 版块主页、用户主页、wiki 的链接读不了（以前按网页读，机房 IP 上也读不到）。以前按「网页」存过的 Reddit 链接不会自动换成新的读法，要重新贴一次链接。
+- 博主：
+  - 只支持 X、TikTok、抖音的账号；小红书、Instagram、YouTube 的主页还不行。
+  - 存的是「最近的 N 条」，一次最多列 1000 条；不能按时间段、按关键词挑，也不能在清单里勾选哪几条存、哪几条不存。
+  - 不会自动跟进新发的：要自己点「同步」。删掉过的内容再同步不会重新存。
+  - 花费是估的（按你在这个平台上已有内容的平均数），没有硬的上限：开始之后只有点「停下」才停。停的时候正在处理的那一两条会处理完。
+  - 清单里带的图片 / 视频地址有时效，排到的时候多半过期了，所以每一条都按链接重新读一遍：抖音读每一条另收一次 Apify 的钱（约 $0.01），列作品那次也收（约 $0.005 / 条）。
+  - X：靠 FxTwitter 的公开接口，那边停了或改了，这条路就断了；时间线往回能翻多远没测到头，翻不动的地方页面上会说列到了哪天。回别人的回复不存。一串帖子连同里面的引用和链接，一条内容最多跟着读 30 条，很长的一串后面的读不全（会记在那条内容的「读取情况」里）。
+  - 存一个博主的时候占着后台同时处理的名额（默认两条），这期间单独存的内容会慢一些。
+  - 移除一个博主不会删掉已经存下来的内容，也没有「连内容一起删」；要删只能一条条删。
+  - 一个博主的页面上内容按发布时间一页 60 条翻；想在他的内容里搜、筛，要回收藏库用搜索（按作者名搜）。
 - 不支持 PDF 和 Office 文档。
 - 溯源：
   - 结论是模型读了之后写的，本身也是一层转述，可能有错、可能漏：页面给出地址是让你自己点开看，要紧的不要只看结论。「这次打开读过」只说明它打开过那个地址，不保证它读对了。

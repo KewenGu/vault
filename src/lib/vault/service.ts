@@ -2,11 +2,11 @@ import "server-only";
 import { start } from "workflow/api";
 import type { Session } from "@/lib/auth/user";
 import { removeLocalItemFiles } from "@/lib/media/local-store";
-import { LinkError, resolveLink } from "@/lib/sources/link";
+import { LinkError, resolveLink, resolveTarget } from "@/lib/sources/link";
 import { getServiceClient } from "@/lib/supabase/service";
 import { processItem } from "@/workflows/process-item";
 import { traceItem } from "@/workflows/trace-item";
-import { VaultError } from "./errors";
+import { AccountLinkError, VaultError } from "./errors";
 import { captureFields, classifyCapture, fileDedupeKey, planUpload, textDedupeKey, titleFromFilename, uploadPath, uploadedMedia } from "./capture";
 import { readPost } from "@/lib/sources/types";
 import { readCapture } from "./page-capture";
@@ -19,7 +19,7 @@ import { beginTrace, endTrace, getTrace, traceRunning, type ItemTrace } from "./
  * 能直接告诉用户的问题抛 VaultError（message 给用户看）；别的错往上抛。
  */
 
-export { VaultError };
+export { AccountLinkError, VaultError };
 
 /** 后台任务起不来（Workflow 运行时没连上）：这条标成失败并带上原因，不让它挂在「处理中」。 */
 async function startProcessing(itemId: string): Promise<void> {
@@ -35,7 +35,10 @@ async function startProcessing(itemId: string): Promise<void> {
 
 export type Saved = { id: string; existing: boolean };
 
-/** 存一段粘贴的内容：链接（含 App 分享出来的那段话）或文字。已经存过同一条的回到那条，不重复处理。 */
+/**
+ * 存一段粘贴的内容：链接（含 App 分享出来的那段话）或文字。已经存过同一条的回到那条，不重复处理。
+ * 链接是一个账号的主页（X / TikTok / 抖音）时抛 AccountLinkError：整个账号要先选存多少条，走 creator-service.ts。
+ */
 export async function saveInput(session: Session, rawInput: string, rawNote = ""): Promise<Saved> {
   const { input, note } = captureFields(rawInput, rawNote);
   const capture = classifyCapture(input);
@@ -43,13 +46,15 @@ export async function saveInput(session: Session, rawInput: string, rawNote = ""
   const { user, db } = session;
   let saved: Saved;
   if (capture.kind === "link") {
-    let ref;
+    let target;
     try {
-      ref = await resolveLink(capture.url);
+      target = await resolveTarget(capture.url);
     } catch (e) {
       if (e instanceof LinkError) throw new VaultError(e.message);
       throw e;
     }
+    if (target.kind === "account") throw new AccountLinkError(target.ref);
+    const ref = target.ref;
     saved = await createItem(db, user.id, { source: "link", dedupeKey: linkDedupeKey(ref), status: "fetching", platform: ref.platform, externalId: ref.externalId, url: ref.url, note });
   } else {
     if (capture.text.length > TEXT_MAX) throw new VaultError(`文字太长（${capture.text.length.toLocaleString("en-US")} 字），一次最多 ${TEXT_MAX.toLocaleString("en-US")} 字；更长的存成 .txt 文件上传`);
