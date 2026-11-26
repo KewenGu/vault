@@ -214,7 +214,7 @@ async function fetchLink(db: Db, item: Item, counts: Counts): Promise<boolean> {
   const capture = item.post.capture;
   let post: FetchedPost;
   try {
-    post = capture ? mapCapture(capture, ref) : await meterInto(counts, () => fetchPost(ref));
+    post = capture ? mapCapture(capture, ref) : await meterInto(counts, () => fetchPost(ref, { thread: item.post.withThread }));
   } catch (e) {
     if (!item.userText?.trim()) throw e;
     const { error } = await db.from("items").update({ status: "analyzing" }).eq("id", item.id);
@@ -267,6 +267,7 @@ async function fetchLink(db: Db, item: Item, counts: Counts): Promise<boolean> {
     cuts,
     links: post.links ?? [],
     ...(capture ? { capture } : {}),
+    ...(item.post.withThread ? { withThread: true } : {}),
   });
   const { error } = await db
     .from("items")

@@ -131,6 +131,44 @@ type JournalStickerRow = {
   updated_at: string;
 };
 
+type CreatorRow = {
+  id: string;
+  user_id: string;
+  platform: string;
+  external_id: string;
+  url: string;
+  handle: string;
+  name: string;
+  bio: string;
+  post_count: number | null;
+  status: string;
+  error: string | null;
+  want: number;
+  notes: Json;
+  usage: Json;
+  cost_usd: number;
+  started_at: string;
+  synced_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type CreatorPostRow = {
+  id: string;
+  user_id: string;
+  creator_id: string;
+  external_id: string;
+  url: string;
+  kind: string | null;
+  title: string;
+  published_at: string | null;
+  pinned: boolean;
+  status: string;
+  item_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 type Table<Row, Required extends keyof Row> = {
   Row: Row;
   Insert: Pick<Row, Required> & Partial<Omit<Row, Required>>;
@@ -150,6 +188,8 @@ export type Database = {
       journal_entries: Table<JournalEntryRow, "user_id" | "day">;
       journal_media: Table<JournalMediaRow, "user_id" | "entry_id" | "kind" | "path">;
       journal_stickers: Table<JournalStickerRow, "user_id" | "path">;
+      creators: Table<CreatorRow, "user_id" | "platform" | "external_id" | "url">;
+      creator_posts: Table<CreatorPostRow, "user_id" | "creator_id" | "external_id" | "url">;
     };
     Views: { [_ in never]: never };
     Functions: {
@@ -188,3 +228,5 @@ export type ItemTraceRecord = ItemTraceRow;
 export type MapRecord = MapRow;
 export type JournalEntryRecord = JournalEntryRow;
 export type JournalMediaRecord = JournalMediaRow;
+export type CreatorRecord = CreatorRow;
+export type CreatorPostRecord = CreatorPostRow;

@@ -148,7 +148,7 @@ sudo bash deploy/install-auto-update.sh --uninstall
 - **后台任务的状态存在本机的卷里**（`vault-data`）。处理到一半重启容器，起来之后会接着跑。只能跑一个应用容器，不能横向扩。
 - **后台任务的内部接口不对外**：`/.well-known/workflow/*` 在 Caddy 那一层直接回 404。本机模式下这些接口没有鉴权，应用自己从容器内部调。不要绕过 Caddy 把 3000 端口直接暴露出去。
 - **ffmpeg 来自镜像**（`mwader/static-ffmpeg:9.0.2`），不用服务器上装。Ubuntu 24.04 自带的 6.1 不够新。
-- **yt-dlp 装在镜像里**（Python 的 venv，`/opt/yt-dlp`，镜像大约多 110 MB）：B 站、Vimeo、TED 这类别的视频站的链接能读到视频信息，视频本体下不下得来要看那个站让不让机房 IP 下（见下面「验证过什么」）。版本在 `Dockerfile` 里写死（`YTDLP_VERSION`）。视频站经常改版，哪天某个站读不到了，先把这个版本号改成 [PyPI 上最新的](https://pypi.org/project/yt-dlp/) 再重新构建。它帮不了 YouTube：从机房 IP 出去一样被拦，YouTube（信息、字幕、视频本体）靠上面说的 Apify。
+- **yt-dlp 装在镜像里**（Python 的 venv，`/opt/yt-dlp`，镜像大约多 110 MB）：B 站、Vimeo、TED 这类别的视频站的链接能读到视频信息，视频本体下不下得来要看那个站让不让机房 IP 下（见下面「验证过什么」）。版本在 `Dockerfile` 里写死（`YTDLP_VERSION`）。视频站经常改版，哪天某个站读不到了，先把这个版本号改成 [PyPI 上最新的](https://pypi.org/project/yt-dlp/) 再重新构建。它帮不了 YouTube：从机房 IP 出去一样被拦，YouTube（信息、字幕、视频本体）靠上面说的 Apify。B 站也按 IP 拦（2026-11-26 在一台实际的服务器上，镜像里的 yt-dlp 读 B 站视频回 `HTTP Error 412`）：配了 `APIFY_TOKEN` 时 B 站视频会自动改走 Apify（约 $0.003 一条），那条内容的「读取情况」里会写这次走的是哪条路。
 
 ## 验证过什么
 

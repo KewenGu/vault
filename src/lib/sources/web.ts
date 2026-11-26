@@ -5,13 +5,15 @@ import { assertSafeUrl } from "@/lib/network/safe-url";
 import type { LinkRef } from "./link";
 import { downloadRemote } from "@/lib/media/files";
 import { SourceFetchError, emptyStats, type FetchedPost, type PostLink, type RemoteFile } from "./types";
-import { mapYtdlpInfo, ytdlpInfo } from "./ytdlp";
+import { bilibiliVideoId, canReadBilibiliViaApify, fetchBilibiliViaApify } from "./bilibili-apify";
+import { mapYtdlpInfo, ytdlpProbe } from "./ytdlp";
 import type { PageCapture } from "@/lib/vault/page-capture";
 
 /**
  * 读「别的链接」：不是那六个平台的，一律按网页读——博文、新闻、公众号文章、别的视频站。
  *
  * 1. 本机有 yt-dlp 时先问它认不认得（B 站、Vimeo、微博视频…）：认得就按视频读（标题、简介、播放数，视频交给 yt-dlp 下）。
+ *    B 站的视频 yt-dlp 读不到（云服务器的 IP 被 B 站拦）或者本机没有 yt-dlp，又配了 APIFY_TOKEN：走 Apify（bilibili-apify.ts）。
  * 2. 否则读正文，三条路依次试：
  *    - Jina Reader 带密钥（和调研管线同一个 JINA_API_KEY，记一笔 jina_fetch）；
  *    - 密钥不能用（没配、欠费 402、限流）时不带密钥再试一次（免费，限速更紧）；
@@ -229,12 +231,25 @@ export function parseHtmlPage(html: string, url: string): PageRead {
   };
 }
 
+/**
+ * 这个站要按中文浏览器去读：不说的话 Jina 那边的浏览器是英文的，B 站会给一份机器翻译成英文的页面
+ * （标题、简介、界面都是英文。2026-11-26 线上一条 B 站视频存成了英文标题；带上 `x-locale: zh-CN` 实测拿到的是原文）。
+ * 只列确认过的站：别的网站按中文去读，有的会换成机器翻译的中文版。
+ */
+const wantsChinese = (url: string): boolean => {
+  try {
+    return /(^|\.)bilibili\.com$/i.test(new URL(url).hostname);
+  } catch {
+    return false;
+  }
+};
+
 /** 问一次 Jina Reader。返回读到的网页；null = 这次没读成（status 说为什么）。 */
 async function jina(url: string, key: string | null): Promise<{ status: number; page: PageRead | null }> {
   let res: Response;
   try {
     res = await publicFetch(`https://r.jina.ai/${url}`, {
-      headers: { accept: "application/json", "x-return-format": "markdown", "x-with-images-summary": "true", ...(key ? { authorization: `Bearer ${key}` } : {}) },
+      headers: { accept: "application/json", "x-return-format": "markdown", "x-with-images-summary": "true", ...(wantsChinese(url) ? { "x-locale": "zh-CN" } : {}), ...(key ? { authorization: `Bearer ${key}` } : {}) },
       signal: AbortSignal.timeout(30_000),
     });
   } catch {
@@ -343,11 +358,35 @@ export function mapPage(page: PageRead, ref: LinkRef): FetchedPost {
 export async function fetchWebPage(ref: LinkRef): Promise<FetchedPost> {
   if (!assertSafeUrl(ref.url)) throw new SourceFetchError("这个地址读不了（指向本机或内网）");
   // 认得的视频站（本机有 yt-dlp 才问得到）
-  const video = await ytdlpInfo(ref.url).catch(() => null);
+  const { info: video, failed } = await ytdlpProbe(ref.url).catch(() => ({ info: null, failed: null }));
   if (video && !video.isLive && video.durationS) {
     const post = mapYtdlpInfo(video, ref);
     return { ...post, title: post.title || new URL(ref.url).hostname };
   }
+  // B 站视频、这台服务器读不了（没有 yt-dlp，或者被 B 站按 IP 拦了）：走 Apify（见 bilibili-apify.ts）
+  let apifyMiss: string | null = null;
+  if (bilibiliVideoId(ref.url) && canReadBilibiliViaApify()) {
+    try {
+      return await fetchBilibiliViaApify(ref, failed?.why ?? null);
+    } catch (e) {
+      apifyMiss = e instanceof Error ? e.message : String(e);
+      console.error(`走 Apify 读 B 站视频失败 ${ref.url}: ${apifyMiss}`);
+    }
+  }
+  // yt-dlp 认出这是视频、但没读到：照样按网页读，但要说清楚（不然看起来就是一篇普通的网页）
+  const page = await readWebPage(ref);
+  const missed = failed ? withVideoMiss(page, failed) : page;
+  return apifyMiss ? { ...missed, notes: [...missed.notes, `改走 Apify 也没读到这个视频（${apifyMiss.slice(0, 100)}）`] } : missed;
+}
+
+/** 这个链接本来是个视频，yt-dlp 没读到：记一句是哪一步没成、这次少了什么。 */
+function withVideoMiss(post: FetchedPost, failed: { extractor: string; why: string }): FetchedPost {
+  const site = failed.extractor ? `（${failed.extractor}）` : "";
+  return { ...post, notes: [`这个链接是一个视频${site}，这台服务器上的 yt-dlp 没读到：${failed.why}。这次只按网页读了页面上的字，视频的画面和里面说的话都没读到`, ...post.notes] };
+}
+
+/** 按网页读（Jina → 自己抓）。 */
+async function readWebPage(ref: LinkRef): Promise<FetchedPost> {
   const page = await readPage(ref.url);
   const blocked = !page || looksLikeVerifyWall(page);
   if (blocked && isWeixin(ref.url)) throw new SourceFetchError(WEIXIN_BLOCKED);

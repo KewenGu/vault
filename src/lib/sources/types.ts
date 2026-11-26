@@ -118,6 +118,11 @@ export type PostSnapshot = Pick<FetchedPost, "text" | "publishedAt" | "stats" | 
    * 一直留着，重新读取时还用这一份。
    */
   capture?: PageCapture;
+  /**
+   * 读这条 X 帖子时，把作者接在它后面发的那一串也读进来（存一个博主的全部帖子时建的条目带着它，见 lib/vault/creator-service.ts）。
+   * 一直留着，重新读取时还这样读。
+   */
+  withThread?: boolean;
 };
 
 /** 读取 + 抽帧转写两步留下的所有情况（页面上列出来，也告诉模型）。 */
@@ -222,6 +227,7 @@ export function readPost(raw: unknown): PostSnapshot {
       ? o.links.filter((l) => l && typeof l.url === "string" && /^https?:\/\//i.test(l.url)).map((l) => ({ text: typeof l.text === "string" ? l.text : "", url: l.url }))
       : [],
     ...(capture ? { capture } : {}),
+    ...(o.withThread === true ? { withThread: true } : {}),
   };
 }
 

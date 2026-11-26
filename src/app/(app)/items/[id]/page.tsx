@@ -11,6 +11,7 @@ import { entitiesOfItem } from "@/lib/graph/data";
 import { clock, parseTranscript } from "@/lib/media/transcript";
 import { POST_STAT_KEYS, formatCount, postNotes, statLabel, type ItemMedia } from "@/lib/sources/types";
 import { audioOf, displayTitle, getItem, imagesOf, inProgress, isStuck, itemFileUrl, sheetsOf, sourceLabel, videoOf } from "@/lib/vault/store";
+import { creatorOfItem, creatorTitle } from "@/lib/vault/creator-store";
 import { VaultError } from "@/lib/vault/errors";
 import { CATEGORY_LABEL, CONTENT_TYPE_INFO, ENTITY_TYPE_INFO } from "@/lib/vault/taxonomy";
 import { hasTraceMaterial } from "@/lib/vault/trace";
@@ -59,7 +60,8 @@ export default async function ItemPage({ params }: Props) {
   const { id } = await params;
   const { user, db, item } = await loadItem(id);
   if (!item) notFound();
-  const entities = await entitiesOfItem(db, user.id, id);
+  // 从哪个博主那里存进来的（不是的、表还没建的都是 null）
+  const [entities, creator] = await Promise.all([entitiesOfItem(db, user.id, id), item.source === "link" ? creatorOfItem(db, user.id, id) : null]);
   const u = item.understanding;
   // 溯源的表可能还没建（应用更新了、迁移没推）：只有那一块说明原因，别的照常显示
   let trace: ItemTrace | null = null;
@@ -136,6 +138,11 @@ export default async function ItemPage({ params }: Props) {
             </Link>
             <span>{sourceLabel(item)}</span>
             {item.author && <span>{item.author}</span>}
+            {creator && (
+              <Link href={`/creators/${creator.id}`} prefetch={false} className="text-accent hover:underline">
+                博主：{creatorTitle(creator)}
+              </Link>
+            )}
             {item.post.publishedAt && (
               <span>
                 发布于 <LocalDate iso={item.post.publishedAt} />

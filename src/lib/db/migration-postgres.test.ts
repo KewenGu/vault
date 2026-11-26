@@ -80,7 +80,7 @@ describe.skipIf(!pg)("migrations — isolated PostgreSQL", () => {
   const search = (user: string, args: string) => as(user, `select string_agg(i.dedupe_key, ',' order by s.score desc, i.created_at desc) from search_items('${user}'${args ? `, ${args}` : ""}) s join items i on i.id = s.id`);
 
   beforeEach(() => {
-    query("truncate items, entities, maps, journal_entries, journal_media, journal_stickers cascade");
+    query("truncate items, entities, maps, journal_entries, journal_media, journal_stickers, creators cascade");
   });
 
   it("migrations can be applied twice", () => {
@@ -145,6 +145,51 @@ describe.skipIf(!pg)("migrations — isolated PostgreSQL", () => {
     // 内容删了，溯源结果跟着删
     as(alice, `delete from items where id = '${mine}'`);
     expect(query(`select count(*) from item_traces where user_id = '${alice}'`)).toBe("0");
+  });
+
+  it("creators and their post lists are private to their owner; posts cannot hang on someone else's creator or point at someone else's item", () => {
+    const [mine, theirs] = query(`insert into creators (user_id, platform, external_id, url, name) values ('${alice}', 'x', 'karpathy', 'https://x.com/karpathy', 'alice 的'), ('${bob}', 'x', 'karpathy', 'https://x.com/karpathy', 'bob 的') returning id`).split("\n");
+    const myItem = item(alice, "x:101");
+    const theirItem = item(bob, "x:101");
+    query(`insert into creator_posts (user_id, creator_id, external_id, url, status, item_id) values ('${alice}', '${mine}', '101', 'https://x.com/karpathy/status/101', 'saved', '${myItem}'), ('${bob}', '${theirs}', '101', 'https://x.com/karpathy/status/101', 'saved', '${theirItem}')`);
+
+    // 两个人加的是同一个账号，各看各的
+    expect(as(alice, "select string_agg(name, ',') from creators")).toBe("alice 的");
+    expect(as(bob, "select string_agg(name, ',') from creators")).toBe("bob 的");
+    expect(as(alice, "select count(*) from creator_posts")).toBe("1");
+    expect(as(alice, `update creators set status = 'failed' where user_id = '${bob}' returning id`)).toBe("");
+    expect(as(alice, `delete from creators where user_id = '${bob}' returning id`)).toBe("");
+    expect(as(alice, `update creator_posts set status = 'held' where user_id = '${bob}' returning id`)).toBe("");
+    expect(as(alice, `delete from creator_posts where user_id = '${bob}' returning id`)).toBe("");
+    expect(query(`select status from creator_posts where user_id = '${bob}'`)).toBe("saved");
+
+    // 不能替别人写；不能把作品挂到别人的博主上，也不能指着别人的内容（外键带着 user_id）
+    expect(() => as(alice, `insert into creators (user_id, platform, external_id, url) values ('${bob}', 'x', 'someone', 'https://x.com/someone')`)).toThrow(/row-level security/);
+    expect(() => as(alice, `insert into creator_posts (user_id, creator_id, external_id, url) values ('${bob}', '${theirs}', '102', 'u')`)).toThrow(/row-level security/);
+    expect(() => as(alice, `insert into creator_posts (creator_id, external_id, url) values ('${theirs}', '102', 'u')`)).toThrow(/foreign key/);
+    expect(() => as(alice, `insert into creator_posts (creator_id, external_id, url, item_id) values ('${mine}', '102', 'u', '${theirItem}')`)).toThrow(/foreign key/);
+
+    // 一个人同一个账号只有一行；同一个博主的同一条作品只有一行；状态只有那几种
+    expect(() => as(alice, "insert into creators (platform, external_id, url) values ('x', 'karpathy', 'https://x.com/karpathy')")).toThrow(/duplicate key/);
+    expect(() => as(alice, `insert into creator_posts (creator_id, external_id, url) values ('${mine}', '101', 'u')`)).toThrow(/duplicate key/);
+    expect(() => query(`update creators set status = 'done' where id = '${mine}'`)).toThrow(/creators_status_check/);
+    expect(() => query(`update creator_posts set status = 'done' where creator_id = '${mine}'`)).toThrow(/creator_posts_status_check/);
+
+    // 默认值：是我的，正在列；新列出来的作品排队等存
+    as(alice, `insert into creators (platform, external_id, url) values ('tiktok', 'tedtoks', 'https://www.tiktok.com/@tedtoks')`);
+    expect(query(`select user_id || ' ' || status || ' ' || want || ' ' || notes::text || ' ' || usage::text || ' ' || cost_usd from creators where external_id = 'tedtoks'`)).toBe(`${alice} listing 0 [] {} 0.000000`);
+    as(alice, `insert into creator_posts (creator_id, external_id, url) values ('${mine}', '102', 'u')`);
+    expect(query(`select user_id || ' ' || status || ' ' || pinned || ' ' || coalesce(item_id::text, '空') from creator_posts where external_id = '102'`)).toBe(`${alice} pending false 空`);
+
+    // 后台任务（service_role）靠代码里带的 user_id
+    expect(query(`begin; set local role service_role; update creator_posts set status = 'held' where creator_id = '${theirs}' and user_id = '${bob}' returning status; commit;`)).toBe("held");
+
+    // 内容删了：清单那一行留着，只是不再指着它（「存过、后来删掉了」）；博主删了，清单跟着删，内容留着
+    query(`delete from items where id = '${myItem}'`);
+    expect(query(`select status || ' ' || coalesce(item_id::text, '空') || ' ' || user_id from creator_posts where creator_id = '${mine}' and external_id = '101'`)).toBe(`saved 空 ${alice}`);
+    query(`delete from creators where id = '${theirs}'`);
+    expect(query(`select count(*) from creator_posts where user_id = '${bob}'`)).toBe("0");
+    expect(query(`select count(*) from items where id = '${theirItem}'`)).toBe("1");
   });
 
   it("journal entries and their files are private to their owner", () => {
