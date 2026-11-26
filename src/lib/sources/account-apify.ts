@@ -1,18 +1,22 @@
 import { listedTitle, type AccountInfo, type ListedPost } from "./account";
 import { douyinUrl, type AccountRef } from "./link";
+import { cleanDesc } from "./xhs";
+import { XHS_ACTOR } from "./xhs-apify";
 
 /**
- * 列一个 TikTok / 抖音账号的作品：走 Apify 上的 actor（两个平台的作品列表都要带签名的接口才给，直接读不到）。
+ * 列一个 TikTok / 抖音 / 小红书账号的作品：走 Apify 上的 actor（这几个平台的作品列表都要带签名的接口才给，直接读不到）。
  * 这里只有每个 actor 的输入怎么写、输出怎么认（纯函数）；怎么跑、怎么等在 account-list.ts。
  *
  * | 平台 | actor | 计费（BRONZE 档） | 实测（2026-11-26，云端容器） |
  * |---|---|---|---|
  * | TikTok | clockworks~tiktok-profile-scraper（Store 里用量最大的 TikTok 主页采集器） | $0.002 / 条 | 3 条 23 秒 |
  * | 抖音 | zen-studio~douyin-profile-scraper（和读单条的 actor 是同一个作者，见 douyin.ts） | 每次运行 $0.001 + $0.005 / 条 | 3 条 12 秒 |
+ * | 小红书 | socialdatax~socialdatax-xhs-data-api 的 list_user_notes（和不带口令读单篇的是同一个 actor，见 xhs-apify.ts） | $0.005 / 条 | 5 条 6 秒 |
  *
- * 两个都按「最近的 N 条」列（置顶的排在最前面，可能是很久以前发的）。每一条都带着账号信息（名字、简介、作品总数）。
- * 第三方 actor 可能改名 / 下架，用 env APIFY_TIKTOK_PROFILE_ACTOR / APIFY_DOUYIN_PROFILE_ACTOR 换（输入、输出形状要和这两个一样）。
- * 列几百条要多久、actor 一次最多给多少条没测过。
+ * 都按「最近的 N 条」列（置顶的排在最前面，可能是很久以前发的）。TikTok、抖音每一条都带着账号信息（名字、简介、作品总数）；
+ * 小红书只带着名字（简介、笔记总数这条路不给）。小红书列出来的笔记没有访问口令，读每一篇也要走 Apify（见 fetch-post.ts）。
+ * 第三方 actor 可能改名 / 下架，用 env APIFY_TIKTOK_PROFILE_ACTOR / APIFY_DOUYIN_PROFILE_ACTOR / APIFY_XHS_PROFILE_ACTOR 换
+ * （输入、输出形状要和默认的一样）。列几百条要多久、actor 一次最多给多少条没测过。
  */
 
 export type ProfileActor = {
@@ -27,6 +31,7 @@ export type ProfileActor = {
 
 export const TIKTOK_PROFILE_COUNT_KEY = "apify_tiktok_profile_post";
 export const DOUYIN_PROFILE_COUNT_KEY = "apify_douyin_profile_post";
+export const XHS_PROFILE_COUNT_KEY = "apify_xhs_profile_post";
 
 type Obj = Record<string, unknown>;
 const obj = (v: unknown): Obj => (v && typeof v === "object" && !Array.isArray(v) ? (v as Obj) : {});
@@ -88,7 +93,32 @@ export function readDouyinProfile(items: unknown[]): { info: AccountInfo | null;
   return { info, posts: dedupe(posts) };
 }
 
-export const PROFILE_ACTORS: Record<"tiktok" | "douyin", ProfileActor> = {
+export function readXhsProfile(items: unknown[], ref: AccountRef): { info: AccountInfo | null; posts: ListedPost[] } {
+  let info: AccountInfo | null = null;
+  const posts: ListedPost[] = [];
+  for (const raw of items) {
+    const it = obj(raw);
+    const author = str(it.author_user_id).toLowerCase();
+    // 别人的笔记不要；没带作者的当成他自己的
+    if (author && author !== ref.externalId) continue;
+    if (!info && str(it.author_name)) info = { name: str(it.author_name), handle: "", bio: "", postCount: null };
+    const id = str(it.note_id).toLowerCase();
+    if (!/^[0-9a-f]{24}$/.test(id)) continue;
+    posts.push({
+      externalId: id,
+      // 没有访问口令：读的时候按 id 走 Apify
+      url: `https://www.xiaohongshu.com/explore/${id}`,
+      kind: str(it.note_type) === "video" ? "video" : "image",
+      // 正文里的话题写成 `#话题[话题]#`：先理顺再取第一行
+      title: str(it.title).trim() || listedTitle(cleanDesc(str(it.summary))),
+      publishedAt: isoFromSeconds(it.publish_time),
+      pinned: it.is_pinned === true,
+    });
+  }
+  return { info, posts: dedupe(posts) };
+}
+
+export const PROFILE_ACTORS: Record<"tiktok" | "douyin" | "xiaohongshu", ProfileActor> = {
   tiktok: {
     actor: () => process.env.APIFY_TIKTOK_PROFILE_ACTOR?.trim() || "clockworks~tiktok-profile-scraper",
     countKey: TIKTOK_PROFILE_COUNT_KEY,
@@ -102,5 +132,12 @@ export const PROFILE_ACTORS: Record<"tiktok" | "douyin", ProfileActor> = {
     perItemUsd: 0.007,
     input: (ref, limit) => ({ profileUrls: [ref.url], maxPostsPerProfile: limit }),
     read: (items) => readDouyinProfile(items),
+  },
+  xiaohongshu: {
+    actor: () => process.env.APIFY_XHS_PROFILE_ACTOR?.trim() || XHS_ACTOR(),
+    countKey: XHS_PROFILE_COUNT_KEY,
+    perItemUsd: 0.005,
+    input: (ref, limit) => ({ operation: "list_user_notes", profile_url: ref.url, max_items: limit, auto_paginate: true }),
+    read: readXhsProfile,
   },
 };

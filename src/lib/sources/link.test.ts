@@ -234,6 +234,17 @@ describe("账号的主页（存一个博主的全部作品用）", () => {
     expect(parseLink(`https://www.douyin.com/user/${SEC}?modal_id=7300000000000000000`)?.externalId).toBe("7300000000000000000");
   });
 
+  it("小红书：xiaohongshu.com/user/profile/<用户 id>，分享口令不留；从主页点开的笔记算帖子", () => {
+    const uid = "5c0892a5000000000500f3b6";
+    const ref = { platform: "xiaohongshu", externalId: uid, handle: "", url: `https://www.xiaohongshu.com/user/profile/${uid}` };
+    expect(parseAccountLink(`https://www.xiaohongshu.com/user/profile/${uid}?xsec_token=ABC&xsec_source=app_share`)).toEqual(ref);
+    expect(parseAccountLink(`https://www.xiaohongshu.com/user/profile/${uid.toUpperCase()}/`)).toEqual(ref);
+    expect(parseAccountLink(`https://www.xiaohongshu.com/user/profile/${uid}/6b055607000000002b010f45?xsec_token=ABC`)).toBeNull();
+    expect(parseLink(`https://www.xiaohongshu.com/user/profile/${uid}/6b055607000000002b010f45?xsec_token=ABC`)?.externalId).toBe("6b055607000000002b010f45");
+    expect(parseAccountLink("https://www.xiaohongshu.com/user/profile/abc")).toBeNull();
+    expect(parseAccountLink("https://xhslink.com/m/Ap1vXtgAixh")).toBeNull();
+  });
+
   it("别的平台的主页、别的网站不算账号", () => {
     expect(parseAccountLink("https://www.youtube.com/@3blue1brown")).toBeNull();
     expect(parseAccountLink("https://www.instagram.com/instagram/")).toBeNull();
@@ -252,6 +263,8 @@ describe("账号的主页（存一个博主的全部作品用）", () => {
     expect(await resolveTarget("https://v.douyin.com/iAbCdEf/", douyin)).toEqual({ kind: "account", ref: { platform: "douyin", externalId: SEC, handle: "", url: `https://www.douyin.com/user/${SEC}` } });
     const tiktok = vi.fn<(service: string, url: string, init?: RequestInit) => Promise<Response>>(async () => redirectTo("https://www.tiktok.com/@tedtoks?_t=abc&_r=1"));
     expect((await resolveTarget("https://vm.tiktok.com/ZMabc123/", tiktok)).kind).toBe("account");
+    const xhs = vi.fn<(service: string, url: string, init?: RequestInit) => Promise<Response>>(async () => redirectTo("https://www.xiaohongshu.com/user/profile/5c0892a5000000000500f3b6?xsec_token=ABC&xsec_source=app_share&xhsshare=CopyLink"));
+    expect(await resolveTarget("https://xhslink.com/m/Ap1vXtgAixh", xhs)).toMatchObject({ kind: "account", ref: { platform: "xiaohongshu", externalId: "5c0892a5000000000500f3b6" } });
   });
 
   it("resolveLink（跟着读别的帖子提到的链接时用）不把主页当帖子：照旧说认不出", async () => {

@@ -37,7 +37,7 @@ export type Saved = { id: string; existing: boolean };
 
 /**
  * 存一段粘贴的内容：链接（含 App 分享出来的那段话）或文字。已经存过同一条的回到那条，不重复处理。
- * 链接是一个账号的主页（X / TikTok / 抖音）时抛 AccountLinkError：整个账号要先选存多少条，走 creator-service.ts。
+ * 链接是一个账号的主页（X / TikTok / 抖音 / 小红书）时抛 AccountLinkError：整个账号要先选存多少条，走 creator-service.ts。
  */
 export async function saveInput(session: Session, rawInput: string, rawNote = ""): Promise<Saved> {
   const { input, note } = captureFields(rawInput, rawNote);

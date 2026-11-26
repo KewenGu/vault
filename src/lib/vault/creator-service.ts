@@ -25,7 +25,7 @@ import {
 import { getItemsInOrder, type Item } from "./store";
 
 /**
- * 博主：把一个账号（X / TikTok / 抖音）发过的作品整个存下来。页面的 server action 和 /api/v1/creators 的接口都调这里。
+ * 博主：把一个账号（X / TikTok / 抖音 / 小红书）发过的作品整个存下来。页面的 server action 和 /api/v1/creators 的接口都调这里。
  *
  * 一个博主的每一条作品，存进来就是收藏库里普通的一条内容（搜索、图谱、导图照常），和单独贴那条链接存进来的是同一条。
  * 这里管的是「哪个账号、要最近的多少条、列出了哪些、存到哪了」：
@@ -44,7 +44,7 @@ export { VaultError };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-export const NOT_AN_ACCOUNT = "没认出这是哪个账号的主页。能整个存的是 X、TikTok、抖音的账号：打开他的主页，点「分享 → 复制链接」，把复制到的内容贴进来（x.com/用户名、tiktok.com/@用户名、douyin.com/user/…）";
+export const NOT_AN_ACCOUNT = "没认出这是哪个账号的主页。能整个存的是 X、TikTok、抖音、小红书的账号：打开他的主页，点「分享 → 复制链接」，把复制到的内容贴进来（x.com/用户名、tiktok.com/@用户名、douyin.com/user/…、xiaohongshu.com/user/profile/…）";
 
 /** 贴进来的内容（链接，或者 App 分享出来的那段话）是哪个账号的主页。认不出、或者是一条帖子的链接，抛 VaultError。 */
 export async function resolveAccount(input: string): Promise<AccountRef> {

@@ -32,7 +32,7 @@ export function CreatorListView({ creators }: { creators: CreatorSummary[] }) {
       <section className="flex flex-col gap-3">
         <h1 className="text-xl font-semibold tracking-tight">博主</h1>
         <p className="text-sm leading-relaxed text-ink-muted">
-          觉得一个人讲得好，把他发过的作品整个存下来。支持 X、TikTok、抖音的账号：贴他主页的链接，选存最近的多少条。每一条都和单独存进来的一样读懂、归类，在收藏库里搜得到。
+          觉得一个人讲得好，把他发过的作品整个存下来。支持 X、TikTok、抖音、小红书的账号：贴他主页的链接，选存最近的多少条。每一条都和单独存进来的一样读懂、归类，在收藏库里搜得到。
         </p>
         <FindCreatorForm />
       </section>
@@ -77,6 +77,7 @@ const WHAT: Record<AccountRef["platform"], string[]> = {
   x: ["只存他自己发的帖子：转发别人的不存，回别人的回复不存。", "一串帖子（他接着自己的帖子往下发的）算一条，后面几条读第一条时一起读进来。", "帖子里引用的帖子、贴的链接照常跟着读。"],
   tiktok: ["存他主页「视频」栏里的视频和图集；他转发的别人的视频不存。", "列作品走 Apify（要配 APIFY_TOKEN）。"],
   douyin: ["存他主页上公开的视频和图文。", "列作品、读每一条都走 Apify（要配 APIFY_TOKEN）。"],
+  xiaohongshu: ["存他主页上公开的笔记（图文和视频）。", "列作品、读每一篇都走 Apify（要配 APIFY_TOKEN）：列出来的笔记没有访问口令，直接读读不到。", "这条路读不到评论内容，只有评论数。"],
 };
 
 /** 确认页：是哪个账号、存的是什么、选存最近的多少条、估的花费。 */

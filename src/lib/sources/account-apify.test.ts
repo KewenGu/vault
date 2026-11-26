@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PROFILE_ACTORS, readDouyinProfile, readTikTokProfile } from "./account-apify";
+import { PROFILE_ACTORS, readDouyinProfile, readTikTokProfile, readXhsProfile } from "./account-apify";
 import type { AccountRef } from "./link";
 
 /** 两个 actor 2026-11-26 实际返回的形状（各留用得到的字段）。 */
@@ -57,6 +57,19 @@ describe("列一个账号的作品：认 actor 的输出", () => {
       { externalId: "7534316807973260587", url: "https://www.douyin.com/video/7534316807973260587", kind: "video", title: "标题 7534316807973260587", publishedAt: "2025-08-04T00:10:00.000Z", pinned: true },
       { externalId: "7524662531407793447", url: "https://www.douyin.com/note/7524662531407793447", kind: "image", title: "标题 7524662531407793447", publishedAt: null, pinned: false },
     ]);
+  });
+
+  it("小红书：链接是不带口令的 /explore/<id>（读的时候按 id 走 Apify）；没有标题的用正文第一行；别人的笔记不要", () => {
+    const me: AccountRef = { platform: "xiaohongshu", externalId: "5c0892a5000000000500f3b6", handle: "", url: "https://www.xiaohongshu.com/user/profile/5c0892a5000000000500f3b6" };
+    const row = (id: string, over: Record<string, unknown> = {}) => ({ operation: "list_user_notes", note_id: id, note_type: "image", title: `标题 ${id.slice(-2)}`, summary: "正文第一行 #话题[话题]#\n第二行", publish_time: 1795509021, author_user_id: me.externalId, author_name: "艺文搭搭", is_pinned: false, ...over });
+    const { info, posts } = readXhsProfile([row("6b055607000000002b010f45", { is_pinned: true }), row("6B05555E0000000024031B2D", { note_type: "video", title: "" }), row("6b00000000000000000000aa", { author_user_id: "000000000000000000000000" }), { note_id: "不是笔记" }], me);
+    expect(info).toEqual({ name: "艺文搭搭", handle: "", bio: "", postCount: null });
+    expect(posts).toEqual([
+      { externalId: "6b055607000000002b010f45", url: "https://www.xiaohongshu.com/explore/6b055607000000002b010f45", kind: "image", title: "标题 45", publishedAt: "2026-11-24T08:30:21.000Z", pinned: true },
+      { externalId: "6b05555e0000000024031b2d", url: "https://www.xiaohongshu.com/explore/6b05555e0000000024031b2d", kind: "video", title: "正文第一行", publishedAt: "2026-11-24T08:30:21.000Z", pinned: false },
+    ]);
+    expect(PROFILE_ACTORS.xiaohongshu.input(me, 50)).toEqual({ operation: "list_user_notes", profile_url: me.url, max_items: 50, auto_paginate: true });
+    expect(PROFILE_ACTORS.xiaohongshu.actor()).toBe("socialdatax~socialdatax-xhs-data-api");
   });
 
   it("actor 的输入：TikTok 给用户名，抖音给主页链接，都按最近的 N 条要", () => {

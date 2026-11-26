@@ -6,7 +6,7 @@ import { hitSummary } from "./serialize";
 
 /**
  * 存一条：`{ input: "链接、分享文案或一段文字", note?: "为什么存" }` → `{ id, existing }`。处理在后台跑，用 GET 这条看进度。
- * input 是一个账号的主页（X / TikTok / 抖音）时不存，回 400 和 `{ error, account: { platform, handle, url } }`：
+ * input 是一个账号的主页（X / TikTok / 抖音 / 小红书）时不存，回 400 和 `{ error, account: { platform, handle, url } }`：
  * 整个账号走 `POST /api/v1/creators`（要说存最近的多少条）。
  * 服务器读不到、客户端自己读到的网页：`{ page: { url, title, text, description?, cover?, images?, author?, site?, publishedAt? }, note? }`（见 lib/vault/page-capture.ts）。
  */

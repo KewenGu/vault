@@ -10,6 +10,7 @@ import { fetchTikTokVideo } from "./tiktok";
 import { SourceFetchError, type SourcePlatform, type FetchedPost } from "./types";
 import { fetchWebPage } from "./web";
 import { fetchXhsNote } from "./xhs";
+import { canReadXhsViaApify, fetchXhsViaApify } from "./xhs-apify";
 import { readXPost } from "./x";
 import { YouTubeBlockedError, fetchYouTubeVideo } from "./youtube";
 import { fetchYouTubeViaApify } from "./youtube-apify";
@@ -20,7 +21,7 @@ import { mapYtdlpInfo, ytdlpInfo, ytdlpPath } from "./ytdlp";
  *
  * | 平台 | 怎么读 | 花费 |
  * |---|---|---|
- * | 小红书 | 直接读分享页（要链接里的口令） | 免费 |
+ * | 小红书 | 直接读分享页（要链接里的口令）；没有口令（从博主那里存进来的笔记）或口令过期时走 Apify | 免费；走 Apify 时约 $0.005 / 条 |
  * | 抖音 | Apify actor | 约 $0.008 / 条 |
  * | TikTok | 直接读视频页 | 免费 |
  * | Instagram | Apify 官方 actor | 约 $0.003 / 条 |
@@ -47,6 +48,24 @@ async function fetchYouTube(ref: LinkRef): Promise<FetchedPost> {
     if (info) return mapYtdlpInfo(info, ref);
     if (e instanceof YouTubeBlockedError && process.env.APIFY_TOKEN?.trim()) return fetchYouTubeViaApify(ref);
     throw e;
+  }
+}
+
+/**
+ * 小红书：链接里有访问口令就直接读分享页（不花钱，还带几条高赞评论）。没有口令（从博主那里存进来的笔记只有 id）、
+ * 或者直接读读不到（口令过期是最常见的：小红书的分享链接隔一阵就失效），又配了 APIFY_TOKEN：按笔记 id 走 Apify（见 xhs-apify.ts）。
+ * Apify 那边也说没有这篇，才是真的读不到。
+ */
+async function fetchXhs(ref: LinkRef): Promise<FetchedPost> {
+  const hasToken = /[?&]xsec_token=[^&]/.test(ref.url);
+  if (!canReadXhsViaApify()) return fetchXhsNote(ref, VIDEO_MAX_BYTES);
+  if (!hasToken) return fetchXhsViaApify(ref);
+  try {
+    return await fetchXhsNote(ref, VIDEO_MAX_BYTES);
+  } catch (e) {
+    if (!(e instanceof SourceFetchError)) throw e;
+    const post = await fetchXhsViaApify(ref);
+    return { ...post, notes: ["链接里的访问口令失效了，这次是按笔记 id 另一条路读的", ...post.notes] };
   }
 }
 
@@ -99,7 +118,7 @@ async function readXWithThread(ref: LinkRef): Promise<Followed> {
 export type FetchOptions = { thread?: boolean };
 
 const FETCHERS: Record<SourcePlatform, (ref: LinkRef, opts: FetchOptions) => Promise<FetchedPost>> = {
-  xiaohongshu: (ref) => fetchXhsNote(ref, VIDEO_MAX_BYTES),
+  xiaohongshu: fetchXhs,
   douyin: (ref) => fetchDouyinVideo(ref),
   tiktok: (ref) => fetchTikTokVideo(ref, VIDEO_MAX_BYTES),
   instagram: (ref) => fetchInstagramPost(ref),

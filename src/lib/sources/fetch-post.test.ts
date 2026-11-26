@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { SourceFetchError, emptyStats, type FetchedPost } from "./types";
 
 vi.mock("./xhs", () => ({ fetchXhsNote: vi.fn() }));
+vi.mock("./xhs-apify", async (orig) => ({ ...(await orig<object>()), fetchXhsViaApify: vi.fn() }));
+vi.mock("./account-x", () => ({ fetchXThreadIds: vi.fn() }));
 vi.mock("./douyin", () => ({ fetchDouyinVideo: vi.fn() }));
 vi.mock("./tiktok", () => ({ fetchTikTokVideo: vi.fn() }));
 vi.mock("./instagram", () => ({ fetchInstagramPost: vi.fn() }));
@@ -21,6 +23,8 @@ import { fetchTikTokVideo } from "./tiktok";
 import { fetchWebPage } from "./web";
 import { readXPost } from "./x";
 import { fetchXhsNote } from "./xhs";
+import { fetchXhsViaApify } from "./xhs-apify";
+import { fetchXThreadIds } from "./account-x";
 import { YouTubeBlockedError, fetchYouTubeVideo } from "./youtube";
 import { fetchYouTubeViaApify } from "./youtube-apify";
 import { ytdlpInfo, ytdlpPath } from "./ytdlp";
@@ -31,6 +35,8 @@ const info = { id: "1", title: "yt-dlp 读到的", description: "", uploader: "�
 
 beforeEach(() => {
   vi.mocked(fetchXhsNote).mockReset().mockResolvedValue(post("xiaohongshu"));
+  vi.mocked(fetchXhsViaApify).mockReset().mockResolvedValue({ ...post("xiaohongshu"), title: "Apify 读到的", notes: ["这条路读不到评论内容，只有评论数"] });
+  vi.mocked(fetchXThreadIds).mockReset().mockResolvedValue([]);
   vi.mocked(fetchDouyinVideo).mockReset().mockResolvedValue(post("douyin"));
   vi.mocked(fetchTikTokVideo).mockReset().mockResolvedValue(post("tiktok"));
   vi.mocked(fetchInstagramPost).mockReset().mockResolvedValue(post("instagram"));
@@ -170,3 +176,57 @@ vi.mock("@/lib/network/public-fetch", async (original) => ({
   ...await original<typeof import("@/lib/network/public-fetch")>(),
   publicFetch: (url: string, options: import("@/lib/network/public-fetch").PublicFetchOptions = {}) => fetch(url, { headers: options.headers, method: options.method, redirect: options.redirect, signal: options.signal ?? AbortSignal.timeout(options.timeoutMs ?? 20_000) }),
 }));
+
+describe("小红书：没有访问口令、口令过期时换一条路", () => {
+  const tokened = { platform: "xiaohongshu" as const, externalId: "1", url: "https://www.xiaohongshu.com/explore/1?xsec_token=ABC&xsec_source=pc_user" };
+  const bare = { platform: "xiaohongshu" as const, externalId: "1", url: "https://www.xiaohongshu.com/explore/1" };
+  const expired = new SourceFetchError("这篇笔记读不到：链接可能过期了");
+
+  it("没配 APIFY_TOKEN：只有直接读这一条路，读不到就是读不到", async () => {
+    expect((await fetchPost(tokened)).title).toBe("xiaohongshu");
+    vi.mocked(fetchXhsNote).mockRejectedValue(expired);
+    await expect(fetchPost(bare)).rejects.toBe(expired);
+    expect(fetchXhsViaApify).not.toHaveBeenCalled();
+  });
+
+  it("配了 APIFY_TOKEN：有口令的先直接读（不花钱）；没有口令的（从博主那里存进来的）直接走 Apify", async () => {
+    vi.stubEnv("APIFY_TOKEN", "t");
+    expect((await fetchPost(tokened)).title).toBe("xiaohongshu");
+    expect(fetchXhsViaApify).not.toHaveBeenCalled();
+    expect((await fetchPost(bare)).title).toBe("Apify 读到的");
+    expect(fetchXhsNote).toHaveBeenCalledTimes(1);
+  });
+
+  it("口令过期了：按笔记 id 走 Apify，记一句是换了路读的；Apify 也说没有才是真的读不到；网络错误不换路", async () => {
+    vi.stubEnv("APIFY_TOKEN", "t");
+    vi.mocked(fetchXhsNote).mockRejectedValue(expired);
+    expect(await fetchPost(tokened)).toMatchObject({ title: "Apify 读到的", notes: ["链接里的访问口令失效了，这次是按笔记 id 另一条路读的", "这条路读不到评论内容，只有评论数"] });
+    const gone = new SourceFetchError("这篇小红书笔记读不到：可能被删了、设成了私密，或者链接不对");
+    vi.mocked(fetchXhsViaApify).mockRejectedValue(gone);
+    await expect(fetchPost(tokened)).rejects.toBe(gone);
+    vi.mocked(fetchXhsViaApify).mockClear();
+    const network = new Error("小红书 502：页面打不开，过一会儿再试");
+    vi.mocked(fetchXhsNote).mockRejectedValue(network);
+    await expect(fetchPost(tokened)).rejects.toBe(network);
+    expect(fetchXhsViaApify).not.toHaveBeenCalled();
+  });
+});
+
+describe("X：从博主那里存进来的帖子把后面那一串也读进来", () => {
+  it("要了才查一串帖子；后几条排在引用和链接前面跟着读，并在正文后面", async () => {
+    const xPost = (id: string, text: string): FetchedPost => ({ ...post("x"), externalId: id, kind: "text", title: "", text, author: { id: null, name: "作者" } });
+    vi.mocked(readXPost).mockImplementation(async (r) => ({ post: xPost(r.externalId, `第 ${r.externalId} 条`), mentions: [] }));
+    await fetchPost(ref("x"));
+    expect(fetchXThreadIds).not.toHaveBeenCalled();
+    vi.mocked(fetchXThreadIds).mockResolvedValue(["2", "3"]);
+    const got = await fetchPost(ref("x"), { thread: true });
+    expect(vi.mocked(fetchXThreadIds).mock.calls).toEqual([["1"]]);
+    expect(got.text).toBe("第 1 条\n\n【这一串的下一条：作者】\n第 2 条\n\n【这一串的下一条：作者】\n第 3 条");
+  });
+
+  it("查不到是不是一串：不算失败，记一句", async () => {
+    vi.mocked(fetchXThreadIds).mockResolvedValue(null);
+    const got = await fetchPost(ref("x"), { thread: true });
+    expect(got.notes).toContain("没查到作者有没有接在这条后面继续发（查一串帖子的接口这会儿读不了）");
+  });
+});

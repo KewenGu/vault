@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CreatorPostRecord, CreatorRecord, Database, Json } from "@/lib/db/types";
 import type { AccountInfo, ListedPost } from "@/lib/sources/account";
 import { ACCOUNT_PLATFORMS, type AccountPlatform, type AccountRef } from "@/lib/sources/link";
-import { POST_KINDS, type PostKind } from "@/lib/sources/types";
+import { POST_KINDS, SOURCE_PLATFORM_LABEL, type PostKind } from "@/lib/sources/types";
 import { estimateUsd } from "@/lib/usage/prices";
 import { VaultError } from "./errors";
 import { STUCK_MS } from "./store";
@@ -80,9 +80,10 @@ export function creatorStuck(c: Pick<Creator, "status" | "updatedAt">, now = Dat
   return (c.status === "listing" || c.status === "saving") && !creatorBusy(c, now);
 }
 
-/** 页面上叫他什么：名字，没有就用 @用户名，再没有（抖音刚加进来、还没列过）叫「抖音博主」。 */
+/** 页面上叫他什么：名字，没有就用 @用户名，再没有（抖音、小红书刚加进来、还没列过）叫「抖音博主」。 */
 export function creatorTitle(c: Pick<Creator, "name" | "handle" | "platform">): string {
-  return c.name || c.handle || (c.platform === "douyin" ? "抖音博主" : c.platform === "tiktok" ? "TikTok 博主" : "X 博主");
+  const label = SOURCE_PLATFORM_LABEL[c.platform];
+  return c.name || c.handle || `${label}${/[a-z]$/i.test(label) ? " " : ""}博主`;
 }
 
 /**

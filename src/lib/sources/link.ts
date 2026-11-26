@@ -19,12 +19,14 @@ import type { SourcePlatform } from "./types";
  * - Reddit：`/r/<版块>/comments/<id>/…`（后面带着某条评论的也算这条帖子）、`/comments/<id>`、`/gallery/<id>`、`redd.it/<id>`
  *   （id 是一串小写字母和数字）。i.redd.it、v.redd.it 是图片和视频文件的地址，不是帖子，按网页处理。
  *
- * 账号的主页（存一个博主的全部作品用，见 lib/vault/creator-service.ts）只认这三个平台：
+ * 账号的主页（存一个博主的全部作品用，见 lib/vault/creator-service.ts）只认这四个平台：
  * - X：`x.com/<用户名>`（后面带 `/with_replies`、`/media` 这些分栏的也算）。
  * - TikTok：`tiktok.com/@<用户名>`。
  * - 抖音：`douyin.com/user/<sec_uid>`、分享出来的 `iesdouyin.com/share/user/<sec_uid>`（App 里「分享主页 → 复制链接」
  *   得到的 v.douyin.com 短链跳到这里）。
- * 一条链接既认得出帖子又像主页时（抖音主页上打开的视频 `…/user/<sec_uid>?modal_id=<id>`）算帖子。
+ * - 小红书：`xiaohongshu.com/user/profile/<用户 id>`（24 位十六进制；App 里「分享主页」的 xhslink.com 短链跳到这里）。
+ * 一条链接既认得出帖子又像主页时（抖音主页上打开的视频 `…/user/<sec_uid>?modal_id=<id>`、小红书从主页点开的笔记
+ * `…/user/profile/<用户 id>/<笔记 id>`）算帖子。
  */
 
 export const MOBILE_UA =
@@ -157,10 +159,10 @@ function siteRef(site: Site, url: URL): LinkRef | null {
 }
 
 /** 能整个存下来的账号是哪几个平台的（列一个账号的作品见 account-list.ts） */
-export const ACCOUNT_PLATFORMS = ["x", "tiktok", "douyin"] as const;
+export const ACCOUNT_PLATFORMS = ["x", "tiktok", "douyin", "xiaohongshu"] as const;
 export type AccountPlatform = (typeof ACCOUNT_PLATFORMS)[number];
 
-/** 一个账号的主页。externalId：X、TikTok 是小写的用户名，抖音是 sec_uid；handle 是给人看的（`@karpathy`，抖音没有就是空）。 */
+/** 一个账号的主页。externalId：X、TikTok 是小写的用户名，抖音是 sec_uid，小红书是用户 id；handle 是给人看的（`@karpathy`，抖音、小红书没有就是空）。 */
 export type AccountRef = { platform: AccountPlatform; externalId: string; handle: string; url: string };
 
 /** x.com 下面不是用户名的那些路径 */
@@ -182,6 +184,11 @@ function accountRef(site: Site, url: URL): AccountRef | null {
     // sec_uid 是一串 Base64 样子的字（MS4wLjABAAAA…）；`/user/self` 是「我自己」，不是某个账号
     const m = /^\/(?:share\/)?user\/(MS4w[\w-]{20,120})\/?$/.exec(path);
     return m ? { platform: "douyin", externalId: m[1], handle: "", url: `https://www.douyin.com/user/${m[1]}` } : null;
+  }
+  if (site === "xiaohongshu") {
+    // 主页链接里的 xsec_token 是这次分享的口令，不留（列作品不用它）
+    const m = /xhslink\.com$/i.test(url.hostname) ? null : /^\/user\/profile\/([0-9a-f]{24})\/?$/i.exec(path);
+    return m ? { platform: "xiaohongshu", externalId: m[1].toLowerCase(), handle: "", url: `https://www.xiaohongshu.com/user/profile/${m[1].toLowerCase()}` } : null;
   }
   return null;
 }

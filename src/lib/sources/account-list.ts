@@ -15,6 +15,7 @@ import { SOURCE_PLATFORM_LABEL, SourceFetchError } from "./types";
  * | X | FxTwitter 的时间线接口，一页约 20 条往回翻（account-x.ts） | 免费 |
  * | TikTok | Apify actor（account-apify.ts） | 约 $0.002 / 条 |
  * | 抖音 | Apify actor（account-apify.ts） | 约 $0.005 / 条 |
+ * | 小红书 | Apify actor（account-apify.ts） | 约 $0.005 / 条 |
  *
  * 列一次要翻很多页 / 等 actor 跑完，放在一次调用里会很久，所以拆成一步一步：每调一次 listAccountStep 往前走一步，
  * 返回这一步拿到的作品、接下来的状态（原样传给下一次）、下一次之前要等几秒。后台任务（workflows/collect-creator.ts）
@@ -92,7 +93,7 @@ async function listX(ref: AccountRef, want: number, state: Extract<ListState, { 
   return { done: false, state: next, waitS: 0, info, posts, notes: [] };
 }
 
-async function listViaApify(ref: AccountRef & { platform: "tiktok" | "douyin" }, want: number, state: Extract<ListState, { via: "apify" }> | null): Promise<ListStep> {
+async function listViaApify(ref: AccountRef & { platform: "tiktok" | "douyin" | "xiaohongshu" }, want: number, state: Extract<ListState, { via: "apify" }> | null): Promise<ListStep> {
   const spec = PROFILE_ACTORS[ref.platform];
   // 英文的平台名和前后的中文之间留空格
   const name = SOURCE_PLATFORM_LABEL[ref.platform];
@@ -123,7 +124,7 @@ async function listViaApify(ref: AccountRef & { platform: "tiktok" | "douyin" },
   // 从新到旧（置顶的回到它本来的位置）；没有时间的排最后
   const posts = [...all].sort((a, b) => (b.publishedAt ?? "").localeCompare(a.publishedAt ?? "")).slice(0, want);
   if (info?.postCount && posts.length < want && posts.length < info.postCount) {
-    notes.push(`${name} 说这个账号一共 ${info.postCount} 个作品，这次只列出 ${posts.length} 个：剩下的可能是私密的、被平台藏起来的，或者 actor 没翻到`.replace(/^抖音 /, "抖音"));
+    notes.push(`${name} 说这个账号一共 ${info.postCount} 个作品，这次只列出 ${posts.length} 个：剩下的可能是私密的、被平台藏起来的，或者 actor 没翻到`.replace(/^(抖音|小红书) /, "$1"));
   }
   return { done: true, state: null, waitS: 0, info, posts, notes };
 }
