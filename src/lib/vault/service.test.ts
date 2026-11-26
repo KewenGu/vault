@@ -14,7 +14,8 @@ vi.mock("@/workflows/trace-item", () => ({ traceItem: vi.fn() }));
 
 import { start } from "workflow/api";
 import { traceItem } from "@/workflows/trace-item";
-import { getItemTrace, removeItem, startTrace } from "./service";
+import { processItem } from "@/workflows/process-item";
+import { getItemTrace, markOwn, removeItem, saveOwn, startTrace } from "./service";
 
 const ME = "22222222-2222-4222-8222-222222222222";
 const OTHER = "33333333-3333-4333-8333-333333333333";
@@ -52,6 +53,82 @@ describe("removeItem", () => {
     expect(fake.store.items).toHaveLength(1);
     expect([...fake.files.keys()]).toHaveLength(3);
     expect(existsSync(localVideo(ME))).toBe(true);
+  });
+});
+
+describe("saveOwn", () => {
+  beforeEach(() => vi.mocked(start).mockReset());
+
+  it("saves what was written as the user's own, never reads it as a link, and starts processing", async () => {
+    const saved = await saveOwn(session(ME), "  看完 https://v.douyin.com/abc/ 觉得应急金要先存够  ", "读后感");
+    expect(saved.existing).toBe(false);
+    expect(fake.store.items.find((i) => i.id === saved.id)).toMatchObject({ user_id: ME, source: "own", kind: "text", status: "fetching", user_text: "看完 https://v.douyin.com/abc/ 觉得应急金要先存够", note: "读后感", platform: null, url: null });
+    expect(start).toHaveBeenCalledWith(processItem, [saved.id]);
+  });
+
+  it("the same words written twice are two entries", async () => {
+    const first = await saveOwn(session(ME), "定投别停");
+    const second = await saveOwn(session(ME), "定投别停");
+    expect(second).toMatchObject({ existing: false });
+    expect(second.id).not.toBe(first.id);
+    expect(fake.store.items.filter((i) => i.source === "own")).toHaveLength(2);
+  });
+
+  it("needs something written, and not more than fits", async () => {
+    await expect(saveOwn(session(ME), "  \n ")).rejects.toMatchObject({ message: "还没写东西" });
+    await expect(saveOwn(session(ME), "长".repeat(200_001))).rejects.toMatchObject({ message: expect.stringContaining("一条最多 200,000 字") });
+    expect(fake.store.items).toHaveLength(1);
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it("says which migration to push when the database does not know this source yet", async () => {
+    fake = makeFakeSupabase({ items: [] }, { failInsert: { items: { message: 'new row for relation "items" violates check constraint "items_source_check"', code: "23514" } } });
+    await expect(saveOwn(session(ME), "定投别停")).rejects.toMatchObject({ status: 503, message: expect.stringContaining("20261126000004_own_writing.sql") });
+  });
+});
+
+describe("markOwn", () => {
+  const TEXT = "44444444-4444-4444-8444-444444444444";
+  const seedText = (over: Record<string, unknown> = {}) => {
+    fake.store.items.push({ id: TEXT, user_id: ME, source: "text", kind: "text", status: "ready", user_text: "定投别停", media: [], started_at: "2026-11-20T00:00:00.000Z", ...over });
+    vi.mocked(start).mockReset();
+  };
+  const source = () => fake.store.items.find((i) => i.id === TEXT)?.source;
+
+  it("marks a pasted text as the user's own and back, re-analysing each time", async () => {
+    seedText();
+    await markOwn(session(ME), TEXT, true);
+    expect(fake.store.items.find((i) => i.id === TEXT)).toMatchObject({ source: "own", status: "analyzing", user_text: "定投别停" });
+    expect(start).toHaveBeenCalledWith(processItem, [TEXT]);
+
+    fake.store.items.find((i) => i.id === TEXT)!.status = "ready";
+    await markOwn(session(ME), TEXT, false);
+    expect(source()).toBe("text");
+    expect(start).toHaveBeenCalledTimes(2);
+  });
+
+  it("does nothing when it already is what was asked", async () => {
+    seedText({ source: "own" });
+    await markOwn(session(ME), TEXT, true);
+    expect(fake.store.items.find((i) => i.id === TEXT)).toMatchObject({ source: "own", status: "ready" });
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it("only texts can be marked; not someone else's, not one being processed", async () => {
+    seedText();
+    await expect(markOwn(session(ME), ID, true)).rejects.toMatchObject({ message: "只有文字内容能标成自己写的" });
+    await expect(markOwn(session(OTHER), TEXT, true)).rejects.toMatchObject({ status: 404 });
+    fake.store.items.find((i) => i.id === TEXT)!.status = "analyzing";
+    fake.store.items.find((i) => i.id === TEXT)!.started_at = new Date().toISOString();
+    await expect(markOwn(session(ME), TEXT, true)).rejects.toMatchObject({ status: 409 });
+    expect(source()).toBe("text");
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it("says which migration to push when the database refuses the new source", async () => {
+    fake = makeFakeSupabase({ items: [] }, { failUpdate: { items: { message: 'new row for relation "items" violates check constraint "items_source_check"', code: "23514" } } });
+    seedText();
+    await expect(markOwn(session(ME), TEXT, true)).rejects.toMatchObject({ status: 503, message: expect.stringContaining("20261126000004_own_writing.sql") });
   });
 });
 

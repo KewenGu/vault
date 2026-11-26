@@ -9,7 +9,7 @@ type Row = { content_type: string | null; category: string | null; platform: str
 
 export type Facets = { total: number; contentType: Map<string, number>; category: Map<string, number>; origin: Map<string, number> };
 
-/** 来源一栏的键：链接按平台分，上传和文字各算一种 */
+/** 来源一栏的键：链接按平台分，上传、文字、自己写的各算一种 */
 export const originKey = (row: Pick<Row, "platform" | "source">) => (row.source === "link" ? (row.platform ?? "web") : row.source);
 
 export function countFacets(rows: Row[]): Facets {

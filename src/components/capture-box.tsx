@@ -6,6 +6,7 @@ import { UPLOAD_ACCEPT, UPLOAD_STATUS_TEXT, uploadKey, uploadOne, type UploadSta
 
 /**
  * 存入框：贴链接（含 App 里「复制链接」得到的那段话）或文字，或者选 / 拖 / 粘贴文件（图片、截图、视频、音频、文字文件）。
+ * 勾上「自己写的」存的是自己的一个想法、一段笔记（见 service.ts 的 saveOwn）。
  * 「粘贴」按钮直接读剪贴板，手机上不用先点输入框、再长按出菜单。
  * 文件怎么传见 upload-files.ts。
  */
@@ -47,11 +48,14 @@ export function CaptureBox() {
   const [dragging, setDragging] = useState(false);
   // 备注默认收着：两格都摆出来时，带边框的备注格比上面的内容格更像「输入框」，分享文案会被贴错地方
   const [showNote, setShowNote] = useState(false);
+  // 勾了「自己写的」：写了什么就存什么（不当链接读），标成自己写的。存完自己取消：留着的话下一条贴的链接会被当成文字存
+  const [own, setOwn] = useState(false);
   const [state, formAction, pending] = useActionState(async (prev: ActionState, formData: FormData) => {
     const next = await saveAction(prev, formData);
     if (!next.error) {
       formRef.current?.reset();
       setShowNote(false);
+      setOwn(false);
     }
     return next;
   }, { error: null });
@@ -106,11 +110,12 @@ export function CaptureBox() {
         ref={inputRef}
         id="capture-input"
         name="input"
-        rows={3}
+        // 自己写的一般不止一两行：框给大一点
+        rows={own ? 6 : 3}
         autoFocus
         // 上一条还在存的时候不让改：存完表单会清空，这时候贴进来的下一条会被一起清掉
         readOnly={pending}
-        placeholder="在这里贴链接或文字，也可以把图片 / 视频 / 音频拖进来"
+        placeholder={own ? "写下自己的想法、笔记、读完什么之后的感想" : "在这里贴链接或文字，也可以把图片 / 视频 / 音频拖进来"}
         className={`field resize-y px-3.5 py-3 text-[15px] leading-relaxed transition-colors ${dragging ? "border-accent bg-accent-soft" : ""}`}
         onPaste={(e) => {
           const files = Array.from(e.clipboardData.files);
@@ -137,8 +142,12 @@ export function CaptureBox() {
         <button type="button" className="btn btn-quiet" aria-expanded={showNote} onClick={() => setShowNote((v) => !v)}>
           {showNote ? "不写备注" : "加备注"}
         </button>
+        <label className="flex h-9 cursor-pointer items-center gap-1.5 px-1 text-sm text-ink-muted hover:text-ink" title="这是我自己写的（一个想法、一段笔记），不是存下来的别人的内容：整理时不当成别人的话，「问」的时候也知道是你写的">
+          <input type="checkbox" name="own" value="1" checked={own} disabled={pending} onChange={(e) => setOwn(e.target.checked)} className="size-4 accent-accent" />
+          自己写的
+        </label>
         <button className="btn btn-primary ml-auto min-w-20" disabled={pending}>
-          {pending ? "存入中…" : "存入"}
+          {pending ? "存入中…" : own ? "存下" : "存入"}
         </button>
       </div>
       {pasteProblem && (

@@ -36,7 +36,11 @@ export default async function NotesPage({ searchParams }: { searchParams: Promis
     <div className="mx-auto flex max-w-3xl flex-col gap-6">
       <header className="flex flex-col gap-3">
         <h1 className="text-xl font-semibold tracking-tight">笔记</h1>
-        <p className="text-sm leading-relaxed text-ink-muted">你在各条内容上划的线、写的批注。要划线、写批注：打开一条内容，选中一段话，或者在「我的划线和批注」里直接写。</p>
+        <p className="text-sm leading-relaxed text-ink-muted">你在各条内容上划的线、写的批注。要划线、写批注：打开一条内容，选中一段话，或者在「我的划线和批注」里直接写。
+          <Link href="/?from=own" prefetch={false} className="ml-1 text-accent hover:underline">
+            自己写的整条内容在收藏库里 →
+          </Link>
+        </p>
         <form action="/notes" className="flex gap-2">
           <label htmlFor="q" className="sr-only">
             在笔记里找

@@ -11,7 +11,7 @@ import { CATEGORIES, CATEGORY_LABEL, CONTENT_TYPES, CONTENT_TYPE_INFO, ENTITY_TY
 
 type Params = { q?: string; type?: string; category?: string; tag?: string; from?: string; entity?: string; page?: string };
 
-const ORIGIN_LABEL: Record<string, string> = { ...SOURCE_PLATFORM_LABEL, upload: "上传", text: "文字" };
+const ORIGIN_LABEL: Record<string, string> = { ...SOURCE_PLATFORM_LABEL, upload: "上传", text: "文字", own: "自己写的" };
 
 /** 当前筛选换掉 / 去掉一项之后的地址（再点一次已选中的那项 = 取消） */
 function hrefWith(current: Params, patch: Params): string {
@@ -92,7 +92,7 @@ export default async function VaultPage({ searchParams }: { searchParams: Promis
         </form>
         <FilterRow label="类型" current={current} param="type" options={options(CONTENT_TYPES, facets.contentType, (k) => CONTENT_TYPE_INFO[k as keyof typeof CONTENT_TYPE_INFO].label)} />
         <FilterRow label="领域" current={current} param="category" options={options(CATEGORIES, facets.category, (k) => CATEGORY_LABEL[k as keyof typeof CATEGORY_LABEL])} />
-        <FilterRow label="来源" current={current} param="from" options={options([...SOURCE_PLATFORMS, "upload", "text"], facets.origin, (k) => ORIGIN_LABEL[k] ?? k)} />
+        <FilterRow label="来源" current={current} param="from" options={options([...SOURCE_PLATFORMS, "upload", "text", "own"], facets.origin, (k) => ORIGIN_LABEL[k] ?? k)} />
         <FilterRow label="标签" current={current} param="tag" options={tags.slice(0, 30).map((t) => ({ key: t.tag, label: `#${t.tag}`, n: t.n }))} />
       </section>
 

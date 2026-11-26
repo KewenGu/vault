@@ -2,7 +2,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireSession } from "@/lib/auth/user";
-import { AccountLinkError, removeItem, reprocess, saveInput, savePage, startTrace, VaultError } from "@/lib/vault/service";
+import { AccountLinkError, markOwn, removeItem, reprocess, saveInput, saveOwn, savePage, startTrace, VaultError } from "@/lib/vault/service";
 import { updateItemMeta } from "@/lib/vault/store";
 import { parseTagInput } from "@/lib/vault/taxonomy";
 
@@ -23,7 +23,10 @@ export async function saveAction(_prev: ActionState, formData: FormData): Promis
   const session = await requireSession();
   let saved;
   try {
-    saved = await saveInput(session, String(formData.get("input") ?? ""), String(formData.get("note") ?? ""));
+    const input = String(formData.get("input") ?? "");
+    const note = String(formData.get("note") ?? "");
+    // 勾了「自己写的」：写了什么就存什么，不当链接读
+    saved = formData.get("own") === "1" ? await saveOwn(session, input, note) : await saveInput(session, input, note);
   } catch (e) {
     if (e instanceof AccountLinkError) redirect(`/creators/new?url=${encodeURIComponent(e.account.url)}`);
     return fail(e);
@@ -57,6 +60,19 @@ export async function reprocessAction(_prev: ActionState, formData: FormData): P
   const id = String(formData.get("id") ?? "");
   try {
     await reprocess(session, id, formData.get("from") === "fetch" ? "fetch" : "analyze", { userText: String(formData.get("text") ?? "") || undefined });
+  } catch (e) {
+    return fail(e);
+  }
+  revalidatePath(`/items/${id}`);
+  return { error: null };
+}
+
+/** 把一条文字内容标成自己写的 / 改回不是自己写的（改完重新整理一遍）。 */
+export async function markOwnAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  const session = await requireSession();
+  const id = String(formData.get("id") ?? "");
+  try {
+    await markOwn(session, id, formData.get("own") === "1");
   } catch (e) {
     return fail(e);
   }

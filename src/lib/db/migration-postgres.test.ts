@@ -347,6 +347,12 @@ describe.skipIf(!pg)("migrations — isolated PostgreSQL", () => {
     expect(search(alice, "p_tag => '快手菜'")).toBe("a");
     expect(search(alice, "p_platform => 'douyin'")).toBe("a");
     expect(search(alice, "p_source => 'upload'")).toBe("c");
+    // 自己写的是另一种来源（迁移 20261126000004 放宽的检查）：存得进、单独筛得出；乱写的来源还是不收
+    item(alice, "mine", { source: `'own'`, kind: `'text'`, user_text: `'定投别停'` });
+    expect(search(alice, "p_source => 'own'")).toBe("mine");
+    expect(search(alice, "p_source => 'text'")).not.toContain("mine");
+    expect(() => item(alice, "bogus", { source: `'diary'` })).toThrow(/items_source_check/);
+    query("delete from items where dedupe_key = 'mine'");
     const e = query(`insert into entities (user_id, type, name) values ('${alice}', 'concept', '家常菜') returning id`);
     query(`insert into item_entities (item_id, entity_id, user_id) values ('${a}', '${e}', '${alice}')`);
     expect(search(alice, `p_entity_id => '${e}'`)).toBe("a");

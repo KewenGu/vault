@@ -151,6 +151,18 @@ describe("askVault — a new question", () => {
     expect(detail.ask.costUsd).toBe(row.cost_usd);
   });
 
+  it("tells the model which entries are the user's own writing, with his words", async () => {
+    setup({ items: [item(ITEM_A, "30 岁开始理财晚吗"), item(ITEM_B, "定投的打算", { source: "own", platform: null, author: null, kind: "text", user_text: "定投别停，跌的时候更要买" })] });
+    found = [ITEM_A, ITEM_B];
+    reply("<answer>你写过定投别停 [S2]</answer>");
+    await askVault(session, { question: "我对定投是怎么想的" });
+    expect(prompt()).toContain("[S2] 定投的打算（自己写的，");
+    expect(prompt()).toContain("〔他自己写的〕");
+    expect(prompt()).toContain("他写的原文：\n定投别停，跌的时候更要买");
+    // 存下来的别人的内容不带这些
+    expect(prompt().split("[S2]")[0]).not.toContain("他自己写的");
+  });
+
   it("brings along what the user highlighted and wrote on the items it found", async () => {
     setup({ items: [item(ITEM_A, "30 岁开始理财晚吗"), item(ITEM_B, "指数基金定投")] });
     fake.store.item_notes = [

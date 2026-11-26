@@ -6,6 +6,7 @@ const B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
 const material = (over: Partial<AskMaterial> = {}): AskMaterial => ({
   label: "S1",
+  ownText: "",
   id: A,
   title: "30 岁开始理财晚吗",
   origin: "抖音 · 小鹿聊钱",
@@ -60,6 +61,17 @@ describe("askMaterialText", () => {
     expect(many).not.toContain("第 1 条想法");
     // 笔记再多也挤不掉内容本身的概括
     expect(many).toContain("概括：四步");
+  });
+
+  it("says which entries the user wrote himself and carries his own words ahead of the summary", () => {
+    const text = askMaterialText(material({ origin: "自己写的", ownText: "定投别停，跌的时候更要买。\n先存够半年的应急金。" }));
+    expect(text.split("\n")[0]).toContain("（自己写的，2026-11-20 写的）〔他自己写的〕");
+    expect(text).toContain("他写的原文：\n定投别停，跌的时候更要买。\n先存够半年的应急金。");
+    expect(text.indexOf("他写的原文")).toBeLessThan(text.indexOf("概括："));
+    // 长的只带开头，并说明；别人的内容不带这一节
+    expect(askMaterialText(material({ ownText: "想".repeat(5000) }))).toContain("他写的原文（长，这里是开头的 1800 字）：");
+    expect(askMaterialText(material())).not.toContain("他自己写的");
+    expect(ASK_SYSTEM).toContain("标了「他自己写的」的那几条");
   });
 
   it("marks what earlier answers cited, leaves out what the item does not have, and stays under the cap", () => {
