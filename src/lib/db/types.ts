@@ -68,6 +68,19 @@ type ItemTraceRow = {
   updated_at: string;
 };
 
+type ItemNoteRow = {
+  id: string;
+  user_id: string;
+  item_id: string;
+  quote: string;
+  body: string;
+  at: number | null;
+  /** 数据库自己拼的（quote + body），只读：搜索用 */
+  search_text: string;
+  created_at: string;
+  updated_at: string;
+};
+
 type MapRow = {
   id: string;
   user_id: string;
@@ -196,6 +209,7 @@ export type Database = {
       item_entities: Table<ItemEntityRow, "item_id" | "entity_id" | "user_id">;
       entity_edges: Table<EntityEdgeRow, "item_id" | "src_id" | "dst_id" | "relation" | "user_id">;
       item_traces: Table<ItemTraceRow, "item_id" | "user_id">;
+      item_notes: Table<ItemNoteRow, "user_id" | "item_id">;
       maps: Table<MapRow, "user_id">;
       asks: Table<AskRow, "user_id">;
       journal_entries: Table<JournalEntryRow, "user_id" | "day">;
@@ -238,6 +252,7 @@ export type Database = {
 export type ItemRecord = ItemRow;
 export type EntityRecord = EntityRow;
 export type ItemTraceRecord = ItemTraceRow;
+export type ItemNoteRecord = ItemNoteRow;
 export type MapRecord = MapRow;
 export type AskRecord = AskRow;
 export type JournalEntryRecord = JournalEntryRow;

@@ -167,6 +167,36 @@ describe.skipIf(!pg)("migrations — isolated PostgreSQL", () => {
     expect(query(`select count(*) from item_traces where user_id = '${alice}'`)).toBe("0");
   });
 
+  it("notes are private to their owner, cannot hang on someone else's item, need a highlight or some words, and go away with the item", () => {
+    const mine = item(alice, "a1");
+    const theirs = item(bob, "b1");
+    query(`insert into item_notes (user_id, item_id, quote, body, at) values ('${alice}', '${mine}', '应急金放货币基金', '我放余额宝', 72.5), ('${bob}', '${theirs}', 'bob 划的', '', null)`);
+    expect(as(alice, "select string_agg(quote, ',') from item_notes")).toBe("应急金放货币基金");
+    expect(as(bob, "select string_agg(quote, ',') from item_notes")).toBe("bob 划的");
+    // 改 / 删别人的：行级安全让它一行都碰不到
+    expect(as(alice, `update item_notes set body = '抢' where user_id = '${bob}' returning id`)).toBe("");
+    expect(as(alice, `delete from item_notes where user_id = '${bob}' returning id`)).toBe("");
+    expect(query(`select body from item_notes where user_id = '${bob}'`)).toBe("");
+    // 不能替别人写，也不能在别人的内容上写（外键带着 user_id）
+    expect(() => as(alice, `insert into item_notes (user_id, item_id, body) values ('${bob}', '${theirs}', 'x')`)).toThrow(/row-level security/);
+    expect(() => as(alice, `insert into item_notes (item_id, body) values ('${theirs}', 'x')`)).toThrow(/foreign key/);
+    // 划线和自己写的话至少要有一样
+    expect(() => as(alice, `insert into item_notes (item_id) values ('${mine}')`)).toThrow(/item_notes_not_empty/);
+    // 默认是自己的；搜索用的那一列数据库自己拼，改了跟着变，中文按 ilike 搜得到（换行两边的都算）
+    as(alice, `insert into item_notes (item_id, body) values ('${mine}', '下个月开始定投')`);
+    expect(query(`select user_id || ' ' || quote || '|' || coalesce(at::text, 'null') from item_notes where body = '下个月开始定投'`)).toBe(`${alice} |null`);
+    expect(as(alice, `select count(*) from item_notes where search_text ilike '%货币基金%' and search_text ilike '%余额宝%'`)).toBe("1");
+    as(alice, `update item_notes set body = '改成放国债' where at = 72.5`);
+    expect(as(alice, `select string_agg(body, ',') from item_notes where search_text ilike '%国债%'`)).toBe("改成放国债");
+    expect(as(alice, `select count(*) from item_notes where search_text ilike '%余额宝%'`)).toBe("0");
+    expect(query(`select updated_at >= created_at from item_notes where at = 72.5`)).toBe("t");
+    // 后台（service_role）读得到，代码里自己带 user_id
+    expect(query(`begin; set local role service_role; select count(*) from item_notes where user_id = '${alice}'; commit;`)).toBe("2");
+    // 内容删了，它上面的笔记跟着删；别人的不受影响
+    as(alice, `delete from items where id = '${mine}'`);
+    expect(query(`select count(*) || ' ' || string_agg(quote, ',') from item_notes`)).toBe("1 bob 划的");
+  });
+
   it("creators and their post lists are private to their owner; posts cannot hang on someone else's creator or point at someone else's item", () => {
     const [mine, theirs] = query(`insert into creators (user_id, platform, external_id, url, name) values ('${alice}', 'x', 'karpathy', 'https://x.com/karpathy', 'alice 的'), ('${bob}', 'x', 'karpathy', 'https://x.com/karpathy', 'bob 的') returning id`).split("\n");
     const myItem = item(alice, "x:101");

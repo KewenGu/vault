@@ -16,6 +16,8 @@ import { mapCapture } from "@/lib/sources/web";
 import { emptyStats, type FetchedPost, type ItemMedia, type PostSnapshot } from "@/lib/sources/types";
 import { ytdlpDownloadToFile } from "@/lib/sources/ytdlp";
 import { buildEmbeddingText, buildSearchText } from "@/lib/vault/indexing";
+import { notesOfItems } from "@/lib/vault/note-store";
+import { notesIndexText } from "@/lib/vault/notes";
 import { SPEECH_MAX_SECONDS, transcribeSpeech } from "@/lib/vault/speech";
 import { BUCKET, audioOf, bucketFileLimit, framesOf, getItemById, imagesOf, itemDir, removeItemFiles, sheetsOf, tagCounts, videoOf, type Item } from "@/lib/vault/store";
 import { videoReadMaxBytes } from "@/lib/vault/limits";
@@ -596,8 +598,15 @@ async function indexItemStep(itemId: string): Promise<{ counts: Counts }> {
   const { db, item } = await load(itemId);
   if (!item || item.status !== "analyzing" || !item.understanding) return { counts };
   const u = item.understanding;
-  const input = { title: item.title, author: item.author, url: item.url, note: item.note, post: item.post, userText: item.userText, transcript: item.transcript, tags: item.tags, understanding: u };
   const problems: string[] = [];
+  // 他在这条内容上划的线、写的批注也进索引（重新分析不会把它们从搜索里弄丢）。表还没建就是没有笔记
+  let annotations = "";
+  try {
+    annotations = notesIndexText((await notesOfItems(db, item.userId, [itemId])).byItem.get(itemId) ?? []);
+  } catch (e) {
+    problems.push(`这条内容上的笔记没有进搜索索引（${messageOf(e).slice(0, 120)}）`);
+  }
+  const input = { title: item.title, author: item.author, url: item.url, note: item.note, annotations, post: item.post, userText: item.userText, transcript: item.transcript, tags: item.tags, understanding: u };
   let embedding: number[] | null = null;
   if (process.env.VOYAGE_API_KEY) {
     try {

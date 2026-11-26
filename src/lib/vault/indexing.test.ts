@@ -45,4 +45,14 @@ describe("buildEmbeddingText", () => {
   it("falls back to the raw text when there is no understanding", () => {
     expect(buildEmbeddingText({ ...input, understanding: null })).toContain("full recipe below");
   });
+
+  it("the user's own highlights and annotations are searchable both ways", () => {
+    const withNotes = { ...input, annotations: "别煎太久\n下次试 57 度" };
+    expect(buildSearchText(withNotes)).toContain("别煎太久\n下次试 57 度");
+    expect(buildEmbeddingText(withNotes)).toContain("下次试 57 度");
+    expect(buildEmbeddingText({ ...withNotes, understanding: null })).toContain("下次试 57 度");
+    // 没有笔记时和以前一样
+    expect(buildSearchText({ ...input, annotations: "" })).toBe(buildSearchText(input));
+    expect(buildEmbeddingText({ ...input, annotations: "" })).toBe(buildEmbeddingText(input));
+  });
 });

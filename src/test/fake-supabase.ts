@@ -136,7 +136,8 @@ export function makeFakeSupabase(
           if (ch === "\\" && i + 1 < pattern.length) regex += pattern[++i].replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
           else regex += ch === "%" ? ".*" : ch === "_" ? "." : ch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
         }
-        const re = new RegExp(`^${regex}$`, "i");
+        // s：Postgres 的 % 和 _ 连换行也匹配（JS 的 . 默认不匹配换行）
+        const re = new RegExp(`^${regex}$`, "is");
         conds.push((r) => re.test(String(get(r, c) ?? "")));
         return chain;
       },

@@ -8,6 +8,8 @@ import { stripCiteMarks } from "./ask";
 import { toAsk } from "./ask-store";
 import { cleanDoc } from "./journal-doc";
 import { cleanMapNodes } from "./map-nodes";
+import { notesOfItems } from "./note-store";
+import type { ItemNote } from "./notes";
 import { ITEM_COLUMNS, displayTitle, sourceLabel, toItem, type Item } from "./store";
 import { CATEGORY_LABEL, CONTENT_TYPE_INFO, ENTITY_TYPE_INFO } from "./taxonomy";
 import { ZipWriter } from "./zip";
@@ -68,8 +70,8 @@ function fileTime(iso: string, fallback: Date): Date {
 const yaml = (value: string | string[]) => (Array.isArray(value) ? `[${value.map((v) => JSON.stringify(v)).join(", ")}]` : JSON.stringify(value));
 const quote = (text: string) => text.split("\n").map((l) => `> ${l}`).join("\n");
 
-/** 一条内容写成 Markdown（纯函数）。只写有的部分；没处理成的也导出来（带着原文和失败的原因）。 */
-export function itemMarkdown(item: Item): string {
+/** 一条内容写成 Markdown（纯函数）。只写有的部分；没处理成的也导出来（带着原文和失败的原因）。notes 是他在这条上划的线、写的批注。 */
+export function itemMarkdown(item: Item, notes: Pick<ItemNote, "quote" | "body" | "at">[] = []): string {
   const u = item.understanding;
   const title = displayTitle(item);
   const props: [string, string | string[]][] = [["title", title], ["source", sourceLabel(item)]];
@@ -84,6 +86,11 @@ export function itemMarkdown(item: Item): string {
 
   const parts: string[] = [`---\n${props.map(([k, v]) => `${k}: ${yaml(v)}`).join("\n")}\n---`, `# ${title}`];
   if (item.note) parts.push(`## 我的备注\n\n${item.note}`);
+  if (notes.length > 0) {
+    // 划的话写成引用（带着视频里的时间），自己写的话跟在下面
+    const blocks = notes.map((n) => [n.quote ? `${quote(n.quote)}${n.at === null ? "" : `（${clock(n.at)}）`}` : "", n.body].filter(Boolean).join("\n\n"));
+    parts.push(`## 我的划线和批注\n\n${blocks.join("\n\n---\n\n")}`);
+  }
   if (item.status === "failed" && item.error) parts.push(`## 没处理成\n\n${item.error}`);
   if (u) {
     parts.push(`## 概括\n\n${u.summary}`);
@@ -153,6 +160,7 @@ const TABLES: { name: string; label: string; columns: string; order: string[] }[
   { name: "entities", label: "知识图谱的实体", columns: "id,user_id,type,name,aliases,summary,created_at,updated_at", order: ["id"] },
   { name: "item_entities", label: "内容和实体的关联", columns: "*", order: ["item_id", "entity_id"] },
   { name: "entity_edges", label: "实体之间的关系", columns: "*", order: ["item_id", "src_id", "dst_id", "relation"] },
+  { name: "item_notes", label: "划线和批注", columns: "id,user_id,item_id,quote,body,at,created_at,updated_at", order: ["id"] },
   { name: "item_traces", label: "溯源的结果", columns: "*", order: ["item_id"] },
   { name: "maps", label: "自己建的导图", columns: "*", order: ["id"] },
   { name: "asks", label: "问过的问题", columns: "*", order: ["id"] },
@@ -190,6 +198,7 @@ export async function* exportArchive(db: Db, userId: string, now: Date = new Dat
 
   // 内容：一页一页读，每条一个 Markdown，原始的行按页存成 JSON
   let items = 0;
+  let notesFailed = false;
   try {
     for (let page = 0; ; page++) {
       const { data, error } = await db
@@ -202,10 +211,18 @@ export async function* exportArchive(db: Db, userId: string, now: Date = new Dat
       if (error) throw new Error(error.message);
       const rows = data ?? [];
       if (rows.length === 0) break;
+      // 这一页内容上的划线和批注写进各自的 Markdown。读不到只是 Markdown 里没有（原始数据后面还会单独导一遍），记一次
+      let notesOf = new Map<string, ItemNote[]>();
+      try {
+        notesOf = (await notesOfItems(db, userId, rows.map((r) => r.id))).byItem;
+      } catch (e) {
+        if (!notesFailed) notes.push(`划线和批注：读的时候出错了，内容的 Markdown 里没有写进去（${e instanceof Error ? e.message : String(e)}）`);
+        notesFailed = true;
+      }
       for (const row of rows) {
         const item = toItem(row);
         mediaFiles += item.media.length;
-        yield addDoc(`items/${item.createdAt.slice(0, 7)}/${day(item.createdAt)} ${safeName(displayTitle(item))}`, item.id, itemMarkdown(item), fileTime(item.createdAt, now));
+        yield addDoc(`items/${item.createdAt.slice(0, 7)}/${day(item.createdAt)} ${safeName(displayTitle(item))}`, item.id, itemMarkdown(item, notesOf.get(item.id)), fileTime(item.createdAt, now));
       }
       yield zip.add(`${root}/data/items/items-${pad(page + 1, 4)}.json`, JSON.stringify(rows, null, 1), now);
       items += rows.length;
