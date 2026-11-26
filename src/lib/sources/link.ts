@@ -19,7 +19,7 @@ import type { SourcePlatform } from "./types";
  * - Reddit：`/r/<版块>/comments/<id>/…`（后面带着某条评论的也算这条帖子）、`/comments/<id>`、`/gallery/<id>`、`redd.it/<id>`
  *   （id 是一串小写字母和数字）。i.redd.it、v.redd.it 是图片和视频文件的地址，不是帖子，按网页处理。
  *
- * 账号的主页（存一个博主的全部作品用，见 lib/vault/creator-service.ts）认这六个平台：
+ * 账号的主页（存一个博主的全部作品用，见 lib/vault/creator-service.ts）认这七个平台：
  * - X：`x.com/<用户名>`（后面带 `/with_replies`、`/media` 这些分栏的也算）。
  * - TikTok：`tiktok.com/@<用户名>`。
  * - 抖音：`douyin.com/user/<sec_uid>`、分享出来的 `iesdouyin.com/share/user/<sec_uid>`（App 里「分享主页 → 复制链接」
@@ -28,6 +28,9 @@ import type { SourcePlatform } from "./types";
  * - Instagram：`instagram.com/<用户名>`（后面带 `/reels`、`/tagged` 这些分栏的也算）。
  * - YouTube：频道的 `youtube.com/@<名字>`、`/channel/<UC 开头的 id>`、`/c/<名字>`、`/user/<名字>`（后面带 `/videos`、`/shorts`
  *   这些分栏的也算）。同一个频道用不同写法贴进来认不出是同一个。
+ * - B 站：`space.bilibili.com/<数字 id>`（带 `/video`、`/dynamic` 这些分栏的也算）、`bilibili.com/space/<id>`；App 里
+ *   「分享主页」的 b23.tv 短链跟一次跳转。B 站不是这里「认得的平台」（视频按网页读，本机有 yt-dlp 时按视频读），
+ *   只有主页单独认；视频页的地址整理成 `bilibili.com/video/<BV 号>`（分 P 的留着 `?p=`），同一个视频只收藏一次。
  * 一条链接既认得出帖子又像主页时（抖音主页上打开的视频 `…/user/<sec_uid>?modal_id=<id>`、小红书从主页点开的笔记
  * `…/user/profile/<用户 id>/<笔记 id>`）算帖子。
  */
@@ -103,6 +106,15 @@ function webRef(url: URL): LinkRef | null {
   const u = new URL(url.href);
   u.hash = "";
   for (const key of [...u.searchParams.keys()]) if (TRACKING.test(key)) u.searchParams.delete(key);
+  // B 站视频页：分享出来的链接带着一串来源参数（spm_id_from、vd_source…），手机版是 m.bilibili.com，都整理成同一个写法
+  const bv = /(^|\.)bilibili\.com$/i.test(u.hostname) ? /^\/video\/(BV[0-9A-Za-z]{10})\/?$/.exec(u.pathname) : null;
+  if (bv) {
+    const part = Number(u.searchParams.get("p"));
+    u.protocol = "https:";
+    u.hostname = "www.bilibili.com";
+    u.pathname = `/video/${bv[1]}`;
+    u.search = Number.isInteger(part) && part > 1 ? `?p=${part}` : "";
+  }
   if (u.hostname === "mp.weixin.qq.com") {
     // 短链接 /s/<id> 本身就认得出文章，参数全不要；长链接 /s?__biz=…&mid=…&idx=…&sn=… 只留这四个
     const keep = /^\/s\/[\w-]+$/.test(u.pathname) ? [] : u.pathname === "/s" && u.searchParams.has("__biz") ? WEIXIN_KEEP : null;
@@ -162,12 +174,13 @@ function siteRef(site: Site, url: URL): LinkRef | null {
 }
 
 /** 能整个存下来的账号是哪几个平台的（列一个账号的作品见 account-list.ts） */
-export const ACCOUNT_PLATFORMS = ["x", "tiktok", "douyin", "xiaohongshu", "instagram", "youtube"] as const;
+export const ACCOUNT_PLATFORMS = ["x", "tiktok", "douyin", "xiaohongshu", "instagram", "youtube", "bilibili"] as const;
 export type AccountPlatform = (typeof ACCOUNT_PLATFORMS)[number];
 
 /**
  * 一个账号的主页。externalId：X、TikTok、Instagram 是小写的用户名，抖音是 sec_uid，小红书是用户 id，
- * YouTube 是 `@名字`（小写）/ 频道 id / `c/名字` / `user/名字`；handle 是给人看的（`@karpathy`，抖音、小红书没有就是空）。
+ * YouTube 是 `@名字`（小写）/ 频道 id / `c/名字` / `user/名字`，B 站是数字 id（mid）；
+ * handle 是给人看的（`@karpathy`，抖音、小红书、B 站没有就是空）。
  */
 export type AccountRef = { platform: AccountPlatform; externalId: string; handle: string; url: string };
 
@@ -226,11 +239,25 @@ function accountRef(site: Site, url: URL): AccountRef | null {
   return null;
 }
 
+/** B 站 UP 主的主页（B 站不在「认得的平台」里，单独认）。 */
+function bilibiliAccount(url: URL): AccountRef | null {
+  const host = url.hostname.toLowerCase();
+  const m =
+    host === "space.bilibili.com"
+      ? /^\/(\d{1,20})(?:\/(?:video|upload\/video|dynamic|article|audio|channel\/[\w/]+|favlist|bangumi|lists))?\/?$/.exec(url.pathname)
+      : /(^|\.)bilibili\.com$/.test(host)
+        ? /^\/space\/(\d{1,20})\/?$/.exec(url.pathname)
+        : null;
+  return m ? { platform: "bilibili", externalId: m[1], handle: "", url: `https://space.bilibili.com/${m[1]}` } : null;
+}
+
 /** 链接直接认得出是哪个账号的主页时返回它（短链要跟跳转，用 resolveTarget）。 */
 export function parseAccountLink(raw: string): AccountRef | null {
   const url = toUrl(raw);
-  const site = url ? platformOfHost(url.hostname) : null;
-  return url && site && !siteRef(site, url) ? accountRef(site, url) : null;
+  if (!url) return null;
+  const site = platformOfHost(url.hostname);
+  if (!site) return bilibiliAccount(url);
+  return siteRef(site, url) ? null : accountRef(site, url);
 }
 
 /**
@@ -278,6 +305,8 @@ export async function resolveTarget(raw: string, fetchImpl: FetchImpl = labeledF
   if (!current) throw new LinkError("这不是一条链接");
   const site = platformOfHost(current.hostname);
   if (!site) {
+    const account = bilibiliAccount(current) ?? (await bilibiliShortLink(current, fetchImpl));
+    if (account) return { kind: "account", ref: account };
     const ref = webRef(current);
     if (!ref) throw new LinkError("这个地址读不了（指向本机或内网）");
     return { kind: "post", ref };
@@ -306,9 +335,32 @@ export async function resolveTarget(raw: string, fetchImpl: FetchImpl = labeledF
   throw new LinkError(NOT_A_POST[site]);
 }
 
-/** 认出一条链接指向哪篇帖子（账号的主页不算：抛 LinkError）。跟着读别的帖子提到的链接时用这个。 */
+/**
+ * B 站的短链（b23.tv/…）：App 里分享视频、分享主页给的都是它。跟一次跳转，落在 UP 主的主页上才算账号；
+ * 别的（视频、专栏…）、跳不动的都返回 null，调用方照旧按网页处理这条短链。
+ */
+async function bilibiliShortLink(url: URL, fetchImpl: FetchImpl): Promise<AccountRef | null> {
+  if (!/^(b23\.tv|bili2233\.cn)$/i.test(url.hostname)) return null;
+  try {
+    const res = await fetchImpl("B 站短链", url.href, { method: "GET", redirect: "manual", headers: { "user-agent": MOBILE_UA, accept: "text/html,*/*" }, signal: AbortSignal.timeout(10_000) });
+    const location = res.headers.get("location");
+    await res.body?.cancel().catch(() => {});
+    const next = res.status >= 300 && res.status < 400 && location ? toUrl(new URL(location, url).href) : null;
+    return next ? bilibiliAccount(next) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 认出一条链接指向哪篇帖子（账号的主页不算：抛 LinkError）。跟着读别的帖子提到的链接时用这个。
+ * B 站的主页例外：它不是认得的平台，照旧当网页。
+ */
 export async function resolveLink(raw: string, fetchImpl: FetchImpl = labeledFetch): Promise<LinkRef> {
   const target = await resolveTarget(raw, fetchImpl);
   if (target.kind === "post") return target.ref;
-  throw new LinkError(NOT_A_POST[target.ref.platform]);
+  if (target.ref.platform !== "bilibili") throw new LinkError(NOT_A_POST[target.ref.platform]);
+  const ref = parseLink(target.ref.url);
+  if (!ref) throw new LinkError("这个地址读不了（指向本机或内网）");
+  return ref;
 }

@@ -4,7 +4,7 @@ import { cleanDesc } from "./xhs";
 import { XHS_ACTOR } from "./xhs-apify";
 
 /**
- * 列一个 TikTok / 抖音 / 小红书 / Instagram / YouTube 账号的作品：走 Apify 上的 actor（这几个平台的作品列表都要带签名的接口才给，直接读不到）。
+ * 列一个 TikTok / 抖音 / 小红书 / Instagram / YouTube / B 站账号的作品：走 Apify 上的 actor（这几个平台的作品列表都要带签名的接口才给，直接读不到）。
  * 这里只有每个 actor 的输入怎么写、输出怎么认（纯函数）；怎么跑、怎么等在 account-list.ts。
  *
  * | 平台 | actor | 计费（BRONZE 档） | 实测（2026-11-26，云端容器） |
@@ -14,12 +14,14 @@ import { XHS_ACTOR } from "./xhs-apify";
  * | 小红书 | socialdatax~socialdatax-xhs-data-api 的 list_user_notes（和不带口令读单篇的是同一个 actor，见 xhs-apify.ts） | $0.005 / 条 | 5 条 6 秒 |
  * | Instagram | apify~instagram-scraper（和读单条帖子的是同一个，见 instagram.ts），给主页链接、`resultsType: "posts"` | $0.0023 / 条 | 4 条 29 秒 |
  * | YouTube | streamers~youtube-scraper（和走 Apify 读单个视频的是同一个，见 youtube-apify.ts），给频道链接 | $0.003 / 条 | 视频 3 条 + Shorts 2 条 27 秒 |
+ * | B 站 | socialdatax~socialdatax-bilibili-data-api 的 list_user_videos（和小红书那个是同一家） | $0.003 / 条 | 5 条 6 秒 |
  *
  * 都按「最近的 N 条」列（置顶的排在最前面，可能是很久以前发的）。TikTok、抖音、YouTube 每一条都带着账号信息（名字、简介、作品总数）；
- * 小红书、Instagram 只带着名字（简介、作品总数这条路不给）。YouTube 的视频和 Shorts 是两栏，各要 N 条（所以最多收 2N 条的钱），
+ * 小红书、Instagram、B 站只带着名字（简介、作品总数这条路不给）。B 站只列投稿的视频，专栏和动态不列；视频本身按网页读
+ * （本机有 yt-dlp 时按视频读，见 web.ts），B 站自己的接口从机房 IP 直接读会被风控拦（2026-11-26 实测回 412）。YouTube 的视频和 Shorts 是两栏，各要 N 条（所以最多收 2N 条的钱），
  * 合起来挑最新的 N 条；直播回放不列。小红书列出来的笔记没有访问口令，读每一篇也要走 Apify（见 fetch-post.ts）。
  * 第三方 actor 可能改名 / 下架，用 env APIFY_TIKTOK_PROFILE_ACTOR / APIFY_DOUYIN_PROFILE_ACTOR / APIFY_XHS_PROFILE_ACTOR /
- * APIFY_INSTAGRAM_PROFILE_ACTOR / APIFY_YOUTUBE_PROFILE_ACTOR 换
+ * APIFY_INSTAGRAM_PROFILE_ACTOR / APIFY_YOUTUBE_PROFILE_ACTOR / APIFY_BILIBILI_PROFILE_ACTOR 换
  * （输入、输出形状要和默认的一样）。列几百条要多久、actor 一次最多给多少条没测过。
  */
 
@@ -40,6 +42,7 @@ export const DOUYIN_PROFILE_COUNT_KEY = "apify_douyin_profile_post";
 export const XHS_PROFILE_COUNT_KEY = "apify_xhs_profile_post";
 export const INSTAGRAM_PROFILE_COUNT_KEY = "apify_instagram_profile_post";
 export const YOUTUBE_CHANNEL_COUNT_KEY = "apify_youtube_channel_video";
+export const BILIBILI_PROFILE_COUNT_KEY = "apify_bilibili_profile_video";
 
 type Obj = Record<string, unknown>;
 const obj = (v: unknown): Obj => (v && typeof v === "object" && !Array.isArray(v) ? (v as Obj) : {});
@@ -176,7 +179,31 @@ export function readYouTubeChannel(items: unknown[]): { info: AccountInfo | null
   return { info, posts: dedupe(posts) };
 }
 
-export const PROFILE_ACTORS: Record<"tiktok" | "douyin" | "xiaohongshu" | "instagram" | "youtube", ProfileActor> = {
+export function readBilibiliProfile(items: unknown[], ref: AccountRef): { info: AccountInfo | null; posts: ListedPost[] } {
+  let info: AccountInfo | null = null;
+  const posts: ListedPost[] = [];
+  for (const raw of items) {
+    const it = obj(raw);
+    const author = str(it.author_user_id);
+    // 联合投稿里别人名下的不要；没带作者的当成他自己的
+    if (author && author !== ref.externalId) continue;
+    if (!info && str(it.author_name)) info = { name: str(it.author_name), handle: "", bio: "", postCount: null };
+    const bv = str(it.content_id);
+    if (!/^BV[0-9A-Za-z]{10}$/.test(bv)) continue;
+    posts.push({
+      externalId: bv,
+      // 和单独贴这条链接整理出来的写法一样（link.ts 的 webRef）
+      url: `https://www.bilibili.com/video/${bv}`,
+      kind: "video",
+      title: Array.from(str(it.title).trim()).slice(0, 80).join(""),
+      publishedAt: isoFromSeconds(it.publish_time),
+      pinned: false,
+    });
+  }
+  return { info, posts: dedupe(posts) };
+}
+
+export const PROFILE_ACTORS: Record<"tiktok" | "douyin" | "xiaohongshu" | "instagram" | "youtube" | "bilibili", ProfileActor> = {
   tiktok: {
     actor: () => process.env.APIFY_TIKTOK_PROFILE_ACTOR?.trim() || "clockworks~tiktok-profile-scraper",
     countKey: TIKTOK_PROFILE_COUNT_KEY,
@@ -215,5 +242,13 @@ export const PROFILE_ACTORS: Record<"tiktok" | "douyin" | "xiaohongshu" | "insta
     // 视频和 Shorts 是两栏，各要最新的 N 条，合起来再挑最新的 N 条；直播回放不要（一场几个小时）。不要字幕：读每一条的时候再读
     input: (ref, limit) => ({ startUrls: [{ url: ref.url }], maxResults: limit, maxResultsShorts: limit, maxResultStreams: 0, sortVideosBy: "NEWEST" }),
     read: (items) => readYouTubeChannel(items),
+  },
+  bilibili: {
+    actor: () => process.env.APIFY_BILIBILI_PROFILE_ACTOR?.trim() || "socialdatax~socialdatax-bilibili-data-api",
+    countKey: BILIBILI_PROFILE_COUNT_KEY,
+    perItemUsd: 0.003,
+    // 只列投稿的视频（专栏、动态不列），默认按时间从新到旧
+    input: (ref, limit) => ({ operation: "list_user_videos", user_id: ref.externalId, max_items: limit, auto_paginate: true }),
+    read: readBilibiliProfile,
   },
 };

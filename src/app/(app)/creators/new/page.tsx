@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { requireSession } from "@/lib/auth/user";
 import type { AccountRef } from "@/lib/sources/link";
+import { ytdlpPath } from "@/lib/sources/ytdlp";
 import { costHint, resolveAccount, type CostHint } from "@/lib/vault/creator-service";
 import { creatorParallel, findCreator, type Creator } from "@/lib/vault/creator-store";
 import { VaultError } from "@/lib/vault/errors";
@@ -33,5 +34,10 @@ export default async function NewCreatorPage({ searchParams }: { searchParams: P
       </div>
     );
   }
-  return <NewCreatorView account={ref} had={had} hint={hint} parallel={creatorParallel()} />;
+  // B 站的视频靠本机的 yt-dlp 读：没有的话只能读到网页上的字，先说清楚
+  const warning =
+    ref.platform === "bilibili" && !ytdlpPath()
+      ? "这台服务器上没有 yt-dlp：B 站的视频只能按网页读到标题和简介，看不到画面、也听不到说了什么。装上 yt-dlp（Docker 部署自带）再存；现在存的，装好之后在每一条的页面上点「重新读取链接」才会补上。"
+      : null;
+  return <NewCreatorView account={ref} had={had} hint={hint} parallel={creatorParallel()} warning={warning} />;
 }

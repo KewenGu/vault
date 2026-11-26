@@ -1,4 +1,5 @@
-import type { PostKind } from "./types";
+import type { AccountPlatform } from "./link";
+import { SOURCE_PLATFORM_LABEL, fallbackTitle, type PostKind } from "./types";
 
 /**
  * 存一个博主的全部作品：各平台「列出一个账号的作品」共用的形状。
@@ -29,4 +30,20 @@ export function listedTitle(text: string): string {
       .map((l) => l.replace(/#[^\s#]+/g, "").replace(/https?:\/\/\S+/g, "").trim())
       .find(Boolean) ?? "";
   return Array.from(line).slice(0, 80).join("");
+}
+
+/** 账号所在的平台叫什么。B 站不在「认得的平台」里（它的视频按网页存），名字单独给。 */
+export function accountLabel(platform: AccountPlatform): string {
+  return platform === "bilibili" ? "B 站" : SOURCE_PLATFORM_LABEL[platform];
+}
+
+/** 夹在中文里的平台名：英文开头 / 结尾的前后留空格（「这个 TikTok 账号」「这个抖音账号」）。 */
+export function accountLabelInText(platform: AccountPlatform): string {
+  const label = accountLabel(platform);
+  return `${/^[a-z]/i.test(label) ? " " : ""}${label}${/[a-z]$/i.test(label) ? " " : ""}`;
+}
+
+/** 清单里一条没有标题的作品叫什么（「X 帖子」「B 站视频」）。 */
+export function listedFallbackTitle(platform: AccountPlatform, kind: PostKind | null): string {
+  return platform === "bilibili" ? "B 站视频" : fallbackTitle(platform, kind);
 }

@@ -4,7 +4,7 @@ import { getServiceClient } from "@/lib/supabase/service";
 import { listAccountStep, type ListState } from "@/lib/sources/account-list";
 import { SourceFetchError, readPost } from "@/lib/sources/types";
 import { meterInto } from "@/lib/usage/meter";
-import { accountRefOf, addPosts, creatorParallel, getCreator, markSaved, nextPending, patchRound, type Creator } from "@/lib/vault/creator-store";
+import { accountRefOf, addPosts, creatorParallel, getCreator, itemRefOf, markSaved, movePost, nextPending, patchRound, type Creator } from "@/lib/vault/creator-store";
 import { createItem, getItem, linkDedupeKey, restartItem } from "@/lib/vault/store";
 import { processItem } from "./process-item";
 
@@ -90,15 +90,20 @@ async function takePostsStep(creatorId: string, userId: string, startedAt: strin
   }
   const taken: Taken[] = [];
   for (const post of posts) {
-    const ref = { platform: creator.platform, externalId: post.externalId, url: post.url };
+    const ref = itemRefOf(creator.platform, post);
+    if (!ref) {
+      // 链接整理不出来：搁下，不卡住后面的
+      await movePost(db, userId, post.id, "held");
+      continue;
+    }
     const saved = await createItem(db, userId, {
       id: post.id,
       source: "link",
       dedupeKey: linkDedupeKey(ref),
       status: "fetching",
-      platform: creator.platform,
-      externalId: post.externalId,
-      url: post.url,
+      platform: ref.platform,
+      externalId: ref.externalId,
+      url: ref.url,
       ...(post.kind ? { kind: post.kind } : {}),
       ...(post.title ? { title: post.title } : {}),
       // X：一串帖子的后几条读第一条时并进来（清单里只有每一串的第一条）

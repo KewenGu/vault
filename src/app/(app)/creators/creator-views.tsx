@@ -4,7 +4,8 @@ import { ItemGrid } from "@/components/item-grid";
 import { LocalDate } from "@/components/local-date";
 import { PROFILE_ACTORS } from "@/lib/sources/account-apify";
 import type { AccountRef } from "@/lib/sources/link";
-import { SOURCE_PLATFORM_LABEL, fallbackTitle, formatCount } from "@/lib/sources/types";
+import { accountLabel, accountLabelInText, listedFallbackTitle } from "@/lib/sources/account";
+import { formatCount } from "@/lib/sources/types";
 import { UNIT_USD } from "@/lib/usage/prices";
 import type { CostHint, CreatorDetail, CreatorSummary } from "@/lib/vault/creator-service";
 import { creatorBusy, creatorStuck, creatorTitle, type Creator } from "@/lib/vault/creator-store";
@@ -32,7 +33,7 @@ export function CreatorListView({ creators }: { creators: CreatorSummary[] }) {
       <section className="flex flex-col gap-3">
         <h1 className="text-xl font-semibold tracking-tight">博主</h1>
         <p className="text-sm leading-relaxed text-ink-muted">
-          觉得一个人讲得好，把他发过的作品整个存下来。支持 X、TikTok、抖音、小红书、Instagram、YouTube 的账号：贴他主页的链接，选存最近的多少条。每一条都和单独存进来的一样读懂、归类，在收藏库里搜得到。
+          觉得一个人讲得好，把他发过的作品整个存下来。支持 X、TikTok、抖音、小红书、Instagram、YouTube、B 站的账号：贴他主页的链接，选存最近的多少条。每一条都和单独存进来的一样读懂、归类，在收藏库里搜得到。
         </p>
         <FindCreatorForm />
       </section>
@@ -50,7 +51,7 @@ export function CreatorListView({ creators }: { creators: CreatorSummary[] }) {
                     <span className="flex items-baseline justify-between gap-3">
                       <span className="min-w-0 truncate font-medium">{creatorTitle(c)}</span>
                       <span className="shrink-0 text-xs text-ink-faint">
-                        {SOURCE_PLATFORM_LABEL[c.platform]}
+                        {accountLabel(c.platform)}
                         {c.handle ? ` · ${c.handle}` : ""}
                         {c.syncedAt ? (
                           <>
@@ -79,14 +80,20 @@ const WHAT: Record<AccountRef["platform"], string[]> = {
   douyin: ["存他主页上公开的视频和图文。", "列作品、读每一条都走 Apify（要配 APIFY_TOKEN）。"],
   instagram: ["存他主页上的帖子和 Reels（和别人合发的也算）；快拍（Stories）不存。", "列作品、读每一条都走 Apify（要配 APIFY_TOKEN）。", "轮播里的视频只存封面（读单条帖子也是这样）。"],
   youtube: ["存他频道的视频和 Shorts：两栏合起来按时间挑最新的；直播回放不存。", "列作品走 Apify（要配 APIFY_TOKEN）；视频和 Shorts 各列一遍，所以列作品的钱最多按两倍条数算。", "长视频处理得慢、也贵（口播最多转写前 60 分钟）：先少存几条看看。"],
+  bilibili: [
+    "存他投稿的视频；专栏文章、动态、直播回放不存。",
+    "列作品走 Apify（要配 APIFY_TOKEN）。",
+    "视频靠这台服务器上的 yt-dlp 读，存进来算「网页」（B 站不是单独的一个来源）：筛选时在「网页」里，可以按作者名搜。",
+    "长视频超过存档上限（默认 50 MB，大约半小时以上的视频就可能超）时下不下来，只读到标题和简介，那一条的页面上会写。",
+  ],
   xiaohongshu: ["存他主页上公开的笔记（图文和视频）。", "列作品、读每一篇都走 Apify（要配 APIFY_TOKEN）：列出来的笔记没有访问口令，直接读读不到。", "这条路读不到评论内容，只有评论数。"],
 };
 
 /** 确认页：是哪个账号、存的是什么、选存最近的多少条、估的花费。 */
-export function NewCreatorView({ account: ref, had, hint, parallel }: { account: AccountRef; had: Creator | null; hint: CostHint | null; parallel: number }) {
-  const label = SOURCE_PLATFORM_LABEL[ref.platform];
+export function NewCreatorView({ account: ref, had, hint, parallel, warning = null }: { account: AccountRef; had: Creator | null; hint: CostHint | null; parallel: number; warning?: string | null }) {
+  const label = accountLabel(ref.platform);
   // 英文的平台名和前后的中文之间留空格
-  const spaced = /^[a-z]/i.test(label) ? ` ${label} ` : label;
+  const spaced = accountLabelInText(ref.platform);
   // 列作品每条大约多少钱（YouTube 的视频和 Shorts 各列一遍，按两倍算）
   const actor = ref.platform === "x" ? null : PROFILE_ACTORS[ref.platform];
   const listUsd = actor ? (UNIT_USD[actor.countKey] ?? 0) * (actor.rowsPerPost ?? 1) : 0;
@@ -123,6 +130,12 @@ export function NewCreatorView({ account: ref, had, hint, parallel }: { account:
         </ul>
       </section>
 
+      {warning && (
+        <p role="alert" className="rounded-md bg-warning-soft px-3.5 py-3 text-sm leading-relaxed text-warning">
+          {warning}
+        </p>
+      )}
+
       <AddCreatorForm url={ref.url} perItemUsd={hint?.avgUsd ?? null} listUsd={listUsd} />
 
       <p className="text-xs leading-relaxed text-ink-muted">
@@ -139,7 +152,7 @@ export function CreatorDetailView({ detail }: { detail: CreatorDetail }) {
   const { creator: c, counts, posts, items, page, pages, removed } = detail;
   const busy = creatorBusy(c);
   const stuck = creatorStuck(c);
-  const label = SOURCE_PLATFORM_LABEL[c.platform];
+  const label = accountLabel(c.platform);
   const waiting = posts.filter((p) => p.status !== "saved");
   const failed = items.filter((i) => i.status === "failed" || isStuck(i)).length;
   const working = items.some((i) => inProgress(i));
@@ -244,7 +257,7 @@ export function CreatorDetailView({ detail }: { detail: CreatorDetail }) {
               <li key={p.id} className="flex items-baseline gap-3">
                 <span className="w-20 shrink-0 text-xs text-ink-faint">{p.publishedAt ? <LocalDate iso={p.publishedAt} /> : "—"}</span>
                 <a href={p.url} target="_blank" rel="noreferrer" className="min-w-0 flex-1 truncate hover:underline">
-                  {p.title || fallbackTitle(c.platform, p.kind)}
+                  {p.title || listedFallbackTitle(c.platform, p.kind)}
                 </a>
                 {p.pinned && <span className="shrink-0 text-xs text-ink-faint">置顶</span>}
               </li>

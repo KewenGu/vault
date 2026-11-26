@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { PROFILE_ACTORS, readDouyinProfile, readInstagramProfile, readTikTokProfile, readXhsProfile, readYouTubeChannel } from "./account-apify";
+import { accountLabel, accountLabelInText, listedFallbackTitle } from "./account";
+import { PROFILE_ACTORS, readBilibiliProfile, readDouyinProfile, readInstagramProfile, readTikTokProfile, readXhsProfile, readYouTubeChannel } from "./account-apify";
+import { parseLink } from "./link";
 import type { AccountRef } from "./link";
 
 /** 两个 actor 2026-11-26 实际返回的形状（各留用得到的字段）。 */
@@ -100,6 +102,29 @@ describe("列一个账号的作品：认 actor 的输出", () => {
     const ref: AccountRef = { platform: "youtube", externalId: "@3blue1brown", handle: "@3blue1brown", url: "https://www.youtube.com/@3blue1brown" };
     expect(PROFILE_ACTORS.youtube.input(ref, 20)).toEqual({ startUrls: [{ url: ref.url }], maxResults: 20, maxResultsShorts: 20, maxResultStreams: 0, sortVideosBy: "NEWEST" });
     expect(PROFILE_ACTORS.youtube.rowsPerPost).toBe(2);
+  });
+
+  it("B 站：只要投稿的视频，链接是 bilibili.com/video/<BV 号>（和单独贴链接整理出来的一样）；联合投稿里别人名下的不要", () => {
+    const me: AccountRef = { platform: "bilibili", externalId: "88461692", handle: "", url: "https://space.bilibili.com/88461692" };
+    const row = (bv: string, over: Record<string, unknown> = {}) => ({ operation: "list_user_videos", content_id: bv, title: ` 【官方双语】${bv} `, publish_time: 1790389800, duration_seconds: 2031, share_url: `https://www.bilibili.com/video/${bv}`, author_user_id: "88461692", author_name: "3Blue1Brown", ...over });
+    const { info, posts } = readBilibiliProfile([row("BV1u7hQ6rEQB"), row("BV1HBnH6JEAZ", { publish_time: null }), row("BV1znaf61EnS", { author_user_id: "1" }), row("cv12345"), row("BV1u7hQ6rEQB")], me);
+    expect(info).toEqual({ name: "3Blue1Brown", handle: "", bio: "", postCount: null });
+    expect(posts).toEqual([
+      { externalId: "BV1u7hQ6rEQB", url: "https://www.bilibili.com/video/BV1u7hQ6rEQB", kind: "video", title: "【官方双语】BV1u7hQ6rEQB", publishedAt: "2026-09-26T02:30:00.000Z", pinned: false },
+      { externalId: "BV1HBnH6JEAZ", url: "https://www.bilibili.com/video/BV1HBnH6JEAZ", kind: "video", title: "【官方双语】BV1HBnH6JEAZ", publishedAt: null, pinned: false },
+    ]);
+    // 清单里的链接已经是整理过的写法：存进去和用户自己贴的是同一条
+    expect(parseLink(posts[0].url)?.url).toBe(posts[0].url);
+    expect(PROFILE_ACTORS.bilibili.input(me, 50)).toEqual({ operation: "list_user_videos", user_id: "88461692", max_items: 50, auto_paginate: true });
+    expect(PROFILE_ACTORS.bilibili.actor()).toBe("socialdatax~socialdatax-bilibili-data-api");
+  });
+
+  it("平台叫什么：B 站不在认得的平台里，名字单独给；夹在中文里时英文的两边留空格", () => {
+    expect([accountLabel("bilibili"), accountLabel("x"), accountLabel("douyin")]).toEqual(["B 站", "X", "抖音"]);
+    expect(`这个${accountLabelInText("bilibili")}账号`).toBe("这个 B 站账号");
+    expect(`这个${accountLabelInText("tiktok")}账号`).toBe("这个 TikTok 账号");
+    expect(`这个${accountLabelInText("xiaohongshu")}账号`).toBe("这个小红书账号");
+    expect([listedFallbackTitle("bilibili", "video"), listedFallbackTitle("x", "text"), listedFallbackTitle("douyin", "video")]).toEqual(["B 站视频", "X 帖子", "抖音视频"]);
   });
 
   it("读单条用的 actor 换了，列主页的跟着换；也可以单独换", () => {

@@ -271,6 +271,53 @@ describe("账号的主页（存一个博主的全部作品用）", () => {
     expect(parseAccountLink("https://youtu.be/@3blue1brown")).toBeNull();
   });
 
+  it("B 站：space.bilibili.com/<数字 id>，带分栏的也算；视频、别的页面不算", () => {
+    const ref = { platform: "bilibili", externalId: "88461692", handle: "", url: "https://space.bilibili.com/88461692" };
+    expect(parseAccountLink("https://space.bilibili.com/88461692?spm_id_from=333.337.0.0")).toEqual(ref);
+    expect(parseAccountLink("https://space.bilibili.com/88461692/video")).toEqual(ref);
+    expect(parseAccountLink("https://space.bilibili.com/88461692/upload/video/")).toEqual(ref);
+    expect(parseAccountLink("https://m.bilibili.com/space/88461692")).toEqual(ref);
+    for (const url of ["https://www.bilibili.com/video/BV1u7hQ6rEQB", "https://space.bilibili.com/", "https://space.bilibili.com/abc", "https://space.bilibili.com/88461692/video/extra/more", "https://www.bilibili.com/read/cv123", "https://space.bilibili.com.evil.io/88461692", "https://b23.tv/AbCdEf1"]) {
+      expect(parseAccountLink(url), url).toBeNull();
+    }
+  });
+
+  it("B 站的视频页整理成同一个写法（同一个视频只收藏一次）：来源参数、手机版域名、末尾的斜杠都不算不同；分 P 的留着", () => {
+    const canonical = parseLink("https://www.bilibili.com/video/BV1u7hQ6rEQB");
+    expect(canonical).toMatchObject({ platform: "web", url: "https://www.bilibili.com/video/BV1u7hQ6rEQB" });
+    for (const url of ["https://www.bilibili.com/video/BV1u7hQ6rEQB/?spm_id_from=333.1007.tianma.1-1-1.click&vd_source=abc123", "http://m.bilibili.com/video/BV1u7hQ6rEQB?share_source=copy_web&t=35", "https://bilibili.com/video/BV1u7hQ6rEQB/?p=1"]) {
+      expect(parseLink(url), url).toEqual(canonical);
+    }
+    const part = parseLink("https://www.bilibili.com/video/BV1u7hQ6rEQB/?p=3&vd_source=abc");
+    expect(part?.url).toBe("https://www.bilibili.com/video/BV1u7hQ6rEQB?p=3");
+    expect(part?.externalId).not.toBe(canonical?.externalId);
+    // 不是 BV 号的视频页、别的站不动
+    expect(parseLink("https://www.bilibili.com/video/av170001/?a=1")?.url).toBe("https://www.bilibili.com/video/av170001/?a=1");
+    expect(parseLink("https://notbilibili.com/video/BV1u7hQ6rEQB/?a=1")?.url).toBe("https://notbilibili.com/video/BV1u7hQ6rEQB/?a=1");
+  });
+
+  it("B 站的短链（b23.tv）：跟一次跳转，落在主页上才算账号；落在视频上、跳不动的照旧按网页存这条短链", async () => {
+    const toSpace = vi.fn<(service: string, url: string, init?: RequestInit) => Promise<Response>>(async () => redirectTo("https://space.bilibili.com/88461692?share_medium=android&share_source=copy_link"));
+    expect(await resolveTarget("https://b23.tv/AbCdEf1", toSpace)).toEqual({ kind: "account", ref: { platform: "bilibili", externalId: "88461692", handle: "", url: "https://space.bilibili.com/88461692" } });
+    expect(toSpace.mock.calls[0][0]).toBe("B 站短链");
+    const toVideo = vi.fn(async () => redirectTo("https://www.bilibili.com/video/BV1u7hQ6rEQB?share_source=copy_link"));
+    expect(await resolveTarget("https://b23.tv/AbCdEf1", toVideo)).toMatchObject({ kind: "post", ref: { platform: "web", url: "https://b23.tv/AbCdEf1" } });
+    const broken = vi.fn(async () => {
+      throw new Error("连接失败");
+    });
+    expect(await resolveTarget("https://b23.tv/AbCdEf1", broken)).toMatchObject({ kind: "post", ref: { platform: "web", url: "https://b23.tv/AbCdEf1" } });
+    // 别的网站不发请求
+    const never = vi.fn(async () => new Response("", { status: 200 }));
+    await resolveTarget("https://example.com/a", never);
+    expect(never).not.toHaveBeenCalled();
+  });
+
+  it("B 站的主页在跟着读别的帖子提到的链接时照旧当网页（它不是认得的平台）", async () => {
+    const never = vi.fn(async () => new Response("", { status: 200 }));
+    expect(await resolveLink("https://space.bilibili.com/88461692/video", never)).toMatchObject({ platform: "web", url: "https://space.bilibili.com/88461692" });
+    expect((await resolveTarget("https://space.bilibili.com/88461692/video", never)).kind).toBe("account");
+  });
+
   it("别的平台的主页、别的网站不算账号", () => {
     expect(parseAccountLink("https://www.reddit.com/user/someone")).toBeNull();
     expect(parseAccountLink("https://example.com/@someone")).toBeNull();

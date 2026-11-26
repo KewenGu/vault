@@ -37,6 +37,7 @@ describe("认出贴进来的是哪个账号", () => {
   it("主页的链接、带着话的分享文案都认；帖子的链接、别的东西说清楚该贴什么", async () => {
     expect(await resolveAccount("  https://x.com/karpathy ")).toMatchObject({ platform: "x", externalId: "karpathy" });
     expect(await resolveAccount("来看看这个人 https://www.tiktok.com/@tedtoks 讲得很好")).toMatchObject({ platform: "tiktok", externalId: "tedtoks" });
+    expect(await resolveAccount("https://space.bilibili.com/88461692/video")).toMatchObject({ platform: "bilibili", externalId: "88461692" });
     await expect(resolveAccount("https://x.com/karpathy/status/2106418403661779046")).rejects.toThrow(/这是一条帖子的链接，不是账号的主页/);
     await expect(resolveAccount("https://example.com/someone")).rejects.toThrow(/这是一条帖子的链接/);
     await expect(resolveAccount("没有链接")).rejects.toThrow(/没认出这是哪个账号的主页/);
@@ -188,11 +189,16 @@ describe("读", () => {
     fake.store.items.push(itemRow("a", { cost_usd: 0.1 }), itemRow("b", { cost_usd: 0.3 }), itemRow("c", { cost_usd: 9, platform: "douyin" }), itemRow("d", { cost_usd: 9, status: "failed" }), itemRow("e", { cost_usd: 9, user_id: OTHER }));
     expect(await costHint(session(ME), "x")).toEqual({ avgUsd: 0.2, n: 2 });
     expect(await costHint(session(ME), "tiktok")).toBeNull();
+    // B 站的视频是按网页存的：只拿 B 站视频页的那些来估，别的网页（文章）不算
+    fake.store.items.push(itemRow("w1", { platform: "web", url: "https://www.bilibili.com/video/BV1u7hQ6rEQB", cost_usd: 0.5 }), itemRow("w2", { platform: "web", url: "https://blog.example.com/a", cost_usd: 0.01 }));
+    expect(await costHint(session(ME), "bilibili")).toEqual({ avgUsd: 0.5, n: 1 });
   });
 
   it("页面上叫他什么：名字 → @用户名 → 平台", () => {
     expect(creatorTitle({ name: "木木英语", handle: "抖音号 1", platform: "douyin" })).toBe("木木英语");
     expect(creatorTitle({ name: "", handle: "@tedtoks", platform: "tiktok" })).toBe("@tedtoks");
     expect(creatorTitle({ name: "", handle: "", platform: "douyin" })).toBe("抖音博主");
+    expect(creatorTitle({ name: "", handle: "", platform: "bilibili" })).toBe("B 站博主");
+    expect(creatorTitle({ name: "", handle: "", platform: "youtube" })).toBe("YouTube 博主");
   });
 });

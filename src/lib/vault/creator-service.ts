@@ -25,7 +25,7 @@ import {
 import { getItemsInOrder, type Item } from "./store";
 
 /**
- * 博主：把一个账号（X / TikTok / 抖音 / 小红书 / Instagram / YouTube）发过的作品整个存下来。页面的 server action 和 /api/v1/creators 的接口都调这里。
+ * 博主：把一个账号（X / TikTok / 抖音 / 小红书 / Instagram / YouTube / B 站）发过的作品整个存下来。页面的 server action 和 /api/v1/creators 的接口都调这里。
  *
  * 一个博主的每一条作品，存进来就是收藏库里普通的一条内容（搜索、图谱、导图照常），和单独贴那条链接存进来的是同一条。
  * 这里管的是「哪个账号、要最近的多少条、列出了哪些、存到哪了」：
@@ -44,7 +44,7 @@ export { VaultError };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-export const NOT_AN_ACCOUNT = "没认出这是哪个账号的主页。能整个存的是 X、TikTok、抖音、小红书、Instagram、YouTube 的账号：打开他的主页，点「分享 → 复制链接」，把复制到的内容贴进来（x.com/用户名、tiktok.com/@用户名、douyin.com/user/…、xiaohongshu.com/user/profile/…、instagram.com/用户名、youtube.com/@频道名）";
+export const NOT_AN_ACCOUNT = "没认出这是哪个账号的主页。能整个存的是 X、TikTok、抖音、小红书、Instagram、YouTube、B 站的账号：打开他的主页，点「分享 → 复制链接」，把复制到的内容贴进来（x.com/用户名、tiktok.com/@用户名、douyin.com/user/…、xiaohongshu.com/user/profile/…、instagram.com/用户名、youtube.com/@频道名、space.bilibili.com/数字）";
 
 /** 贴进来的内容（链接，或者 App 分享出来的那段话）是哪个账号的主页。认不出、或者是一条帖子的链接，抛 VaultError。 */
 export async function resolveAccount(input: string): Promise<AccountRef> {
@@ -73,7 +73,10 @@ export type CostHint = { avgUsd: number; n: number };
 
 /** 这个人在这个平台上已经存过的内容平均一条花了多少（最近 50 条处理好的），给「存 N 条大概多少钱」当参考。没存过返回 null。 */
 export async function costHint(session: Session, platform: AccountPlatform): Promise<CostHint | null> {
-  const { data, error } = await session.db.from("items").select("cost_usd").eq("user_id", session.user.id).eq("platform", platform).eq("status", "ready").order("created_at", { ascending: false }).limit(50);
+  let query = session.db.from("items").select("cost_usd").eq("user_id", session.user.id).eq("status", "ready");
+  // B 站的视频是按网页存的：只看 B 站视频页的那些，别的网页（文章）便宜得多，不能拿来估
+  query = platform === "bilibili" ? query.eq("platform", "web").like("url", "https://www.bilibili.com/video/%") : query.eq("platform", platform);
+  const { data, error } = await query.order("created_at", { ascending: false }).limit(50);
   if (error) throw new Error(`读取收藏库失败: ${error.message}`);
   const costs = (data ?? []).map((r) => Number(r.cost_usd) || 0).filter((c) => c > 0);
   return costs.length > 0 ? { avgUsd: costs.reduce((a, b) => a + b, 0) / costs.length, n: costs.length } : null;

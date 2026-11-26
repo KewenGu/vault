@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeFakeSupabase, type FakeSupabase } from "@/test/fake-supabase";
 import type { ListStep } from "@/lib/sources/account-list";
+import { parseLink } from "@/lib/sources/link";
 import { SourceFetchError } from "@/lib/sources/types";
 import { recordCall } from "@/lib/usage/meter";
 
@@ -230,6 +231,20 @@ describe("saveCreatorPosts：一条条存", () => {
     vi.mocked(start).mockRejectedValue(new Error("workflow runtime unavailable"));
     await saveCreatorPosts(CREATOR, USER, STARTED);
     expect(creator()).toMatchObject({ status: "failed", error: "存到一半后台任务没接上：workflow runtime unavailable" });
+  });
+
+  it("B 站：视频和单独贴链接时一样按网页存（平台是 web，id 是整理过的地址的哈希）；以前这样存过的不重复", async () => {
+    const bili = (n: number, bv: string, over: Record<string, unknown> = {}) => postRow(n, { external_id: bv, url: `https://www.bilibili.com/video/${bv}`, kind: "video", ...over });
+    const before = parseLink("https://www.bilibili.com/video/BV1HBnH6JEAZ/?spm_id_from=333.1007&vd_source=abc")!;
+    seed({ status: "saving", platform: "bilibili", external_id: "88461692", url: "https://space.bilibili.com/88461692" }, [bili(1, "BV1HBnH6JEAZ"), bili(2, "BV1u7hQ6rEQB")], [{ id: "mine-before", user_id: USER, source: "link", dedupe_key: `web:${before.externalId}`, status: "ready", platform: "web", external_id: before.externalId, url: before.url, media: [] }]);
+    await saveCreatorPosts(CREATOR, USER, STARTED);
+    const fresh = items().find((i) => i.id === postId(2));
+    const ref = parseLink("https://www.bilibili.com/video/BV1u7hQ6rEQB")!;
+    expect(fresh).toMatchObject({ source: "link", platform: "web", external_id: ref.externalId, dedupe_key: `web:${ref.externalId}`, url: "https://www.bilibili.com/video/BV1u7hQ6rEQB", kind: "video" });
+    // 不是 X：不带「把后面那一串也读进来」
+    expect(fresh?.post).toBeUndefined();
+    expect(vi.mocked(processItem).mock.calls).toEqual([[postId(2)]]);
+    expect(posts().map((p) => [p.external_id, p.status, p.item_id])).toEqual([["BV1HBnH6JEAZ", "saved", "mine-before"], ["BV1u7hQ6rEQB", "saved", postId(2)]]);
   });
 
   it("别人的博主碰不到", async () => {

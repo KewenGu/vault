@@ -1,8 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CreatorPostRecord, CreatorRecord, Database, Json } from "@/lib/db/types";
-import type { AccountInfo, ListedPost } from "@/lib/sources/account";
-import { ACCOUNT_PLATFORMS, type AccountPlatform, type AccountRef } from "@/lib/sources/link";
-import { POST_KINDS, SOURCE_PLATFORM_LABEL, type PostKind } from "@/lib/sources/types";
+import { accountLabel, type AccountInfo, type ListedPost } from "@/lib/sources/account";
+import { ACCOUNT_PLATFORMS, parseLink, type AccountPlatform, type AccountRef, type LinkRef } from "@/lib/sources/link";
+import { POST_KINDS, type PostKind } from "@/lib/sources/types";
 import { estimateUsd } from "@/lib/usage/prices";
 import { VaultError } from "./errors";
 import { STUCK_MS } from "./store";
@@ -82,7 +82,7 @@ export function creatorStuck(c: Pick<Creator, "status" | "updatedAt">, now = Dat
 
 /** 页面上叫他什么：名字，没有就用 @用户名，再没有（抖音、小红书刚加进来、还没列过）叫「抖音博主」。 */
 export function creatorTitle(c: Pick<Creator, "name" | "handle" | "platform">): string {
-  const label = SOURCE_PLATFORM_LABEL[c.platform];
+  const label = accountLabel(c.platform);
   return c.name || c.handle || `${label}${/[a-z]$/i.test(label) ? " " : ""}博主`;
 }
 
@@ -141,6 +141,15 @@ export function toCreatorPost(row: CreatorPostRecord): CreatorPost {
     status: POST_STATUSES.find((s) => s === row.status) ?? "held",
     itemId: row.item_id,
   };
+}
+
+/**
+ * 清单里的一条作品存进收藏库时是哪条内容（平台、id、链接）。B 站不是认得的平台：它的视频和单独贴链接时一样按网页存
+ * （id 是整理过的地址的哈希）。链接整理不出来（不该发生）返回 null。
+ */
+export function itemRefOf(platform: AccountPlatform, post: Pick<CreatorPost, "externalId" | "url">): LinkRef | null {
+  if (platform === "bilibili") return parseLink(post.url);
+  return { platform, externalId: post.externalId, url: post.url };
 }
 
 export const accountRefOf = (c: Pick<Creator, "platform" | "externalId" | "handle" | "url">): AccountRef => ({ platform: c.platform, externalId: c.externalId, handle: c.handle, url: c.url });
@@ -267,6 +276,12 @@ export async function nextPending(db: Db, userId: string, creatorId: string, n: 
 /** 这条作品已经是收藏库里的一条内容了。 */
 export async function markSaved(db: Db, userId: string, postId: string, itemId: string): Promise<void> {
   const { error } = await db.from("creator_posts").update({ status: "saved", item_id: itemId }).eq("id", postId).eq("user_id", userId);
+  if (error) fail("更新作品清单失败", error);
+}
+
+/** 把一条作品改成某种状态。 */
+export async function movePost(db: Db, userId: string, postId: string, to: CreatorPostStatus): Promise<void> {
+  const { error } = await db.from("creator_posts").update({ status: to }).eq("id", postId).eq("user_id", userId);
   if (error) fail("更新作品清单失败", error);
 }
 

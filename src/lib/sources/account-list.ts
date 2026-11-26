@@ -1,11 +1,11 @@
 import "server-only";
 import { recordCall } from "@/lib/usage/meter";
-import type { AccountInfo, ListedPost } from "./account";
+import { accountLabel, accountLabelInText, type AccountInfo, type ListedPost } from "./account";
 import { PROFILE_ACTORS } from "./account-apify";
 import { fetchXProfile, fetchXTimelinePage, pickOwnPosts } from "./account-x";
 import { abortActorRun, apifyToken, getActorRun, readDatasetItems, runPending, startActorRun } from "./apify";
 import type { AccountRef } from "./link";
-import { SOURCE_PLATFORM_LABEL, SourceFetchError } from "./types";
+import { SourceFetchError } from "./types";
 
 /**
  * 列一个账号的作品（存一个博主的全部作品的第一步）。各平台怎么列、花不花钱：
@@ -18,6 +18,7 @@ import { SOURCE_PLATFORM_LABEL, SourceFetchError } from "./types";
  * | 小红书 | Apify actor（account-apify.ts） | 约 $0.005 / 条 |
  * | Instagram | Apify actor（account-apify.ts） | 约 $0.003 / 条 |
  * | YouTube | Apify actor（account-apify.ts）：视频和 Shorts 各列 N 条 | 约 $0.004 / 条，最多 2N 条 |
+ * | B 站 | Apify actor（account-apify.ts）：投稿的视频 | 约 $0.003 / 条 |
  *
  * 列一次要翻很多页 / 等 actor 跑完，放在一次调用里会很久，所以拆成一步一步：每调一次 listAccountStep 往前走一步，
  * 返回这一步拿到的作品、接下来的状态（原样传给下一次）、下一次之前要等几秒。后台任务（workflows/collect-creator.ts）
@@ -98,8 +99,8 @@ async function listX(ref: AccountRef, want: number, state: Extract<ListState, { 
 async function listViaApify(ref: AccountRef & { platform: keyof typeof PROFILE_ACTORS }, want: number, state: Extract<ListState, { via: "apify" }> | null): Promise<ListStep> {
   const spec = PROFILE_ACTORS[ref.platform];
   // 英文的平台名和前后的中文之间留空格
-  const name = SOURCE_PLATFORM_LABEL[ref.platform];
-  const label = /^[a-z]/i.test(name) ? ` ${name} ` : name;
+  const name = accountLabel(ref.platform);
+  const label = accountLabelInText(ref.platform);
   const token = apifyToken(`列${label}账号的作品`.trim());
   // actor 最多会给多少条（YouTube 的视频和 Shorts 各要 want 条）
   const rows = want * (spec.rowsPerPost ?? 1);
@@ -128,7 +129,7 @@ async function listViaApify(ref: AccountRef & { platform: keyof typeof PROFILE_A
   // 从新到旧（置顶的回到它本来的位置）；没有时间的排最后
   const posts = [...all].sort((a, b) => (b.publishedAt ?? "").localeCompare(a.publishedAt ?? "")).slice(0, want);
   if (info?.postCount && posts.length < want && posts.length < info.postCount) {
-    notes.push(`${name} 说这个账号一共 ${info.postCount} 个作品，这次只列出 ${posts.length} 个：剩下的可能是私密的、被平台藏起来的，或者 actor 没翻到`.replace(/^(抖音|小红书) /, "$1"));
+    notes.push(`${name} 说这个账号一共 ${info.postCount} 个作品，这次只列出 ${posts.length} 个：剩下的可能是私密的、被平台藏起来的，或者 actor 没翻到`.replace(/^(抖音|小红书|B 站) /, "$1"));
   }
   return { done: true, state: null, waitS: 0, info, posts, notes };
 }
