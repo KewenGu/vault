@@ -12,6 +12,7 @@ const material = (over: Partial<AskMaterial> = {}): AskMaterial => ({
   savedAt: "2026-11-20T03:00:00.000Z",
   note: "年底前\n照着做",
   tags: ["理财"],
+  notes: [],
   carried: false,
   understanding: {
     summary: "四步：应急金、保险、还债、定投。",
@@ -47,11 +48,25 @@ describe("askMaterialText", () => {
     expect(text).not.toContain("之前的回答引用过");
   });
 
+  it("carries the user's own highlights and annotations right after his note, newest kept when there are too many", () => {
+    const text = askMaterialText(material({ notes: [{ quote: "应急金放货币基金", body: "我放的是余额宝\n够用了", at: 72 }, { quote: "", body: "下个月开始定投", at: null }, { quote: "别拿应急的钱去投资", body: "", at: null }] }));
+    expect(text).toContain("他在这条上划的线、写的批注：\n- 划线（1:12）：「应急金放货币基金」——他写的：我放的是余额宝 够用了\n- 他写的：下个月开始定投\n- 划线：「别拿应急的钱去投资」");
+    expect(text.indexOf("他在这条上划的线")).toBeGreaterThan(text.indexOf("他存的时候写的备注"));
+    expect(text.indexOf("他在这条上划的线")).toBeLessThan(text.indexOf("概括："));
+
+    const many = askMaterialText(material({ notes: Array.from({ length: 30 }, (_, i) => ({ quote: "", body: `第 ${i + 1} 条想法${"，说得很长".repeat(20)}`, at: null })) }));
+    expect(many).toContain("（一共 30 条，这里是最近的");
+    expect(many).toContain("第 30 条想法");
+    expect(many).not.toContain("第 1 条想法");
+    // 笔记再多也挤不掉内容本身的概括
+    expect(many).toContain("概括：四步");
+  });
+
   it("marks what earlier answers cited, leaves out what the item does not have, and stays under the cap", () => {
     const m = material({ carried: true, note: "", tags: [], snippet: null });
     const bare = askMaterialText({ ...m, understanding: { ...m.understanding, card: [], quotes: [], gaps: [], outline: [] } });
     expect(bare).toContain("〔之前的回答引用过〕");
-    for (const absent of ["备注", "标签", "原话", "原文里提到", "没读全", "结构"]) expect(bare).not.toContain(absent);
+    for (const absent of ["备注", "划的线", "标签", "原话", "原文里提到", "没读全", "结构"]) expect(bare).not.toContain(absent);
     const long = askMaterialText({ ...m, understanding: { ...m.understanding, summary: "长".repeat(5000) } });
     expect(long.length).toBeLessThanOrEqual(3201);
     expect(long.endsWith("…")).toBe(true);

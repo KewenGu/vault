@@ -92,6 +92,12 @@ describe("itemMarkdown", () => {
     expect(md).toContain(`## 文件（没有包含在这个导出里）\n\n- video：${USER}/${id(1)}/video.mp4`);
   });
 
+  it("writes the user's highlights and annotations under his note: the quoted passage as a quote, his words below", () => {
+    const md = itemMarkdown(toItem(item(1)), [{ quote: "冰糖下锅", body: "火要小\n不然苦", at: 35 }, { quote: "", body: "下次少放糖", at: null }, { quote: "糖色别炒过了", body: "", at: null }]);
+    expect(md).toContain("## 我的划线和批注\n\n> 冰糖下锅（0:35）\n\n火要小\n不然苦\n\n---\n\n下次少放糖\n\n---\n\n> 糖色别炒过了\n\n## 概括");
+    expect(itemMarkdown(toItem(item(1)))).not.toContain("我的划线和批注");
+  });
+
   it("still exports an item that failed, with the reason and whatever text it has", () => {
     const md = itemMarkdown(toItem(item(2, { status: "failed", error: "链接读不到", understanding: null, title: null, tags: [], note: null, transcript: null, media: [], content_type: null, category: null })));
     expect(md).toContain('title: "抖音');
@@ -147,6 +153,10 @@ const seed = () => ({
   items: [...Array.from({ length: 120 }, (_, i) => item(i + 1)), item(500, { user_id: OTHER, title: "别人的" })],
   entities: [{ id: "e1", user_id: USER, type: "product", name: "高压锅", aliases: [], summary: "", embedding: "[1]", created_at: "t", updated_at: "t" }, { id: "e2", user_id: OTHER, type: "place", name: "别人的", aliases: [], summary: "", embedding: null, created_at: "t", updated_at: "t" }],
   item_entities: [{ item_id: id(1), entity_id: "e1", user_id: USER, about: "" }],
+  item_notes: [
+    { id: id(950), user_id: USER, item_id: id(1), quote: "冰糖下锅", body: "火要小", at: 35, search_text: "冰糖下锅\n火要小", created_at: "2026-11-21T00:00:00.000Z", updated_at: "t" },
+    { id: id(951), user_id: OTHER, item_id: id(500), quote: "别人划的", body: "", at: null, search_text: "别人划的\n", created_at: "t", updated_at: "t" },
+  ],
   maps: [{ id: id(900), user_id: USER, title: "理财/入门", nodes: [{ depth: 1, text: "应急金", item: null }], sources: [], chat: [], usage: {}, cost_usd: 0, created_at: "2026-11-21T00:00:00.000Z", updated_at: "2026-11-21T00:00:00.000Z" }],
   asks: [{ id: id(901), user_id: USER, title: "应急金存多少", chat: [{ role: "user", text: "应急金存多少", at: "t" }], sources: [], usage: {}, cost_usd: 0, created_at: "2026-11-25T00:00:00.000Z", updated_at: "2026-11-25T00:00:00.000Z" }],
   journal_entries: [
@@ -191,6 +201,10 @@ describe("exportArchive", () => {
     const files = await run();
     expect(json(files, "data/entities.json")).toEqual([{ id: "e1", user_id: USER, type: "product", name: "高压锅", aliases: [], summary: "", created_at: "t", updated_at: "t" }]);
     expect(json(files, "data/item_entities.json")).toHaveLength(1);
+    // 划线和批注：原始数据一份（拼出来的搜索列不导），那条内容的 Markdown 里也有
+    expect(json(files, "data/item_notes.json")).toEqual([{ id: id(950), user_id: USER, item_id: id(1), quote: "冰糖下锅", body: "火要小", at: 35, created_at: "2026-11-21T00:00:00.000Z", updated_at: "t" }]);
+    expect(text(files.get(`${ROOT}/items/2026-11/2026-11-20 高压锅红烧牛腩 (00000001).md`))).toContain("## 我的划线和批注\n\n> 冰糖下锅（0:35）\n\n火要小");
+    expect(text(files.get(`${ROOT}/README.md`))).toContain("- 划线和批注：1");
     expect(json(files, "data/journal_entries.json").map((r) => r.title)).toEqual(["加班"]);
     expect(json(files, "data/creators.json")).toEqual([]);
     // 标题里的斜杠不会变成一层文件夹
