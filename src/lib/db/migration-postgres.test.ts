@@ -80,7 +80,7 @@ describe.skipIf(!pg)("migrations — isolated PostgreSQL", () => {
   const search = (user: string, args: string) => as(user, `select string_agg(i.dedupe_key, ',' order by s.score desc, i.created_at desc) from search_items('${user}'${args ? `, ${args}` : ""}) s join items i on i.id = s.id`);
 
   beforeEach(() => {
-    query("truncate items, entities, maps, journal_entries, journal_media, journal_stickers, creators cascade");
+    query("truncate items, entities, maps, asks, journal_entries, journal_media, journal_stickers, creators cascade");
   });
 
   it("migrations can be applied twice", () => {
@@ -117,6 +117,26 @@ describe.skipIf(!pg)("migrations — isolated PostgreSQL", () => {
     expect(query(`select user_id || ' ' || nodes::text || ' ' || sources::text || ' ' || chat::text from maps where title = '默认是我的'`)).toBe(`${alice} [] {} []`);
     // 后台（service_role）读得到，代码里自己带 user_id
     expect(query(`begin; set local role service_role; select count(*) from maps where user_id = '${bob}'; commit;`)).toBe("1");
+  });
+
+  it("asks are private to their owner", () => {
+    query(`insert into asks (user_id, title) values ('${alice}', 'alice 问的'), ('${bob}', 'bob 问的')`);
+    expect(as(alice, "select string_agg(title, ',') from asks")).toBe("alice 问的");
+    expect(as(bob, "select string_agg(title, ',') from asks")).toBe("bob 问的");
+    expect(() => as(alice, `insert into asks (user_id, title) values ('${bob}', 'x')`)).toThrow(/row-level security/);
+    // 改 / 删别人的：行级安全让它一行都碰不到
+    expect(as(alice, `update asks set title = '抢' where user_id = '${bob}' returning id`)).toBe("");
+    expect(as(alice, `delete from asks where user_id = '${bob}' returning id`)).toBe("");
+    expect(query(`select title from asks where user_id = '${bob}'`)).toBe("bob 问的");
+    // 默认填当前用户；对话、引用过的内容、用量默认是空的
+    as(alice, "insert into asks (title) values ('默认是我的')");
+    expect(query(`select user_id || ' ' || chat::text || ' ' || sources::text || ' ' || usage::text || ' ' || cost_usd from asks where title = '默认是我的'`)).toBe(`${alice} [] {} {} 0.000000`);
+    // 改了之后 updated_at 跟着走（列表按它排）
+    query(`update asks set created_at = now() - interval '1 day', updated_at = now() - interval '1 day' where title = '默认是我的'`);
+    as(alice, `update asks set chat = '[{"role":"user","text":"问","at":"t"}]' where title = '默认是我的'`);
+    expect(query(`select updated_at > created_at from asks where title = '默认是我的'`)).toBe("t");
+    // 后台（service_role）读得到，代码里自己带 user_id
+    expect(query(`begin; set local role service_role; select count(*) from asks where user_id = '${bob}'; commit;`)).toBe("1");
   });
 
   it("traces are private to their owner, cannot be attached to someone else's item, and go away with the item", () => {
