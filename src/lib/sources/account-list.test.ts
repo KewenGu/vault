@@ -106,6 +106,68 @@ describe("列一个 X 账号的帖子", () => {
   });
 });
 
+describe("列一个 Reddit 用户的帖子（第三方存档）", () => {
+  const ref: AccountRef = { platform: "reddit", externalId: "spez", handle: "u/Spez", url: "https://www.reddit.com/user/Spez" };
+  const row = (n: number, over: Record<string, unknown> = {}) => ({ id: `1a${String(n).padStart(4, "0")}`, author: "spez", subreddit: "redditstock", created_utc: 1795000000 - n * 3600, title: `帖子 ${n}`, url: `https://www.reddit.com/r/redditstock/comments/1a${String(n).padStart(4, "0")}/x/`, ...over });
+
+  /** 假的存档：total 条帖子，按 before 往回给；users 是它见过的用户名。 */
+  function archive(total: number, users: string[] = ["spez"]) {
+    const urls: string[] = [];
+    vi.stubGlobal("fetch", async (url: string) => {
+      urls.push(url);
+      const u = new URL(url);
+      if (u.pathname.endsWith("/users/search")) return json({ data: users.filter((a) => a.toLowerCase() === u.searchParams.get("author")?.toLowerCase()).map((author) => ({ author, _meta: { num_posts: 549 } })) });
+      const before = Number(u.searchParams.get("before") ?? Infinity);
+      const all = Array.from({ length: total }, (_, i) => row(i + 1)).filter((r) => r.created_utc < before);
+      return json({ data: all.slice(0, Number(u.searchParams.get("limit"))) });
+    });
+    return urls;
+  }
+
+  it("一页 100 条往回翻，够数就停；最后一页只要还差的条数；不花钱", async () => {
+    const urls = archive(500);
+    const { steps, counts } = await listAll(ref, 230);
+    expect(steps.map((s) => s.posts.length)).toEqual([100, 100, 30]);
+    expect(steps[0].info).toEqual({ name: "spez", handle: "u/spez", bio: "", postCount: null });
+    expect(steps[0]).toMatchObject({ done: false, waitS: 2 });
+    expect(steps.at(-1)).toMatchObject({ done: true, notes: [] });
+    expect(steps[0].posts[0]).toEqual({ externalId: "1a0001", url: "https://www.reddit.com/comments/1a0001", kind: "text", title: "帖子 1", publishedAt: "2026-11-18T10:06:40.000Z", pinned: false });
+    expect(urls).toEqual([
+      "https://arctic-shift.photon-reddit.com/api/posts/search?author=spez&sort=desc&limit=100&fields=id,author,subreddit,created_utc,title,post_hint,url",
+      `https://arctic-shift.photon-reddit.com/api/posts/search?author=spez&sort=desc&limit=100&fields=id,author,subreddit,created_utc,title,post_hint,url&before=${1795000000 - 100 * 3600}`,
+      `https://arctic-shift.photon-reddit.com/api/posts/search?author=spez&sort=desc&limit=30&fields=id,author,subreddit,created_utc,title,post_hint,url&before=${1795000000 - 200 * 3600}`,
+    ]);
+    expect(counts).toEqual({});
+  });
+
+  it("存档里就这么多：说清楚一共几条、最早到哪天", async () => {
+    archive(130);
+    const { steps } = await listAll(ref, 300);
+    expect(steps.map((s) => s.posts.length)).toEqual([100, 30]);
+    expect(steps.at(-1)).toMatchObject({ done: true, notes: ["存档里他发的帖子一共 130 条（最早到 2026-11-13），都列出来了"] });
+  });
+
+  it("一条都没有：存档没见过这个人 = 账号读不到；见过 = 他没发过帖子（只写评论）", async () => {
+    archive(0, []);
+    await expect(listAll(ref, 20)).rejects.toThrow(SourceFetchError);
+    await expect(listAll(ref, 20)).rejects.toThrow(/没读到这个 Reddit 账号/);
+    archive(0, ["Spez"]);
+    const { steps } = await listAll(ref, 20);
+    expect(steps).toEqual([{ done: true, state: null, waitS: 0, info: { name: "Spez", handle: "u/Spez", bio: "", postCount: null }, posts: [], notes: ["存档里没有他发的帖子（他写的评论不算；刚发的帖子存档可能还没收录）"] }]);
+  });
+
+  it("翻到一半存档读不动了：已经列出来的留着，记一句；第一页就读不动算失败", async () => {
+    let n = 0;
+    vi.stubGlobal("fetch", async () => (++n === 1 ? json({ data: Array.from({ length: 100 }, (_, i) => row(i + 1)) }) : json({ data: null, error: "boom" }, 500)));
+    const { steps } = await listAll(ref, 200);
+    expect(steps[0].posts).toHaveLength(100);
+    expect(steps.at(-1)?.done).toBe(true);
+    expect(steps.at(-1)?.notes[0]).toMatch(/^列到第 100 条（2026-11-14）之后存档读不动了，更早的没列出来：/);
+    vi.stubGlobal("fetch", async () => json({ data: null, error: "boom" }, 500));
+    await expect(listAll(ref, 20)).rejects.toThrow(/Reddit 存档/);
+  });
+});
+
 describe("列一个 TikTok / 抖音账号的作品（Apify）", () => {
   const ref: AccountRef = { platform: "tiktok", externalId: "tedtoks", handle: "@tedtoks", url: "https://www.tiktok.com/@tedtoks" };
   const video = (n: number, over: Record<string, unknown> = {}) => ({ id: `770000000000000000${n}`, text: `视频 ${n}`, createTime: 1795000000 + n * 3600, authorMeta: { name: "tedtoks", nickName: "TED Talks", signature: "", video: 1206 }, ...over });

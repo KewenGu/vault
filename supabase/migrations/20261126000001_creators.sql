@@ -1,9 +1,9 @@
 -- 博主（2026-11-26）：把一个账号发过的作品整个存下来。
 --
--- creators：收藏的一个账号（X / TikTok / 抖音 / 小红书 / Instagram / YouTube / B 站 / 微博），一个人同一个账号只有一行。
---   platform：x / tiktok / douyin / xiaohongshu / instagram / youtube / bilibili / weibo。bilibili 只在这里有：它的视频存进 items 时
+-- creators：收藏的一个账号（X / TikTok / 抖音 / 小红书 / Instagram / YouTube / B 站 / 微博 / Reddit），一个人同一个账号只有一行。
+--   platform：x / tiktok / douyin / xiaohongshu / instagram / youtube / bilibili / weibo / reddit。bilibili 只在这里有：它的视频存进 items 时
 --   和单独贴链接一样算 web。
---   external_id：X、TikTok、Instagram 是小写的用户名，抖音是 sec_uid，小红书是用户 id，YouTube 是 @名字 或频道 id，
+--   external_id：X、TikTok、Instagram、Reddit 是小写的用户名，抖音是 sec_uid，小红书是用户 id，YouTube 是 @名字 或频道 id，
 --   B 站是数字 id，微博是数字 id（个性域名的是小写的域名）（见 lib/sources/link.ts 的 AccountRef）。
 --   status：listing 后台在列他的作品 → saving 在一条一条存 → ready（存完了，或者停下了）；failed = 这一轮没列成（error 里是原因）。
 --   want：这一轮要列最近的多少条。notes：没列到的、没要的（转发、列到一半读不动…），页面上列出来。

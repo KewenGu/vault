@@ -315,8 +315,8 @@ export class RedditArchiveMiss extends SourceFetchError {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** 问一次存档，返回 `data`。它嫌快（422 / 429）时等一下再问一次。 */
-async function archiveGet(path: string, wait = sleep): Promise<unknown> {
+/** 问一次存档，返回 `data`。它嫌快（422 / 429）时等一下再问一次。列一个用户的帖子（account-reddit.ts）也用它。 */
+export async function archiveGet(path: string, wait = sleep): Promise<unknown> {
   for (let attempt = 0; ; attempt++) {
     const res = await labeledFetch(SERVICE, `${ARCHIVE}${path}`, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(30_000) });
     if ((res.status === 422 || res.status === 429) && attempt === 0) {

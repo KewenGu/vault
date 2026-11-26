@@ -2,6 +2,7 @@ import "server-only";
 import { recordCall } from "@/lib/usage/meter";
 import { accountLabel, accountLabelInText, type AccountInfo, type ListedPost } from "./account";
 import { PROFILE_ACTORS } from "./account-apify";
+import { REDDIT_PAGE, fetchRedditUserName, fetchRedditUserPosts } from "./account-reddit";
 import { fetchXProfile, fetchXTimelinePage, pickOwnPosts } from "./account-x";
 import { abortActorRun, apifyToken, getActorRun, readDatasetItems, runPending, startActorRun } from "./apify";
 import type { AccountRef } from "./link";
@@ -19,6 +20,8 @@ import { SourceFetchError } from "./types";
  * | Instagram | Apify actor（account-apify.ts） | 约 $0.003 / 条 |
  * | YouTube | Apify actor（account-apify.ts）：视频和 Shorts 各列 N 条 | 约 $0.004 / 条，最多 2N 条 |
  * | B 站 | Apify actor（account-apify.ts）：投稿的视频 | 约 $0.003 / 条 |
+ * | 微博 | Apify actor（account-apify.ts）：他自己发的微博 | 约 $0.005 / 条 |
+ * | Reddit | 第三方存档 Arctic Shift，一页 100 条往回翻（account-reddit.ts） | 免费 |
  *
  * 列一次要翻很多页 / 等 actor 跑完，放在一次调用里会很久，所以拆成一步一步：每调一次 listAccountStep 往前走一步，
  * 返回这一步拿到的作品、接下来的状态（原样传给下一次）、下一次之前要等几秒。后台任务（workflows/collect-creator.ts）
@@ -29,7 +32,8 @@ import { SourceFetchError } from "./types";
 
 export type ListState =
   | { via: "x"; cursor: string | null; pages: number; got: number; reposts: number; threadReplies: number; replies: number; oldest: string | null }
-  | { via: "apify"; runId: string; datasetId: string; polls: number };
+  | { via: "apify"; runId: string; datasetId: string; polls: number }
+  | { via: "reddit"; before: number | null; pages: number; got: number; oldest: string | null };
 
 export type ListStep = {
   done: boolean;
@@ -96,6 +100,39 @@ async function listX(ref: AccountRef, want: number, state: Extract<ListState, { 
   return { done: false, state: next, waitS: 0, info, posts, notes: [] };
 }
 
+/** Reddit 最多翻这么多页（一页 100 条；一次最多列 1000 条，留一点余量） */
+const REDDIT_MAX_PAGES = 15;
+
+async function listReddit(ref: AccountRef, want: number, state: Extract<ListState, { via: "reddit" }> | null): Promise<ListStep> {
+  const s = state ?? { via: "reddit" as const, before: null, pages: 0, got: 0, oldest: null };
+  let page;
+  try {
+    page = await fetchRedditUserPosts(ref.externalId, s.before, Math.min(REDDIT_PAGE, Math.max(1, want - s.got)));
+  } catch (e) {
+    // 已经列出来一些了：到这里为止，说清楚；一条都没列到才算失败
+    if (s.got === 0) throw e;
+    return { done: true, state: null, waitS: 0, info: null, posts: [], notes: [`列到第 ${s.got} 条（${day(s.oldest)}）之后存档读不动了，更早的没列出来：${(e instanceof Error ? e.message : String(e)).slice(0, 120)}`] };
+  }
+  // 第一页就是空的：存档没见过这个人 = 账号读不到；见过 = 他没发过帖子（只写评论的人很多）
+  if (s.pages === 0 && page.posts.length === 0) {
+    const known = await fetchRedditUserName(ref.externalId);
+    if (!known) throw new SourceFetchError("没读到这个 Reddit 账号：存档里没有这个用户名发过的帖子和评论。可能是用户名不对，也可能他刚注册、存档还没收录");
+    return { done: true, state: null, waitS: 0, info: { name: known, handle: `u/${known}`, bio: "", postCount: null }, posts: [], notes: ["存档里没有他发的帖子（他写的评论不算；刚发的帖子存档可能还没收录）"] };
+  }
+  const info: AccountInfo | null = s.pages === 0 && page.name ? { name: page.name, handle: `u/${page.name}`, bio: "", postCount: null } : null;
+  const posts = page.posts.slice(0, Math.max(0, want - s.got));
+  const next = { ...s, before: page.before, pages: s.pages + 1, got: s.got + posts.length, oldest: posts.at(-1)?.publishedAt ?? s.oldest };
+  const asked = Math.min(REDDIT_PAGE, Math.max(1, want - s.got));
+  if (next.got >= want) return { done: true, state: null, waitS: 0, info, posts, notes: [] };
+  // 这一页没给满，或者没有能往回翻的时间了：到头了
+  if (page.rows < asked || page.before === null || page.before === s.before) {
+    return { done: true, state: null, waitS: 0, info, posts, notes: [`存档里他发的帖子一共 ${next.got} 条（最早到 ${day(next.oldest)}），都列出来了`] };
+  }
+  if (next.pages >= REDDIT_MAX_PAGES) return { done: true, state: null, waitS: 0, info, posts, notes: [`翻了 ${REDDIT_MAX_PAGES} 页，列出 ${next.got} 条（到 ${day(next.oldest)}），更早的没再翻`] };
+  // 存档嫌问得太密会回「slow down」：两页之间歇一下
+  return { done: false, state: next, waitS: 2, info, posts, notes: [] };
+}
+
 async function listViaApify(ref: AccountRef & { platform: keyof typeof PROFILE_ACTORS }, want: number, state: Extract<ListState, { via: "apify" }> | null): Promise<ListStep> {
   const spec = PROFILE_ACTORS[ref.platform];
   // 英文的平台名和前后的中文之间留空格
@@ -138,5 +175,6 @@ async function listViaApify(ref: AccountRef & { platform: keyof typeof PROFILE_A
 /** 往前列一步。want：最多要多少条（从最新的往回数）。 */
 export function listAccountStep(ref: AccountRef, want: number, state: ListState | null): Promise<ListStep> {
   if (ref.platform === "x") return listX(ref, want, state?.via === "x" ? state : null);
+  if (ref.platform === "reddit") return listReddit(ref, want, state?.via === "reddit" ? state : null);
   return listViaApify({ ...ref, platform: ref.platform }, want, state?.via === "apify" ? state : null);
 }
