@@ -300,6 +300,9 @@ describe.skipIf(!pg)("migrations — isolated PostgreSQL", () => {
     expect(search(alice, `'{}', ${axis(1)}`).split(",").sort()).toEqual(["both", "near"]);
     // 关键词 + 语义都中的排最前；只中语义的也在
     expect(search(alice, `array['三亚'], ${axis(1)}`)).toBe("both,near");
+    // 「相关的内容」的调法（lib/vault/related.ts）：拿一条内容自己存着的向量、带更高的门槛、不带关键词。它自己也在结果里，调用方去掉
+    expect(search(alice, `p_embedding => (select embedding from items where dedupe_key = 'near'), p_min_similarity => 0.68`).split(",").sort()).toEqual(["both", "near"]);
+    expect(search(bob, `p_embedding => ${axis(1)}, p_min_similarity => 0.68`)).toBe("");
   });
 
   it("filters by kind, type, category, tag, platform, source and entity; no query lists by time", () => {

@@ -10,6 +10,7 @@ import { AccountLinkError, VaultError } from "./errors";
 import { captureFields, classifyCapture, fileDedupeKey, planUpload, textDedupeKey, titleFromFilename, uploadPath, uploadedMedia } from "./capture";
 import { readPost } from "@/lib/sources/types";
 import { readCapture } from "./page-capture";
+import { findRelated, type Related } from "./related";
 import { BUCKET, TEXT_MAX, createItem, deleteItem, getItem, inProgress, itemDir, linkDedupeKey, restartItem } from "./store";
 import { hasTraceMaterial } from "./trace";
 import { beginTrace, endTrace, getTrace, traceRunning, type ItemTrace } from "./trace-store";
@@ -205,4 +206,15 @@ export async function startTrace(session: Session, id: string): Promise<ItemTrac
   const trace = await getTrace(db, user.id, id);
   if (!trace) throw new VaultError("这条内容不在了", 404);
   return trace;
+}
+
+/**
+ * 一条内容的相关内容：收藏库里内容相近的、提到同一个人 / 地方 / 东西的（见 related.ts）。不调模型，不另外花钱。
+ * 这条内容自己还没处理好时是空的。
+ */
+export async function relatedItems(session: Session, id: string): Promise<Related> {
+  const { user, db } = session;
+  const item = UUID.test(id) ? await getItem(db, user.id, id) : null;
+  if (!item) throw new VaultError("这条内容不在了", 404);
+  return findRelated(db, user.id, item);
 }
