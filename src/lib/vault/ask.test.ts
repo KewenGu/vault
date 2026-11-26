@@ -6,12 +6,14 @@ const B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
 const material = (over: Partial<AskMaterial> = {}): AskMaterial => ({
   label: "S1",
+  ownText: "",
   id: A,
   title: "30 岁开始理财晚吗",
   origin: "抖音 · 小鹿聊钱",
   savedAt: "2026-11-20T03:00:00.000Z",
   note: "年底前\n照着做",
   tags: ["理财"],
+  notes: [],
   carried: false,
   understanding: {
     summary: "四步：应急金、保险、还债、定投。",
@@ -47,11 +49,36 @@ describe("askMaterialText", () => {
     expect(text).not.toContain("之前的回答引用过");
   });
 
+  it("carries the user's own highlights and annotations right after his note, newest kept when there are too many", () => {
+    const text = askMaterialText(material({ notes: [{ quote: "应急金放货币基金", body: "我放的是余额宝\n够用了", at: 72 }, { quote: "", body: "下个月开始定投", at: null }, { quote: "别拿应急的钱去投资", body: "", at: null }] }));
+    expect(text).toContain("他在这条上划的线、写的批注：\n- 划线（1:12）：「应急金放货币基金」——他写的：我放的是余额宝 够用了\n- 他写的：下个月开始定投\n- 划线：「别拿应急的钱去投资」");
+    expect(text.indexOf("他在这条上划的线")).toBeGreaterThan(text.indexOf("他存的时候写的备注"));
+    expect(text.indexOf("他在这条上划的线")).toBeLessThan(text.indexOf("概括："));
+
+    const many = askMaterialText(material({ notes: Array.from({ length: 30 }, (_, i) => ({ quote: "", body: `第 ${i + 1} 条想法${"，说得很长".repeat(20)}`, at: null })) }));
+    expect(many).toContain("（一共 30 条，这里是最近的");
+    expect(many).toContain("第 30 条想法");
+    expect(many).not.toContain("第 1 条想法");
+    // 笔记再多也挤不掉内容本身的概括
+    expect(many).toContain("概括：四步");
+  });
+
+  it("says which entries the user wrote himself and carries his own words ahead of the summary", () => {
+    const text = askMaterialText(material({ origin: "自己写的", ownText: "定投别停，跌的时候更要买。\n先存够半年的应急金。" }));
+    expect(text.split("\n")[0]).toContain("（自己写的，2026-11-20 写的）〔他自己写的〕");
+    expect(text).toContain("他写的原文：\n定投别停，跌的时候更要买。\n先存够半年的应急金。");
+    expect(text.indexOf("他写的原文")).toBeLessThan(text.indexOf("概括："));
+    // 长的只带开头，并说明；别人的内容不带这一节
+    expect(askMaterialText(material({ ownText: "想".repeat(5000) }))).toContain("他写的原文（长，这里是开头的 1800 字）：");
+    expect(askMaterialText(material())).not.toContain("他自己写的");
+    expect(ASK_SYSTEM).toContain("标了「他自己写的」的那几条");
+  });
+
   it("marks what earlier answers cited, leaves out what the item does not have, and stays under the cap", () => {
     const m = material({ carried: true, note: "", tags: [], snippet: null });
     const bare = askMaterialText({ ...m, understanding: { ...m.understanding, card: [], quotes: [], gaps: [], outline: [] } });
     expect(bare).toContain("〔之前的回答引用过〕");
-    for (const absent of ["备注", "标签", "原话", "原文里提到", "没读全", "结构"]) expect(bare).not.toContain(absent);
+    for (const absent of ["备注", "划的线", "标签", "原话", "原文里提到", "没读全", "结构"]) expect(bare).not.toContain(absent);
     const long = askMaterialText({ ...m, understanding: { ...m.understanding, summary: "长".repeat(5000) } });
     expect(long.length).toBeLessThanOrEqual(3201);
     expect(long.endsWith("…")).toBe(true);

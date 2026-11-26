@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { ImageCarousel } from "@/components/image-carousel";
+import { ItemNotes, type NotesApi } from "@/components/item-notes";
 import { LocalDate } from "@/components/local-date";
 import { MindMap } from "@/components/mind-map";
 import { RelatedItems } from "@/components/related-items";
@@ -14,11 +15,14 @@ import { POST_STAT_KEYS, formatCount, postNotes, statLabel, type ItemMedia } fro
 import { audioOf, displayTitle, getItem, imagesOf, inProgress, isStuck, itemFileUrl, sheetsOf, sourceLabel, videoOf } from "@/lib/vault/store";
 import { creatorOfItem, creatorTitle } from "@/lib/vault/creator-store";
 import { VaultError } from "@/lib/vault/errors";
+import { listNotesOfItem } from "@/lib/vault/note-store";
+import type { ItemNote } from "@/lib/vault/notes";
 import { findRelated, type Related } from "@/lib/vault/related";
 import { CATEGORY_LABEL, CONTENT_TYPE_INFO, ENTITY_TYPE_INFO } from "@/lib/vault/taxonomy";
 import { hasTraceMaterial } from "@/lib/vault/trace";
 import { getTrace, traceRunning, type ItemTrace } from "@/lib/vault/trace-store";
-import { DeleteButton, MakeMapButton, MetaForm, PasteTextForm, ReprocessButton } from "./item-actions";
+import { DeleteButton, EditOwnForm, MakeMapButton, MarkOwnButton, MetaForm, PasteTextForm, ReprocessButton } from "./item-actions";
+import { addNoteAction, editNoteAction, removeNoteAction } from "../../notes/actions";
 import { TraceSection } from "./trace-section";
 
 type Props = { params: Promise<{ id: string }> };
@@ -34,6 +38,8 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { item } = await loadItem((await params).id);
   return { title: item ? displayTitle(item) : "不在了" };
 }
+
+const notesApi: NotesApi = { add: addNoteAction, edit: editNoteAction, remove: removeNoteAction };
 
 const STATUS_TEXT = { uploading: "等文件传上来…", fetching: "正在读取内容、转存文件…", analyzing: "正在看画面、转写、理解内容…" } as const;
 
@@ -74,6 +80,15 @@ export default async function ItemPage({ params }: Props) {
     if (!(e instanceof VaultError)) throw e;
     traceUnavailable = e.message;
   }
+  // 划线和批注的表可能还没建（迁移没推）：只有那一块说明原因
+  let itemNotes: ItemNote[] = [];
+  let notesUnavailable: string | null = null;
+  try {
+    itemNotes = await listNotesOfItem(db, user.id, id);
+  } catch (e) {
+    if (!(e instanceof VaultError)) throw e;
+    notesUnavailable = e.message;
+  }
   const video = videoOf(item);
   const audio = audioOf(item);
   const images = imagesOf(item);
@@ -103,7 +118,8 @@ export default async function ItemPage({ params }: Props) {
   const hasOriginal = !!(video || audio || images.length > 0 || body);
 
   return (
-    <div className={hasOriginal ? "grid gap-8 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]" : "mx-auto max-w-2xl"}>
+    // data-notes-scope：这一块里选中的字能划线（components/item-notes.tsx）
+    <div data-notes-scope="" className={hasOriginal ? "grid gap-8 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]" : "mx-auto max-w-2xl"}>
       <AutoRefresh active={busy || (!!trace && traceRunning(trace))} />
 
       {/* 左栏：原内容 */}
@@ -259,7 +275,7 @@ export default async function ItemPage({ params }: Props) {
               <Section title="内容要点">
                 <ol className="flex flex-col gap-2.5">
                   {u.points.map((p, i) => (
-                    <li key={i} className="grid grid-cols-[3rem_minmax(0,1fr)] gap-2 text-sm leading-relaxed">
+                    <li key={i} data-at={p.at ?? undefined} className="grid grid-cols-[3rem_minmax(0,1fr)] gap-2 text-sm leading-relaxed">
                       <span className="pt-px font-mono text-xs text-ink-faint">{p.at !== null ? <SeekTime at={p.at} label={clock(p.at)} enabled={canSeek} /> : String(i + 1).padStart(2, "0")}</span>
                       <span>{p.text}</span>
                     </li>
@@ -301,6 +317,9 @@ export default async function ItemPage({ params }: Props) {
 
         <RelatedItems related={related} />
 
+        {/* 换了一条内容就整个重来（不带着上一条没写完的批注） */}
+        <ItemNotes key={item.id} itemId={item.id} initial={itemNotes} unavailable={notesUnavailable} canSeek={canSeek} api={notesApi} />
+
         <MetaForm id={item.id} note={item.note} tags={item.tags} />
 
         {transcript.length > 0 && (
@@ -308,7 +327,7 @@ export default async function ItemPage({ params }: Props) {
             <summary className="label cursor-pointer hover:text-ink">说的话（{item.post.transcriptFrom === "captions" ? "平台字幕" : "语音识别，可能有错字"}）</summary>
             <div className="mt-3 flex flex-col gap-2 text-sm leading-relaxed text-ink-secondary">
               {transcript.map((line, i) => (
-                <p key={i} className="grid grid-cols-[3rem_minmax(0,1fr)] gap-2">
+                <p key={i} data-at={line.at ?? undefined} className="grid grid-cols-[3rem_minmax(0,1fr)] gap-2">
                   <span className="pt-px font-mono text-xs text-ink-faint">{line.at !== null ? <SeekTime at={line.at} label={clock(line.at)} enabled={canSeek} /> : ""}</span>
                   <span>{line.text}</span>
                 </p>
@@ -328,9 +347,11 @@ export default async function ItemPage({ params }: Props) {
             <p className="mt-3 text-sm leading-relaxed whitespace-pre-wrap text-ink-secondary">{body}</p>
           </details>
         )}
+        {!busy && !failed && item.source === "own" && item.userText && <EditOwnForm key={item.startedAt} id={item.id} text={item.userText} />}
         {!busy && !failed && (
           <footer className="flex flex-wrap items-center gap-2 border-t border-edge pt-5">
             <ReprocessButton id={item.id} from="analyze" label="重新分析" />
+            {(item.source === "text" || item.source === "own") && <MarkOwnButton id={item.id} own={item.source !== "own"} />}
             {item.source === "link" && <ReprocessButton id={item.id} from="fetch" label="重新读取链接" />}
             {u && <MakeMapButton id={item.id} />}
             <DeleteButton id={item.id} />

@@ -21,7 +21,7 @@ export default async function AskPage({ searchParams }: { searchParams: Promise<
     return (
       <div className="mx-auto flex max-w-3xl flex-col gap-3">
         <h1 className="text-xl font-semibold tracking-tight">问</h1>
-        <p role="alert" className="rounded-md bg-warning-soft px-3.5 py-3 text-sm leading-relaxed text-warning">
+        <p role="alert" className="rounded-md bg-warning-soft px-3.5 py-3 text-sm leading-relaxed break-words text-warning">
           {e.message}
         </p>
       </div>

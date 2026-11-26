@@ -13,6 +13,8 @@ export type IndexInput = {
   author: string;
   url: string | null;
   note: string;
+  /** 他在这条内容上划的线、写的批注拼成的文字（notes.ts 的 notesIndexText）；没有是空 */
+  annotations?: string;
   post: Pick<PostSnapshot, "text" | "hashtags">;
   userText: string | null;
   transcript: string | null;
@@ -39,6 +41,7 @@ export function buildSearchText(input: IndexInput): string {
     input.author,
     host(input.url),
     input.note,
+    input.annotations ?? "",
     u ? `${CONTENT_TYPE_INFO[u.contentType].label} ${CATEGORY_LABEL[u.category]}` : "",
     input.tags.join(" "),
     input.post.hashtags.join(" "),
@@ -73,8 +76,10 @@ export function buildEmbeddingText(input: IndexInput): string {
         u.points.map((p) => p.text).join("\n"),
         u.card.map((f) => `${f.label}：${f.value}`).join("\n"),
         input.note,
+        // 他自己划的、写的排在最后：向量文字有 8000 字的上限，挤掉的不该是内容本身的概括
+        input.annotations ?? "",
       ]
-    : [input.title, input.note, input.userText ?? input.post.text, input.transcript ?? ""];
+    : [input.title, input.note, input.annotations ?? "", input.userText ?? input.post.text, input.transcript ?? ""];
   return parts
     .map((p) => p.trim())
     .filter(Boolean)

@@ -42,6 +42,22 @@ export default async function StatusPage() {
           </li>
         ))}
       </ul>
+
+      <section className="flex flex-col gap-2.5" aria-label="导出">
+        <h2 className="text-[15px] font-medium">导出</h2>
+        <p className="text-sm leading-relaxed text-ink-secondary">
+          把存在 Vault 里的东西打成一个 zip 下载下来：每条内容一个 Markdown 文件（不用 Vault 也能读，能直接放进 Obsidian 这类笔记软件），加上自己建的导图、问过的问题、日记，和每张表完整的数据（JSON）。
+        </p>
+        <p className="text-sm leading-relaxed text-ink-muted">
+          不包含图片、视频、音频这些文件本身，只有它们的路径：文件在 Supabase 的存储桶里，太大的视频原片在这台服务器的磁盘上，要另外备份。包里的 README.md 写着这次导出了什么、没导出成的是哪些。内容多的时候要等一会儿。
+        </p>
+        <div>
+          {/* 普通的下载链接（不是 next/link）：接口直接回一个 zip */}
+          <a href="/api/v1/export" download className="btn btn-primary">
+            导出整个收藏库
+          </a>
+        </div>
+      </section>
     </div>
   );
 }

@@ -151,6 +151,47 @@ describe("askVault — a new question", () => {
     expect(detail.ask.costUsd).toBe(row.cost_usd);
   });
 
+  it("tells the model which entries are the user's own writing, with his words", async () => {
+    setup({ items: [item(ITEM_A, "30 岁开始理财晚吗"), item(ITEM_B, "定投的打算", { source: "own", platform: null, author: null, kind: "text", user_text: "定投别停，跌的时候更要买" })] });
+    found = [ITEM_A, ITEM_B];
+    reply("<answer>你写过定投别停 [S2]</answer>");
+    await askVault(session, { question: "我对定投是怎么想的" });
+    expect(prompt()).toContain("[S2] 定投的打算（自己写的，");
+    expect(prompt()).toContain("〔他自己写的〕");
+    expect(prompt()).toContain("他写的原文：\n定投别停，跌的时候更要买");
+    // 存下来的别人的内容不带这些
+    expect(prompt().split("[S2]")[0]).not.toContain("他自己写的");
+  });
+
+  it("brings along what the user highlighted and wrote on the items it found", async () => {
+    setup({ items: [item(ITEM_A, "30 岁开始理财晚吗"), item(ITEM_B, "指数基金定投")] });
+    fake.store.item_notes = [
+      { id: "n1", user_id: USER, item_id: ITEM_A, quote: "应急金放货币基金", body: "我放余额宝", at: 72, created_at: "2026-11-21T00:00:00.000Z", updated_at: "t" },
+      { id: "n2", user_id: OTHER, item_id: ITEM_B, quote: "别人划的", body: "", at: null, created_at: "2026-11-21T00:00:00.000Z", updated_at: "t" },
+    ];
+    found = [ITEM_A, ITEM_B];
+    reply("<answer>你当时写的是放余额宝 [S1]</answer>");
+    await askVault(session, { question: "我当时应急金怎么打算的" });
+    expect(prompt()).toContain("他在这条上划的线、写的批注：\n- 划线（1:12）：「应急金放货币基金」——他写的：我放余额宝");
+    expect(prompt()).not.toContain("别人划的");
+  });
+
+  it("answers without the notes when their table is not there yet, and says so when reading them fails", async () => {
+    setup({}, { failSelect: { item_notes: { message: "Could not find the table 'public.item_notes' in the schema cache", code: "PGRST205" } } });
+    found = [ITEM_A];
+    reply("<answer>有 [S1]</answer>");
+    let answer = (await askVault(session, { question: "一" })).ask.chat[1];
+    expect(answer.role === "assistant" && answer.notes.some((n) => n.includes("批注"))).toBe(false);
+
+    setup({}, { failSelect: { item_notes: { message: "connection reset" } } });
+    found = [ITEM_A];
+    reply("<answer>有 [S1]</answer>");
+    answer = (await askVault(session, { question: "二" })).ask.chat[1];
+    expect(answer.text).toBe("有[1]");
+    expect(answer.role === "assistant" && answer.notes.some((n) => n.includes("没读到你在这些内容上划的线和写的批注"))).toBe(true);
+    expect(prompt()).toContain("没读到你在这些内容上划的线和写的批注");
+  });
+
   it("says so without calling the model when the search finds nothing", async () => {
     const detail = await askVault(session, { question: "火星上怎么种土豆" });
     expect(askClaude).not.toHaveBeenCalled();

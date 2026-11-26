@@ -7,6 +7,8 @@ import { ASK_SYSTEM, buildAskPrompt, parseAskReply, type AskMaterial } from "./a
 import { ASK_CHAT_KEEP, ASK_TITLE_MAX, asksReady, createAsk, deleteAsk, getAsk, listAsks, updateAsk, type Ask, type AskMessage, type AskSummary } from "./ask-store";
 import { VaultError } from "./errors";
 import { isUuid } from "./map-nodes";
+import { notesOfItems } from "./note-store";
+import type { ItemNote } from "./notes";
 import { searchItems, type SearchHit, type Snippet } from "./search";
 import { displayTitle, getItemsInOrder, sourceLabel, type Item } from "./store";
 
@@ -94,6 +96,15 @@ async function gatherMaterials(session: Session, ask: Ask | null, question: stri
   const unready = foundAll.filter((i) => !usable(i)).length;
   if (unready > 0) notes.push(`找到的内容里有 ${unready} 条还没处理好（或处理失败），这次没带上`);
 
+  // 他在这些内容上划的线、写的批注一起带上（表还没建就是没有）。读不到不拦着回答，但要说
+  let notesOf = new Map<string, ItemNote[]>();
+  try {
+    notesOf = (await notesOfItems(db, user.id, [...carried, ...found].map((i) => i.id))).byItem;
+  } catch (e) {
+    console.error(`问 Vault：读笔记出错 user=${user.id}: ${e instanceof Error ? e.message : String(e)}`);
+    notes.push("这次没读到你在这些内容上划的线和写的批注（查询出错），回答里不会有它们");
+  }
+
   const materials = [...carried.map((item) => ({ item, carried: true })), ...found.map((item) => ({ item, carried: false }))].map(
     ({ item, carried: isCarried }, i): AskMaterial => ({
       label: `S${i + 1}`,
@@ -103,6 +114,8 @@ async function gatherMaterials(session: Session, ask: Ask | null, question: stri
       savedAt: item.createdAt,
       note: item.note,
       tags: item.tags,
+      notes: notesOf.get(item.id) ?? [],
+      ownText: item.source === "own" ? (item.userText ?? "") : "",
       carried: isCarried,
       understanding: item.understanding!,
       snippet: snippets.get(item.id) ?? null,
