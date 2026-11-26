@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { entitiesOfItem } from "@/lib/graph/data";
-import { removeItem, VaultError } from "@/lib/vault/service";
+import { markOwn, removeItem, VaultError } from "@/lib/vault/service";
 import { getItem, updateItemMeta } from "@/lib/vault/store";
 import { parseTagInput } from "@/lib/vault/taxonomy";
 import { jsonBody, str, withSession } from "../../respond";
@@ -18,7 +18,10 @@ export async function GET(request: Request, { params }: Ctx) {
   });
 }
 
-/** 改备注 / 标签：`{ note?: string, tags?: string[] | "逗号分隔" }`。 */
+/**
+ * 改备注 / 标签：`{ note?: string, tags?: string[] | "逗号分隔" }`。
+ * `own: true / false` = 把一条文字内容标成自己写的 / 改回不是自己写的（会重新整理一遍；链接和上传的文件回 400）。
+ */
 export async function PATCH(request: Request, { params }: Ctx) {
   return withSession(request, async (session) => {
     const { id } = await params;
@@ -27,6 +30,7 @@ export async function PATCH(request: Request, { params }: Ctx) {
     const body = await jsonBody(request);
     const tags = Array.isArray(body.tags) ? body.tags.filter((t): t is string => typeof t === "string") : typeof body.tags === "string" ? parseTagInput(body.tags) : item.tags;
     await updateItemMeta(session.db, session.user.id, id, { note: typeof body.note === "string" ? str(body.note) : item.note, tags });
+    if (typeof body.own === "boolean") await markOwn(session, id, body.own);
     return NextResponse.json({ ok: true });
   });
 }

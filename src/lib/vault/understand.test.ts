@@ -196,6 +196,18 @@ describe("buildUnderstandPrompt", () => {
     expect(gaps.some((g) => g.startsWith("正文太长，只读了前 60,000 个字"))).toBe(true);
   });
 
+  it("treats the collector's own writing as his words, not as someone else's content to paraphrase", () => {
+    const own = buildUnderstandPrompt(input({ source: "own", platform: null, kind: "text", url: null, author: "", transcript: null, userText: "定投别停，跌的时候更要买" })).prompt;
+    expect(own).toContain("来源：收藏者自己写的");
+    expect(own).toContain("这一条是收藏者自己写的");
+    expect(own).toContain("不要把他本人算成一个实体");
+    expect(own).toContain("<正文（收藏者自己写的）>\n定投别停，跌的时候更要买\n</正文>");
+    // 贴进来的别人的文字不带这一段
+    const pasted = buildUnderstandPrompt(input({ source: "text", platform: null, kind: "text", url: null, transcript: null, userText: "定投别停" })).prompt;
+    expect(pasted).not.toContain("收藏者自己写的");
+    expect(pasted).toContain("<正文>\n定投别停\n</正文>");
+  });
+
   it("carries top comments, each cut short; Reddit ones get more room because the answers live there", () => {
     const long = "答".repeat(900);
     const withComments = (platform: UnderstandInput["platform"]) => buildUnderstandPrompt(input({ platform, post: post({ topComments: [{ text: long, likes: 266 }, { text: "短的\n一条", likes: null }] }) })).prompt;

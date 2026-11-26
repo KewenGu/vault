@@ -11,7 +11,7 @@ import { captureFields, classifyCapture, fileDedupeKey, planUpload, textDedupeKe
 import { readPost } from "@/lib/sources/types";
 import { readCapture } from "./page-capture";
 import { findRelated, type Related } from "./related";
-import { BUCKET, TEXT_MAX, createItem, deleteItem, getItem, inProgress, itemDir, linkDedupeKey, restartItem } from "./store";
+import { BUCKET, TEXT_MAX, createItem, deleteItem, getItem, inProgress, itemDir, linkDedupeKey, restartItem, setItemOwn } from "./store";
 import { hasTraceMaterial } from "./trace";
 import { beginTrace, endTrace, getTrace, traceRunning, type ItemTrace } from "./trace-store";
 
@@ -35,6 +35,8 @@ async function startProcessing(itemId: string): Promise<void> {
 }
 
 export type Saved = { id: string; existing: boolean };
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * 存一段粘贴的内容：链接（含 App 分享出来的那段话）或文字。已经存过同一条的回到那条，不重复处理。
@@ -63,6 +65,53 @@ export async function saveInput(session: Session, rawInput: string, rawNote = ""
   }
   if (!saved.existing) await startProcessing(saved.id);
   return saved;
+}
+
+/** 数据库还不认「自己写的」这种来源（迁移没推）：检查约束拦下来的那种错，换成一句说得清该做什么的话 */
+function ownNotMigrated(e: unknown): VaultError | null {
+  return e instanceof Error && e.message.includes("items_source_check") ? new VaultError("数据库还不认「自己写的」这种内容：把迁移 supabase/migrations/20261126000004_own_writing.sql 推到 Supabase", 503) : null;
+}
+
+/**
+ * 存一条自己写的：一个想法、一段笔记、读完什么之后的感想。和存进来的内容一样是收藏库里的一条（照常理解、归类、进搜索和图谱），
+ * 只是来源标成「自己写的」：整理时不把他的话写成转述，页面上和「问」的材料里都写明是他自己写的。
+ * 写了什么就存什么：里面带链接也不当链接读。不去重——同一句话写两次就是两条（改过之后的那条不该挡住新写的）。
+ */
+export async function saveOwn(session: Session, rawText: string, rawNote = ""): Promise<Saved> {
+  const text = rawText.trim();
+  if (!text) throw new VaultError("还没写东西");
+  if (text.length > TEXT_MAX) throw new VaultError(`太长了（${text.length.toLocaleString("en-US")} 字），一条最多 ${TEXT_MAX.toLocaleString("en-US")} 字`);
+  const { user, db } = session;
+  let saved: Saved;
+  try {
+    saved = await createItem(db, user.id, { source: "own", dedupeKey: `own:${crypto.randomUUID()}`, status: "fetching", kind: "text", userText: text, note: rawNote });
+  } catch (e) {
+    throw ownNotMigrated(e) ?? e;
+  }
+  await startProcessing(saved.id);
+  return saved;
+}
+
+/**
+ * 把一条文字内容标成自己写的，或者改回「不是我写的」（以前贴进来的自己的笔记、存的时候忘了勾）。
+ * 整理的写法跟着变，所以改完重新整理一遍（一次理解的花费）。链接和上传的文件不能标。
+ */
+export async function markOwn(session: Session, id: string, own: boolean): Promise<void> {
+  const { user, db } = session;
+  const item = UUID.test(id) ? await getItem(db, user.id, id) : null;
+  if (!item) throw new VaultError("这条内容不在了", 404);
+  if (item.source !== "text" && item.source !== "own") throw new VaultError("只有文字内容能标成自己写的");
+  if ((item.source === "own") === own) return;
+  if (inProgress(item)) throw new VaultError("这条正在处理中，等它结束再试", 409);
+  let changed: boolean;
+  try {
+    changed = await setItemOwn(db, user.id, id, own);
+  } catch (e) {
+    throw ownNotMigrated(e) ?? e;
+  }
+  if (!changed) throw new VaultError("这条内容不在了", 404);
+  await restartItem(db, user.id, id, "analyze");
+  await startProcessing(id);
 }
 
 /**
@@ -172,8 +221,6 @@ export async function removeItem(session: Session, id: string): Promise<void> {
     throw e;
   }
 }
-
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** 这条内容的溯源结果（还没溯源过是 null）。 */
 export async function getItemTrace(session: Session, id: string): Promise<ItemTrace | null> {

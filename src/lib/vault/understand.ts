@@ -71,7 +71,8 @@ export type OutputLanguage = "zh" | "en";
 const LANGUAGE_NAME: Record<OutputLanguage, string> = { zh: "简体中文", en: "English" };
 
 export type UnderstandInput = {
-  source: "link" | "upload" | "text";
+  /** own = 收藏者自己写的（提示词不一样：不把他的话写成转述、不替他展开） */
+  source: "link" | "upload" | "text" | "own";
   platform: SourcePlatform | null;
   kind: PostKind | null;
   title: string;
@@ -145,6 +146,14 @@ ${typeList}
 实体类型：${entityList}
 关系：${relationList}`;
 
+/** 自己写的内容多带的这一段：别的要求（只写内容里有的、格式）和存下来的内容一样 */
+const OWN_WRITING = `这一条是收藏者自己写的，整理它是为了让他以后搜得到、和收藏库里别的内容连得上，不是替他改写。所以：
+- 概括和要点直接写他写了什么（「打算每月定投 2000，先存够半年的应急金」），不要写成「作者认为」「文中提到」「用户说」。
+- 不替他展开、润色、补理由、下结论；他没写的不写。他写得短，概括就短：一两句话的想法，概括一句就够，要点和大纲都不写。
+- 整条都是他自己的话，<quote> 不写。
+- 标题用他的话起，让他一眼认得出这是哪个想法。
+- 实体只抽他提到的人、地方、东西；不要把他本人算成一个实体。`;
+
 const fmt = (n: number | null) => formatCount(n);
 
 /** 正文最多带这么多字（一篇长文约 2–3 万字）；口播 / 字幕带这么多（两小时的口播约 10 万字符）。超了只带开头，并在读取情况里说明。 */
@@ -160,7 +169,9 @@ export function buildUnderstandPrompt(input: UnderstandInput): { prompt: string;
       ? `${SOURCE_PLATFORM_LABEL[input.platform]}${input.kind ? `（${POST_KIND_LABEL[input.kind]}）` : ""}的链接`
       : input.source === "upload"
         ? `用户上传的${input.kind ? POST_KIND_LABEL[input.kind].replace("图文", "图片 / 截图") : "文件"}`
-        : "用户自己贴的文字";
+        : input.source === "own"
+          ? "收藏者自己写的（他自己的想法、笔记，不是存下来的别人的内容）"
+          : "用户自己贴的文字";
   lines.push(`来源：${origin}`);
   if (input.url) lines.push(`链接：${input.url}`);
   if (input.author) lines.push(`作者：${input.author}`);
@@ -174,11 +185,12 @@ export function buildUnderstandPrompt(input: UnderstandInput): { prompt: string;
 
   const gaps = [...postNotes(post), ...input.gaps];
   const parts: string[] = [lines.join("\n")];
+  if (input.source === "own") parts.push(OWN_WRITING);
   if (input.note.trim()) parts.push(`<收藏者的备注>\n${input.note.trim()}\n</收藏者的备注>\n（这是他存这条的原因，整理时优先留下和它有关的信息。）`);
   if (input.title) parts.push(`<原标题>\n${input.title}\n</原标题>`);
   const body = input.userText?.trim() || post.text;
   if (body) {
-    const label = input.source === "link" && input.userText?.trim() ? "正文（链接没读到，这是用户手动贴的）" : "正文";
+    const label = input.source === "link" && input.userText?.trim() ? "正文（链接没读到，这是用户手动贴的）" : input.source === "own" ? "正文（收藏者自己写的）" : "正文";
     parts.push(`<${label}>\n${body.slice(0, BODY_MAX)}\n</正文>`);
     if (body.length > BODY_MAX) gaps.push(`正文太长，只读了前 ${BODY_MAX.toLocaleString("en-US")} 个字（约全长的 ${Math.round((BODY_MAX / body.length) * 100)}%）`);
   }

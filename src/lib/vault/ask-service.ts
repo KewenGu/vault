@@ -115,6 +115,7 @@ async function gatherMaterials(session: Session, ask: Ask | null, question: stri
       note: item.note,
       tags: item.tags,
       notes: notesOf.get(item.id) ?? [],
+      ownText: item.source === "own" ? (item.userText ?? "") : "",
       carried: isCarried,
       understanding: item.understanding!,
       snippet: snippets.get(item.id) ?? null,

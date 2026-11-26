@@ -160,7 +160,7 @@ export function hasTraceMaterial(item: Pick<Item, "userText" | "post" | "transcr
 export function traceInputOf(item: Item, language: OutputLanguage, now: Date): TraceInput {
   const u = item.understanding;
   return {
-    origin: item.source === "link" && item.platform ? SOURCE_PLATFORM_LABEL[item.platform] : item.source === "upload" ? "用户上传的文件" : "用户自己贴的文字",
+    origin: item.source === "link" && item.platform ? SOURCE_PLATFORM_LABEL[item.platform] : item.source === "upload" ? "用户上传的文件" : item.source === "own" ? "用户自己写的文字" : "用户自己贴的文字",
     title: u?.title || item.title,
     author: item.author,
     url: item.url,

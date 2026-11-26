@@ -15,7 +15,8 @@ import { readUnderstanding, type Understanding } from "./understand";
 
 type Db = SupabaseClient<Database>;
 
-export const ITEM_SOURCES = ["link", "upload", "text"] as const;
+/** own = 自己写的（一个想法、一段笔记）；text = 贴进来的别人的文字。两种都是「原文就是 user_text」 */
+export const ITEM_SOURCES = ["link", "upload", "text", "own"] as const;
 export type ItemSource = (typeof ITEM_SOURCES)[number];
 export const ITEM_STATUSES = ["uploading", "fetching", "analyzing", "ready", "failed"] as const;
 export type ItemStatus = (typeof ITEM_STATUSES)[number];
@@ -114,13 +115,13 @@ export function toItem(row: Row): Item {
 export function displayTitle(item: Pick<Item, "title" | "source" | "platform" | "kind" | "userText">): string {
   if (item.title) return item.title;
   if (item.source === "link" && item.platform) return fallbackTitle(item.platform, item.kind);
-  if (item.source === "text") return Array.from((item.userText ?? "").trim().split("\n")[0] ?? "").slice(0, 40).join("") || "文字";
+  if (item.source === "text" || item.source === "own") return Array.from((item.userText ?? "").trim().split("\n")[0] ?? "").slice(0, 40).join("") || (item.source === "own" ? "自己写的" : "文字");
   return item.kind === "video" ? "上传的视频" : item.kind === "audio" ? "上传的音频" : item.kind === "image" ? "上传的图片" : "上传的文件";
 }
 
-/** 来源一栏写什么：平台名，或「上传」「文字」。 */
+/** 来源一栏写什么：平台名，或「上传」「文字」「自己写的」。 */
 export function sourceLabel(item: Pick<Item, "source" | "platform">): string {
-  return item.source === "link" && item.platform ? SOURCE_PLATFORM_LABEL[item.platform] : item.source === "upload" ? "上传" : "文字";
+  return item.source === "link" && item.platform ? SOURCE_PLATFORM_LABEL[item.platform] : item.source === "upload" ? "上传" : item.source === "own" ? "自己写的" : "文字";
 }
 
 /** 页面上读一个转存文件的地址（/media/<内容>/<文件>）。v 跟着每一轮处理变：重新读取换了文件，地址也跟着换。 */
@@ -259,6 +260,13 @@ export async function restartItem(db: Db, userId: string, id: string, from: "fet
     .select("id");
   if (error) throw new Error(`更新失败: ${error.message}`);
   if (!data?.length) throw new Error("这条内容不在了，刷新看看");
+}
+
+/** 一条文字内容是不是自己写的（source 在 text 和 own 之间换）。链接、上传的文件不动；没改到返回 false。 */
+export async function setItemOwn(db: Db, userId: string, id: string, own: boolean): Promise<boolean> {
+  const { data, error } = await db.from("items").update({ source: own ? "own" : "text" }).eq("id", id).eq("user_id", userId).in("source", ["text", "own"]).select("id");
+  if (error) throw new Error(`更新失败: ${error.message}`);
+  return (data?.length ?? 0) > 0;
 }
 
 /** 用户改备注和标签。标签和模型提的不一样时锁住（重新分析不再覆盖）。 */

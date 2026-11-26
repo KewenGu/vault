@@ -60,6 +60,10 @@ describe("display helpers", () => {
     expect(displayTitle(row({ source: "upload", platform: null, kind: "audio" }))).toBe("上传的音频");
     expect(sourceLabel(row())).toBe("抖音");
     expect(sourceLabel(row({ source: "upload", platform: null }))).toBe("上传");
+    // 自己写的：没起标题时用他写的第一行，来源写明是自己写的
+    expect(displayTitle(row({ source: "own", platform: null, kind: "text", user_text: "定投别停\n跌的时候更要买" }))).toBe("定投别停");
+    expect(displayTitle(row({ source: "own", platform: null, kind: "text", user_text: "" }))).toBe("自己写的");
+    expect(sourceLabel(row({ source: "own", platform: null }))).toBe("自己写的");
     expect(linkDedupeKey({ platform: "youtube", externalId: "abc" })).toBe("youtube:abc");
   });
 

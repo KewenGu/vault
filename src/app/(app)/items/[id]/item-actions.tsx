@@ -1,5 +1,5 @@
 "use client";
-import { deleteAction, reprocessAction, saveAction, traceAction, updateMetaAction } from "@/app/(app)/actions";
+import { deleteAction, markOwnAction, reprocessAction, saveAction, traceAction, updateMetaAction } from "@/app/(app)/actions";
 import { createMapFromItemAction } from "@/app/(app)/maps/actions";
 import { ActionForm } from "@/components/action-form";
 
@@ -62,6 +62,51 @@ export function PasteTextForm({ id }: { id: string }) {
               {pending ? "开始中…" : "按贴的文字理解"}
             </button>
           </div>
+        </>
+      )}
+    </ActionForm>
+  );
+}
+
+/** 自己写的那一条：改写的内容。改完重新整理一遍（标题、概括、标签、图谱跟着变；自己改过的标签不动）。 */
+export function EditOwnForm({ id, text }: { id: string; text: string }) {
+  return (
+    <details>
+      <summary className="label cursor-pointer hover:text-ink">改我写的</summary>
+      <ActionForm action={reprocessAction} className="mt-3 flex flex-col gap-2">
+        {(pending) => (
+          <>
+            <input type="hidden" name="id" value={id} />
+            <input type="hidden" name="from" value="analyze" />
+            <textarea name="text" rows={8} required defaultValue={text} aria-label="我写的内容" className="field resize-y text-[15px] leading-relaxed" />
+            <div className="flex flex-wrap items-center gap-3">
+              <button className="btn" disabled={pending}>
+                {pending ? "开始中…" : "保存并重新整理"}
+              </button>
+              <span className="text-xs text-ink-faint">标题、概括和标签会跟着重新整理一遍，按一次理解的花费算。</span>
+            </div>
+          </>
+        )}
+      </ActionForm>
+    </details>
+  );
+}
+
+/** 一条文字内容是不是自己写的：存的时候没勾的在这里补上，勾错了的改回去。整理的写法不一样，所以改完重新整理一遍。 */
+export function MarkOwnButton({ id, own }: { id: string; own: boolean }) {
+  return (
+    <ActionForm action={markOwnAction}>
+      {(pending) => (
+        <>
+          <input type="hidden" name="id" value={id} />
+          <input type="hidden" name="own" value={own ? "1" : "0"} />
+          <button
+            className="btn"
+            disabled={pending}
+            title={own ? "标成自己写的：整理时不把它当成别人的内容，「问」的时候也知道这是你自己的话。会重新整理一遍" : "改回「不是我写的」：当成存下来的别人的文字。会重新整理一遍"}
+          >
+            {pending ? "开始中…" : own ? "这是我自己写的" : "不是我写的"}
+          </button>
         </>
       )}
     </ActionForm>

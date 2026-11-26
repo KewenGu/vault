@@ -21,7 +21,7 @@ import { findRelated, type Related } from "@/lib/vault/related";
 import { CATEGORY_LABEL, CONTENT_TYPE_INFO, ENTITY_TYPE_INFO } from "@/lib/vault/taxonomy";
 import { hasTraceMaterial } from "@/lib/vault/trace";
 import { getTrace, traceRunning, type ItemTrace } from "@/lib/vault/trace-store";
-import { DeleteButton, MakeMapButton, MetaForm, PasteTextForm, ReprocessButton } from "./item-actions";
+import { DeleteButton, EditOwnForm, MakeMapButton, MarkOwnButton, MetaForm, PasteTextForm, ReprocessButton } from "./item-actions";
 import { addNoteAction, editNoteAction, removeNoteAction } from "../../notes/actions";
 import { TraceSection } from "./trace-section";
 
@@ -347,9 +347,11 @@ export default async function ItemPage({ params }: Props) {
             <p className="mt-3 text-sm leading-relaxed whitespace-pre-wrap text-ink-secondary">{body}</p>
           </details>
         )}
+        {!busy && !failed && item.source === "own" && item.userText && <EditOwnForm key={item.startedAt} id={item.id} text={item.userText} />}
         {!busy && !failed && (
           <footer className="flex flex-wrap items-center gap-2 border-t border-edge pt-5">
             <ReprocessButton id={item.id} from="analyze" label="重新分析" />
+            {(item.source === "text" || item.source === "own") && <MarkOwnButton id={item.id} own={item.source !== "own"} />}
             {item.source === "link" && <ReprocessButton id={item.id} from="fetch" label="重新读取链接" />}
             {u && <MakeMapButton id={item.id} />}
             <DeleteButton id={item.id} />
