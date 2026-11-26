@@ -81,6 +81,18 @@ type MapRow = {
   updated_at: string;
 };
 
+type AskRow = {
+  id: string;
+  user_id: string;
+  title: string;
+  chat: Json;
+  sources: string[];
+  usage: Json;
+  cost_usd: number;
+  created_at: string;
+  updated_at: string;
+};
+
 type JournalEntryRow = {
   id: string;
   user_id: string;
@@ -185,6 +197,7 @@ export type Database = {
       entity_edges: Table<EntityEdgeRow, "item_id" | "src_id" | "dst_id" | "relation" | "user_id">;
       item_traces: Table<ItemTraceRow, "item_id" | "user_id">;
       maps: Table<MapRow, "user_id">;
+      asks: Table<AskRow, "user_id">;
       journal_entries: Table<JournalEntryRow, "user_id" | "day">;
       journal_media: Table<JournalMediaRow, "user_id" | "entry_id" | "kind" | "path">;
       journal_stickers: Table<JournalStickerRow, "user_id" | "path">;
@@ -226,6 +239,7 @@ export type ItemRecord = ItemRow;
 export type EntityRecord = EntityRow;
 export type ItemTraceRecord = ItemTraceRow;
 export type MapRecord = MapRow;
+export type AskRecord = AskRow;
 export type JournalEntryRecord = JournalEntryRow;
 export type JournalMediaRecord = JournalMediaRow;
 export type CreatorRecord = CreatorRow;

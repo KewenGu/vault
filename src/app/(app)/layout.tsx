@@ -19,6 +19,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           <Link href="/" prefetch={false} className="hover:text-ink">
             收藏库
           </Link>
+          <Link href="/ask" prefetch={false} className="hover:text-ink">
+            问
+          </Link>
           <Link href="/creators" prefetch={false} className="hover:text-ink">
             博主
           </Link>
