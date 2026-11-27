@@ -15,6 +15,10 @@ describe("parseQuery", () => {
     expect(parseQuery("a 茶 5")).toEqual(["茶"]);
     expect(parseQuery("一 二 三 四 五 六 七 八 九 十")).toHaveLength(8);
     expect(parseQuery("   ")).toEqual([]);
+    // 英文里到处都有的词不当关键词（不然几乎每条都算命中）；放在引号里的、整句只有这种词的照旧
+    expect(parseQuery("how to learn faster")).toEqual(["learn", "faster"]);
+    expect(parseQuery('"how to" learn The Who')).toEqual(["how to", "learn"]);
+    expect(parseQuery("How to")).toEqual(["How", "to"]);
   });
 
   it("escapes LIKE wildcards", () => {
