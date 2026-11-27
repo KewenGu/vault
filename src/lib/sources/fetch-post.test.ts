@@ -16,7 +16,7 @@ vi.mock("./weibo", async (orig) => ({ ...(await orig<object>()), readWeiboPost: 
 vi.mock("./ytdlp", async (orig) => ({ ...(await orig<object>()), ytdlpPath: vi.fn(), ytdlpInfo: vi.fn() }));
 
 import { fetchDouyinVideo } from "./douyin";
-import { fetchPost } from "./fetch-post";
+import { fetchPost, fetchPostAlone } from "./fetch-post";
 import { fetchInstagramPost } from "./instagram";
 import { VIDEO_MAX_BYTES } from "@/lib/media/files";
 import { RedditArchiveMiss, readRedditPost } from "./reddit";
@@ -251,5 +251,20 @@ describe("X：从博主那里存进来的帖子把后面那一串也读进来", 
     vi.mocked(fetchXThreadIds).mockResolvedValue(null);
     const got = await fetchPost(ref("x"), { thread: true });
     expect(got.notes).toContain("没查到作者有没有接在这条后面继续发（查一串帖子的接口这会儿读不了）");
+  });
+});
+
+describe("只读这一条（溯源用）", () => {
+  it("X 帖子读到它本身为止，提到的东西原样带着、不跟着读；别的平台走各自的读法", async () => {
+    const mentions = [{ how: "link" as const, url: "https://blog.example.com/a", ref: null }];
+    vi.mocked(readXPost).mockResolvedValue({ post: post("x"), mentions });
+    expect(await fetchPostAlone(ref("x"))).toEqual({ post: post("x"), mentions });
+    expect(fetchWebPage).not.toHaveBeenCalled();
+    expect(fetchXThreadIds).not.toHaveBeenCalled();
+
+    vi.mocked(readRedditPost).mockResolvedValue({ post: post("reddit"), mentions: [{ how: "link", url: "https://youtu.be/x", ref: null }] });
+    expect(await fetchPostAlone(ref("reddit"))).toEqual({ post: post("reddit"), mentions: [] });
+    expect(fetchYouTubeVideo).not.toHaveBeenCalled();
+    expect(await fetchPostAlone(ref("web"))).toEqual({ post: post("web"), mentions: [] });
   });
 });

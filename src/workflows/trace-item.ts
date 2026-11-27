@@ -3,6 +3,7 @@ import { meterInto } from "@/lib/usage/meter";
 import { estimateUsd } from "@/lib/usage/prices";
 import { getItem } from "@/lib/vault/store";
 import { traceInputOf, traceSources } from "@/lib/vault/trace";
+import { readPageForTrace } from "@/lib/vault/trace-reader";
 import { endTrace, getTrace } from "@/lib/vault/trace-store";
 import type { OutputLanguage } from "@/lib/vault/understand";
 
@@ -32,7 +33,7 @@ async function traceItemStep(itemId: string, userId: string, startedAt: string):
   try {
     const item = await getItem(db, userId, itemId);
     if (!item) return; // 这会儿被删了：这一行跟着内容级联删掉了
-    const result = await meterInto(counts, () => traceSources(traceInputOf(item, outputLanguage(), new Date())));
+    const result = await meterInto(counts, () => traceSources(traceInputOf(item, outputLanguage(), new Date()), { readPage: readPageForTrace }));
     await endTrace(db, userId, itemId, startedAt, { status: "ready", error: null, result, ...spent() });
   } catch (e) {
     console.error(`溯源出错 item=${itemId}: ${messageOf(e)}`);

@@ -100,6 +100,61 @@ describe("askClaude", () => {
     expect(estimateUsd({ claude_web_search: 3 })).toBe(0.03);
   });
 
+  it("自己跑的工具：模型说要调就执行，结果单独放一条消息交回去；没成的把原因交给它；带上同一个容器、打开缓存", async () => {
+    const asked = [
+      { type: "thinking", thinking: "", signature: "sig" },
+      { type: "server_tool_use", id: "s1", name: "web_search", input: { query: "q" } },
+      { type: "tool_use", id: "c1", name: "read_page", input: { url: "https://x.com/a/status/1" } },
+      { type: "tool_use", id: "c2", name: "read_page", input: { url: "https://x.com/a/status/2" } },
+      { type: "tool_use", id: "c3", name: "nope", input: {} },
+    ];
+    stream
+      .mockReturnValueOnce({ finalMessage: async () => ({ model: "claude-opus-5-5", stop_details: null, container: { id: "ctr_1" }, usage: { input_tokens: 4000, output_tokens: 100, cache_creation_input_tokens: 4000, server_tool_use: null }, content: asked, stop_reason: "tool_use" }) })
+      .mockReturnValueOnce(reply({ content: [{ type: "web_search_tool_result", tool_use_id: "s1", content: [searchResult("https://a.example/")] }, { type: "text", text: "<overview>好</overview>" }], stop_reason: "end_turn", usage: { input_tokens: 500, output_tokens: 50, cache_read_input_tokens: 8000, server_tool_use: { web_search_requests: 1, web_fetch_requests: 0 } } }));
+    const run = vi.fn(async (input: unknown, state: { web: { fetches: number } }) => {
+      const { url } = input as { url: string };
+      if (url.endsWith("/2")) throw new Error("没读到：这条帖子不在了");
+      state.web.fetches++;
+      return "<正文>帖子的正文</正文>";
+    });
+    const counts: Record<string, number> = {};
+    const res = await meterInto(counts, () =>
+      askClaude({ system: "s", prompt: "p", web: { searches: 5, fetches: 5 }, tools: [{ name: "read_page", description: "读", inputSchema: { type: "object", properties: { url: { type: "string" } }, required: ["url"] }, run }] })
+    );
+    const first = stream.mock.calls[0][0];
+    expect(first.tools.map((t: { name: string }) => t.name)).toEqual(["web_search", "web_fetch", "read_page"]);
+    expect(first.tools[2]).toEqual({ name: "read_page", description: "读", input_schema: { type: "object", properties: { url: { type: "string" } }, required: ["url"] }, eager_input_streaming: true });
+    expect(first.cache_control).toEqual({ type: "ephemeral" });
+    expect(first).not.toHaveProperty("container");
+
+    const second = stream.mock.calls[1][0];
+    expect(second.tools).toEqual(first.tools);
+    expect(second.container).toBe("ctr_1");
+    expect(second.messages).toHaveLength(3);
+    expect(second.messages[1]).toEqual({ role: "assistant", content: asked });
+    // 交回去的那条消息里只有工具的结果，一个调用一个，顺序对得上
+    expect(second.messages[2]).toEqual({
+      role: "user",
+      content: [
+        { type: "tool_result", tool_use_id: "c1", content: "<正文>帖子的正文</正文>" },
+        { type: "tool_result", tool_use_id: "c2", content: "没读到：这条帖子不在了", is_error: true },
+        { type: "tool_result", tool_use_id: "c3", content: "没有 nope 这个工具", is_error: true },
+      ],
+    });
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(res.text).toBe("<overview>好</overview>");
+    expect(res.web).toMatchObject({ searches: 1, fetches: 1, seen: [{ url: "https://a.example/", how: "search" }] });
+    // 再发一遍的那部分按缓存读取记
+    expect(counts).toMatchObject({ "tok_cw|anthropic|claude-opus-5-5": 4000, "tok_cr|anthropic|claude-opus-5-5": 8000 });
+  });
+
+  it("工具来回太多趟就停，说清楚没查完", async () => {
+    stream.mockImplementation(() => reply({ content: [{ type: "tool_use", id: "c", name: "t", input: {} }], stop_reason: "tool_use" }));
+    const run = vi.fn(async () => "ok");
+    await expect(meterInto({}, () => askClaude({ system: "s", prompt: "p", tools: [{ name: "t", description: "d", inputSchema: { type: "object", properties: {} }, run }] }))).rejects.toThrow(/还没查完/);
+    expect(run).toHaveBeenCalledTimes(12);
+  });
+
   it("一直被暂停就不再接了，说清楚没查完", async () => {
     stream.mockImplementation(() => reply({ content: [{ type: "server_tool_use", id: "t", name: "web_search", input: {} }], stop_reason: "pause_turn" }));
     await expect(meterInto({}, () => askClaude({ system: "s", prompt: "p", web: { searches: 1, fetches: 1 } }))).rejects.toThrow(/还没查完/);

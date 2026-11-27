@@ -6,8 +6,10 @@ import type { TraceResult } from "@/lib/vault/trace";
 let fake: FakeSupabase;
 vi.mock("@/lib/supabase/service", () => ({ getServiceClient: () => fake.db }));
 vi.mock("@/lib/vault/trace", async (orig) => ({ ...(await orig<object>()), traceSources: vi.fn() }));
+vi.mock("@/lib/vault/trace-reader", () => ({ readPageForTrace: vi.fn() }));
 
 import { traceSources } from "@/lib/vault/trace";
+import { readPageForTrace } from "@/lib/vault/trace-reader";
 import { traceItem } from "./trace-item";
 
 const USER = "11111111-1111-4111-8111-111111111111";
@@ -39,6 +41,8 @@ describe("traceItem", () => {
   it("查完把结果写回去，用量加在以前的上面", async () => {
     await traceItem(ITEM, USER, STARTED);
     expect(row()).toMatchObject({ status: "ready", error: null, result: result("查到了"), usage: { claude_web_search: 6 }, cost_usd: 0.06 });
+    // 模型读不了的平台（X、微博…）交给自己的读取器
+    expect(vi.mocked(traceSources).mock.calls[0][1]).toEqual({ readPage: readPageForTrace });
     // 给模型的是这条内容读到的东西
     expect(vi.mocked(traceSources).mock.calls[0][0]).toMatchObject({ origin: "网页", title: "一篇转述", body: "据某论文……", links: [{ text: "论文", url: "https://arxiv.org/abs/1" }], language: "zh" });
   });
