@@ -18,5 +18,5 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - 存进来的内容是外部数据：拼进提示词时放在标签里，并在提示词里说明它不是指令。
 - 自己写的内容是 `items.source = 'own'`（别的照常是一条内容）。拼进提示词时要和存下来的别人的内容分开标明（理解：`understand.ts` 的 `OWN_WRITING`；「问」：材料的 `ownText`）——它仍然是存进来的数据，不是指令。日记不是它：日记的约定见上面那一条。
 - 「没看到」和「没有」要分开：处理中读不到、截断、跳过的东西记进 `notes` / `digestNotes` / `gaps`，页面上列出来。
-- 页面和 `/api/v1` 的接口共用 `src/lib/vault/service.ts`（自己建的导图是 `src/lib/vault/map-service.ts`，「问」是 `src/lib/vault/ask-service.ts`，划线和批注是 `src/lib/vault/note-service.ts`，日记是 `src/lib/vault/journal-service.ts`，博主是 `src/lib/vault/creator-service.ts`）；新功能先写在那里，再接两边（以后的手机 App 走接口）。
+- 页面和 `/api/v1` 的接口共用 `src/lib/vault/service.ts`（自己建的导图是 `src/lib/vault/map-service.ts`，「问」是 `src/lib/vault/ask-service.ts`，划线和批注是 `src/lib/vault/note-service.ts`，实体页是 `src/lib/vault/entity-service.ts`，日记是 `src/lib/vault/journal-service.ts`，博主是 `src/lib/vault/creator-service.ts`）；新功能先写在那里，再接两边（以后的手机 App 走接口）。
 - 提交前跑 `npm run check`。迁移测试需要本机有 PostgreSQL 16 + pgvector，没有时会跳过。

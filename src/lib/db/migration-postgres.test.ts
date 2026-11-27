@@ -359,6 +359,59 @@ describe.skipIf(!pg)("migrations — isolated PostgreSQL", () => {
     expect(as(alice, `select string_agg(tag || ':' || n, ',') from tag_counts('${alice}')`)).toBe("三亚:1,家常菜:1,快手菜:1");
   });
 
+  it("merge_entities and move_entity_links re-hang an entity's items and relations in one go, on the caller's own graph only", () => {
+    const entity = (user: string, type: string, name: string, aliases = "{}", summary = "") =>
+      query(`insert into entities (user_id, type, name, aliases, summary) values ('${user}', '${type}', '${name}', '${aliases}', '${summary}') returning id`);
+    const munger = entity(alice, "person", "芒格", "{Munger}", "写《穷查理宝典》的人");
+    const charlie = entity(alice, "person", "查理·芒格");
+    const buffett = entity(alice, "person", "巴菲特");
+    const book = entity(alice, "work", "穷查理宝典");
+    const bobs = entity(bob, "person", "芒格");
+    const [i1, i2, i3] = ["i1", "i2", "i3"].map((k) => item(alice, k));
+    // i2 两个都连着；i1 只连着要并掉的那个，带着「在这条里是什么角色」
+    query(`insert into item_entities (item_id, entity_id, user_id, about) values
+      ('${i1}', '${munger}', '${alice}', '书的作者'), ('${i1}', '${book}', '${alice}', ''),
+      ('${i2}', '${munger}', '${alice}', ''), ('${i2}', '${charlie}', '${alice}', '搭档'), ('${i2}', '${buffett}', '${alice}', ''),
+      ('${i3}', '${charlie}', '${alice}', ''), ('${i3}', '${book}', '${alice}', '')`);
+    query(`insert into entity_edges (item_id, src_id, dst_id, relation, user_id) values
+      ('${i1}', '${book}', '${munger}', 'made_by', '${alice}'),
+      ('${i2}', '${munger}', '${charlie}', 'related', '${alice}'),
+      ('${i2}', '${munger}', '${buffett}', 'related', '${alice}'),
+      ('${i2}', '${charlie}', '${buffett}', 'related', '${alice}'),
+      ('${i3}', '${charlie}', '${book}', 'about', '${alice}')`);
+    const edges = () => query(`select string_agg(i.dedupe_key || ':' || s.name || '>' || d.name || ':' || e.relation, ',' order by i.dedupe_key, s.name, d.name) from entity_edges e join items i on i.id = e.item_id join entities s on s.id = e.src_id join entities d on d.id = e.dst_id`);
+    const itemsOf = (id: string) => query(`select coalesce(string_agg(i.dedupe_key, ',' order by i.dedupe_key), '') from item_entities ie join items i on i.id = ie.item_id where ie.entity_id = '${id}'`);
+
+    // 别人的实体够不着（行级安全下看不到 = 没有），自己并自己不行；什么都没动
+    expect(() => as(bob, `select merge_entities('${alice}', '${munger}', '${charlie}')`)).toThrow(/entity not found/);
+    expect(() => as(alice, `select merge_entities('${alice}', '${bobs}', '${charlie}')`)).toThrow(/entity not found/);
+    expect(() => as(alice, `select merge_entities('${alice}', '${munger}', '${munger}')`)).toThrow(/into itself/);
+    expect(itemsOf(munger)).toBe("i1,i2");
+
+    // 「芒格」并进「查理·芒格」：两条关联都算动了（i1 改挂、i2 本来就连着，旧的那行去掉）
+    expect(as(alice, `select merge_entities('${alice}', '${munger}', '${charlie}')`)).toBe("2");
+    expect(query(`select count(*) from entities where id = '${munger}'`)).toBe("0");
+    expect(itemsOf(charlie)).toBe("i1,i2,i3");
+    expect(query(`select about from item_entities where item_id = '${i1}' and entity_id = '${charlie}'`)).toBe("书的作者");
+    expect(query(`select about from item_entities where item_id = '${i2}' and entity_id = '${charlie}'`)).toBe("搭档");
+    // 名字和别名记成别名（以后的内容再叫它「芒格」，直接认到这里）；原来没有说明的用并进来的
+    expect(query(`select array_to_string(aliases, ',') || '|' || summary from entities where id = '${charlie}'`)).toBe("芒格,Munger|写《穷查理宝典》的人");
+    // 关系跟着改挂：变成自己连自己的、和已有的重复的都没了
+    expect(edges()).toBe("i1:穷查理宝典>查理·芒格:made_by,i2:查理·芒格>巴菲特:related,i3:查理·芒格>穷查理宝典:about");
+    expect(query(`select name from entities where id = '${bobs}'`)).toBe("芒格");
+
+    // 拆开：i3 说的其实是另一个人，只把这一条移过去
+    const brown = entity(alice, "person", "查理·布朗");
+    expect(as(alice, `select move_entity_links('${alice}', '${charlie}', '${brown}', array['${i3}']::uuid[])`)).toBe("1");
+    expect(itemsOf(charlie)).toBe("i1,i2");
+    expect(itemsOf(brown)).toBe("i3");
+    expect(edges()).toBe("i1:穷查理宝典>查理·芒格:made_by,i2:查理·芒格>巴菲特:related,i3:查理·布朗>穷查理宝典:about");
+    expect(query(`select count(*) from entities where id = '${charlie}'`)).toBe("1");
+    // 后台（service_role）也能调，靠函数里带的 user_id
+    expect(query(`begin; set local role service_role; select move_entity_links('${alice}', '${brown}', '${charlie}'); commit;`)).toBe("1");
+    expect(itemsOf(charlie)).toBe("i1,i2,i3");
+  });
+
   it("match_entities returns the nearest entities of the same type; orphans are pruned when their items go away", () => {
     const sanya = query(`insert into entities (user_id, type, name, embedding) values ('${alice}', 'place', '三亚', ${axis(1)}) returning id`);
     query(`insert into entities (user_id, type, name, embedding) values ('${alice}', 'place', '成都', ${axis(2)})`);

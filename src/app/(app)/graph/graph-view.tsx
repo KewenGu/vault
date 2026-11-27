@@ -259,8 +259,8 @@ export function GraphView({ graph }: { graph: GraphData }) {
             <h2 className="text-lg leading-snug font-semibold">{selected.name}</h2>
             {selected.aliases.length > 0 && <p className="text-xs text-ink-muted">也叫：{selected.aliases.join("、")}</p>}
             {selected.summary && <p className="text-sm leading-relaxed text-ink-secondary">{selected.summary}</p>}
-            <Link href={`/?entity=${selected.id}`} className="btn btn-primary">
-              看提到它的 {selected.count} 条内容
+            <Link href={`/entities/${selected.id}`} prefetch={false} className="btn btn-primary">
+              打开它的那一页（{selected.count} 条内容）
             </Link>
             {neighbors.length > 0 && (
               <div className="flex flex-col gap-1.5">

@@ -242,6 +242,8 @@ export type Database = {
         Returns: { id: string; name: string; aliases: string[]; summary: string; similarity: number }[];
       };
       prune_orphan_entities: { Args: { p_user_id: string }; Returns: number };
+      move_entity_links: { Args: { p_user_id: string; p_from: string; p_into: string; p_item_ids?: string[] | null }; Returns: number };
+      merge_entities: { Args: { p_user_id: string; p_from: string; p_into: string }; Returns: number };
       tag_counts: { Args: { p_user_id: string }; Returns: { tag: string; n: number }[] };
     };
     Enums: { [_ in never]: never };
