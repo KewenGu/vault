@@ -33,6 +33,8 @@ export function makeFakeSupabase(
     failInsert?: Record<string, PgError>;
     failUpdate?: Record<string, PgError>;
     failSelect?: Record<string, PgError>;
+    /** 按函数名注入数据库函数的错误（函数还没建、函数里抛的错） */
+    failRpc?: Record<string, PgError>;
     failUpload?: PgError;
     maxRows?: number;
     /** 数据库函数的实现：名字 → (参数, store) => 返回的 data */
@@ -360,6 +362,8 @@ export function makeFakeSupabase(
   const rpc = async (name: string, args: Record<string, unknown> = {}) => {
     ops.push(`rpc:${name}`);
     const handler = opts.rpc?.[name];
+    const failed = opts.failRpc?.[name];
+    if (failed) return { data: null, error: failed };
     return { data: handler ? handler(args, store) : null, error: null };
   };
   return { db: { from, storage, rpc } as unknown as SupabaseClient<Database>, store, ops, files };

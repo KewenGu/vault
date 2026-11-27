@@ -305,7 +305,7 @@ export default async function ItemPage({ params }: Props) {
             <ul className="flex flex-wrap gap-1.5">
               {entities.map((e) => (
                 <li key={e.id}>
-                  <Link href={`/?entity=${e.id}`} title={e.about || undefined} className="chip">
+                  <Link href={`/entities/${e.id}`} prefetch={false} title={e.about || undefined} className="chip">
                     <span className="text-ink-faint">{ENTITY_TYPE_INFO[e.type].label}</span>
                     {e.name}
                   </Link>

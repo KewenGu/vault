@@ -99,7 +99,9 @@ export default async function VaultPage({ searchParams }: { searchParams: Promis
       {entity?.data && (
         <p className="panel flex flex-wrap items-baseline gap-x-3 gap-y-1 px-3.5 py-2.5 text-sm">
           <span className="text-ink-faint">{entityType ? ENTITY_TYPE_INFO[entityType].label : "实体"}</span>
-          <span className="font-medium">{entity.data.name}</span>
+          <Link href={`/entities/${current.entity}`} prefetch={false} className="font-medium hover:text-accent" title="打开它的那一页：有关系的实体、你写的批注、改名和合并">
+            {entity.data.name}
+          </Link>
           {entity.data.summary && <span className="min-w-0 flex-1 text-ink-muted">{entity.data.summary}</span>}
           <Link href={hrefWith(current, { entity: undefined })} className="text-accent hover:underline">
             取消
