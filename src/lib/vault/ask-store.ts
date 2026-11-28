@@ -104,6 +104,13 @@ export async function listAsks(db: Db, userId: string): Promise<AskSummary[]> {
   });
 }
 
+/** 按标题找一次提问（一周回顾靠标题认是哪一周的，见 review.ts）。没有返回 null。 */
+export async function findAskByTitle(db: Db, userId: string, title: string): Promise<string | null> {
+  const { data, error } = await db.from("asks").select("id").eq("user_id", userId).eq("title", title).order("updated_at", { ascending: false }).limit(1);
+  if (error) fail("读取问过的问题失败", error);
+  return data?.[0]?.id ?? null;
+}
+
 export async function getAsk(db: Db, userId: string, id: string): Promise<Ask | null> {
   const { data, error } = await db.from("asks").select(ASK_COLUMNS).eq("id", id).eq("user_id", userId).maybeSingle();
   if (error) fail("读取这次提问失败", error);
