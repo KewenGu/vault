@@ -146,6 +146,15 @@ const FETCHERS: Record<SourcePlatform, (ref: LinkRef, opts: FetchOptions) => Pro
   web: (ref) => fetchWebPage(ref),
 };
 
+/**
+ * 只读这一条，不跟着读它提到的东西（「溯源」用：接着读哪个由模型自己定，见 lib/vault/trace-reader.ts）。
+ * X 帖子的 mentions 照常带着：引用的那条是接口顺带给的（已经读到了），别的只是地址。
+ */
+export async function fetchPostAlone(ref: LinkRef): Promise<Followed> {
+  if (ref.platform === "x") return readXPost(ref, VIDEO_MAX_BYTES);
+  return { post: await FOLLOW.readOther(ref), mentions: [] };
+}
+
 export function fetchPost(ref: LinkRef, opts: FetchOptions = {}): Promise<FetchedPost> {
   return FETCHERS[ref.platform](ref, opts);
 }

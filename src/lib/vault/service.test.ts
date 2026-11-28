@@ -15,7 +15,8 @@ vi.mock("@/workflows/trace-item", () => ({ traceItem: vi.fn() }));
 import { start } from "workflow/api";
 import { traceItem } from "@/workflows/trace-item";
 import { processItem } from "@/workflows/process-item";
-import { getItemTrace, markOwn, removeItem, saveOwn, startTrace } from "./service";
+import { getItemTrace, markOwn, removeItem, saveOwn, startTrace, traceCostOf } from "./service";
+import { itemTotalCost } from "./trace-store";
 
 const ME = "22222222-2222-4222-8222-222222222222";
 const OTHER = "33333333-3333-4333-8333-333333333333";
@@ -193,6 +194,19 @@ describe("startTrace", () => {
     vi.mocked(start).mockRejectedValueOnce(new Error("workflow runtime unavailable"));
     const trace = await startTrace(session(ME), ID);
     expect(trace).toMatchObject({ status: "failed", error: "后台任务没启动：workflow runtime unavailable" });
+  });
+
+  it("an item's total cost is what processing cost plus what tracing cost; without a trace (or its table) tracing counts as zero", async () => {
+    expect(await traceCostOf(session(ME), ID)).toBe(0);
+    seed({}, [{ item_id: ID, user_id: ME, status: "ready", error: null, result: null, usage: { claude_web_search: 5 }, cost_usd: 0.4123, started_at: "2026-11-23T07:29:00.000Z", updated_at: "2026-11-23T07:30:00.000Z" }]);
+    expect(await traceCostOf(session(ME), ID)).toBe(0.4123);
+    // 别人的溯源花费不算到我头上
+    expect(await traceCostOf(session(OTHER), ID)).toBe(0);
+    expect(itemTotalCost({ costUsd: 0.061 }, { costUsd: 0.4123 })).toBe(0.4733);
+    expect(itemTotalCost({ costUsd: 0.061 }, null)).toBe(0.061);
+    // 溯源的表还没建：总花费就是处理的花费，详情照常能读
+    fake = makeFakeSupabase({ items: fake.store.items }, { failSelect: { item_traces: { message: "Could not find the table", code: "PGRST205" } } });
+    expect(await traceCostOf(session(ME), ID)).toBe(0);
   });
 
   it("tells the user to push the migration when the table is not there yet", async () => {
