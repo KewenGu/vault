@@ -23,21 +23,37 @@ type Db = SupabaseClient<Database>;
 export type SearchFilters = Partial<{ kind: string; contentType: string; category: string; tag: string; platform: string; source: string; entityId: string }>;
 
 const TERMS_MAX = 8;
+/**
+ * 一句话和一条内容的向量有多像才算语义上找到了。数据库函数的默认值是 0.35，2026-11-27 在真实的收藏上（45 条、10 句话）看太松：
+ * 库里根本没有的东西（「红烧牛腩怎么做」「三亚有什么好吃的」）也能搜出 4–7 条，最高到 0.42；「怎么练肩」26 条里只有前 6 条相关。
+ * 真相关的在 0.46 以上（「熬夜之后怎么恢复」对上讲熬夜的那条是 0.53，问「讲赚钱的」相关的几条 0.46–0.60），不相关的大多在 0.45 以下。
+ * 样本只有 45 条，内容多了要再看。字面命中的不受这个门槛管。
+ */
+export const SEARCH_MIN_SIMILARITY = 0.45;
+/** 英文里到处都有的词：当关键词会让几乎每条内容都「命中」（2026-11-27：搜「how to learn faster」，45 条里 43 条算找到了） */
+const STOPWORDS = new Set(
+  "a an the to of in on at for and or is are was were be been do does did how what why when where which who i my me we our you your it its this that these those with from by as can will".split(" ")
+);
 /** 首页一页列多少条 */
 export const PAGE_SIZE = 60;
 /** search_items 一次最多给这么多条（迁移里的函数写死的：`least(p_limit, 200)`） */
 export const SEARCH_CAP = 200;
 
-/** 输入 → 关键词（纯函数）。去重，最多 8 个；只有一个字符的英文 / 数字不要（太宽）。 */
+/**
+ * 输入 → 关键词（纯函数）。去重，最多 8 个；只有一个字符的英文 / 数字不要（太宽）。
+ * 英文里到处都有的词（how、to、the…）不当关键词，除非放在引号里，或者整句话只有这种词。
+ */
 export function parseQuery(q: string): string[] {
   const terms: string[] = [];
+  const common: string[] = [];
   for (const m of q.matchAll(/"([^"]+)"|“([^”]+)”|「([^」]+)」|(\S+)/g)) {
     const t = (m[1] ?? m[2] ?? m[3] ?? m[4] ?? "").trim();
     if (!t || (t.length === 1 && /[\x00-\x7f]/.test(t))) continue;
-    if (!terms.some((x) => x.toLowerCase() === t.toLowerCase())) terms.push(t);
+    const list = m[4] !== undefined && STOPWORDS.has(t.toLowerCase()) ? common : terms;
+    if (!list.some((x) => x.toLowerCase() === t.toLowerCase())) list.push(t);
     if (terms.length >= TERMS_MAX) break;
   }
-  return terms;
+  return terms.length > 0 ? terms : common.slice(0, TERMS_MAX);
 }
 
 /** ilike 里的通配符按字面找 */
@@ -154,6 +170,7 @@ export async function searchItems(db: Db, userId: string, input: { q?: string; f
     p_user_id: userId,
     p_terms: terms.map(escapeLike),
     p_embedding: embedding ? JSON.stringify(embedding) : null,
+    p_min_similarity: SEARCH_MIN_SIMILARITY,
     p_kind: f.kind || null,
     p_content_type: f.contentType || null,
     p_category: f.category || null,

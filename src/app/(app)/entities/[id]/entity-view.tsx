@@ -22,6 +22,9 @@ export function EntityView({ data, page }: { data: EntityPage; page: number }) {
   const { entity, items, total, capped, neighbors, notes, names, gaps } = data;
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const listId = "entity-names";
+  // 图谱里存的「说明」是第一次提到它的那条内容里的角色（「姚顺雨举例说明自下而上创新的公司」），不是「它是什么」：
+  // 下面那条内容上已经写着同一句话时，页眉不再当成它的定义摆一遍（2026-11-27 在真实的图谱上看到的）。自己改过的、并进来的照常显示
+  const ownSummary = entity.summary.trim() !== "" && !items.some((i) => i.about.trim() === entity.summary.trim());
   const rows: EntityItemRow[] = items.map(({ item, about }) => ({
     id: item.id,
     title: displayTitle(item),
@@ -50,7 +53,7 @@ export function EntityView({ data, page }: { data: EntityPage; page: number }) {
         </div>
         <h1 className="text-2xl leading-tight font-semibold tracking-tight break-words">{entity.name}</h1>
         {entity.aliases.length > 0 && <Aliases id={entity.id} aliases={entity.aliases} />}
-        {entity.summary && <p className="text-[15px] leading-relaxed text-ink-secondary">{entity.summary}</p>}
+        {ownSummary && <p className="text-[15px] leading-relaxed text-ink-secondary">{entity.summary}</p>}
       </header>
 
       {gaps.length > 0 && (

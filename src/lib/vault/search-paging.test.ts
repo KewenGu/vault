@@ -93,6 +93,8 @@ describe("searchItems — paging through search results", () => {
     ranked = 500;
     const second = await searchItems(fake.db, USER, { q: "牛腩", offset: 60 });
     expect(rpcCalls[0]).toMatchObject({ p_limit: SEARCH_CAP, p_terms: ["牛腩"] });
+    // 语义的门槛由这里给，不用数据库函数的默认值（0.35，在真实的收藏上太松）
+    expect(rpcCalls[0]).toMatchObject({ p_min_similarity: 0.45 });
     expect(second.hits).toHaveLength(60);
     expect(second.hits[0].item.id).toBe(id(61));
     expect(second).toMatchObject({ total: SEARCH_CAP, capped: true });
