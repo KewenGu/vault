@@ -20,7 +20,7 @@ import type { ItemNote } from "@/lib/vault/notes";
 import { findRelated, type Related } from "@/lib/vault/related";
 import { CATEGORY_LABEL, CONTENT_TYPE_INFO, ENTITY_TYPE_INFO } from "@/lib/vault/taxonomy";
 import { hasTraceMaterial } from "@/lib/vault/trace";
-import { getTrace, traceRunning, type ItemTrace } from "@/lib/vault/trace-store";
+import { getTrace, itemTotalCost, traceRunning, type ItemTrace } from "@/lib/vault/trace-store";
 import { DeleteButton, EditOwnForm, MakeMapButton, MarkOwnButton, MetaForm, PasteTextForm, ReprocessButton } from "./item-actions";
 import { addNoteAction, editNoteAction, removeNoteAction } from "../../notes/actions";
 import { TraceSection } from "./trace-section";
@@ -355,7 +355,14 @@ export default async function ItemPage({ params }: Props) {
             {item.source === "link" && <ReprocessButton id={item.id} from="fetch" label="重新读取链接" />}
             {u && <MakeMapButton id={item.id} />}
             <DeleteButton id={item.id} />
-            {item.costUsd > 0 && <span className="ml-auto text-xs text-ink-faint">处理花费约 ${item.costUsd.toFixed(3)}</span>}
+            {/* 溯源过的：处理和溯源加在一起是这条内容一共花的，溯源的那部分单独写出来 */}
+            {trace && trace.costUsd > 0 ? (
+              <span className="ml-auto text-xs text-ink-faint">
+                这条内容一共花了约 ${itemTotalCost(item, trace).toFixed(3)}（处理 ${item.costUsd.toFixed(3)} + 溯源 ${trace.costUsd.toFixed(3)}）
+              </span>
+            ) : (
+              item.costUsd > 0 && <span className="ml-auto text-xs text-ink-faint">处理花费约 ${item.costUsd.toFixed(3)}</span>
+            )}
           </footer>
         )}
       </div>

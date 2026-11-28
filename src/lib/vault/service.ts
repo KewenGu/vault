@@ -222,6 +222,16 @@ export async function removeItem(session: Session, id: string): Promise<void> {
   }
 }
 
+/** 这条内容溯源一共花了多少（没溯源过、或者溯源的表还没建，是 0）：详情里把它加进这条内容的总花费。 */
+export async function traceCostOf(session: Session, id: string): Promise<number> {
+  try {
+    return (await getItemTrace(session, id))?.costUsd ?? 0;
+  } catch (e) {
+    if (e instanceof VaultError) return 0;
+    throw e;
+  }
+}
+
 /** 这条内容的溯源结果（还没溯源过是 null）。 */
 export async function getItemTrace(session: Session, id: string): Promise<ItemTrace | null> {
   return UUID.test(id) ? getTrace(session.db, session.user.id, id) : null;
