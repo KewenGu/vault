@@ -39,6 +39,18 @@ export async function listNotesOfItem(db: Db, userId: string, itemId: string): P
 }
 
 /**
+ * 一段时间里写的笔记（回顾用），新写的在前，最多 limit 条。表还没建就是没有（missing），别的错往上抛。
+ */
+export async function notesBetween(db: Db, userId: string, from: string, to: string, limit: number): Promise<{ notes: ItemNote[]; missing: boolean }> {
+  const { data, error } = await db.from("item_notes").select(COLUMNS).eq("user_id", userId).gte("created_at", from).lt("created_at", to).order("created_at", { ascending: false }).limit(limit);
+  if (error) {
+    if (isMissing(error)) return { notes: [], missing: true };
+    throw new Error(`读取笔记失败: ${error.message}`);
+  }
+  return { notes: (data ?? []).map(toNote), missing: false };
+}
+
+/**
  * 好几条内容上的笔记（「问」、导出、建索引用）：内容 id → 它的笔记，先写的在前。
  * 这些地方笔记只是附带的：表还没建时当成没有笔记（missing = true），别的错照常抛。
  */

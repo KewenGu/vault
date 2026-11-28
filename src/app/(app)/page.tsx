@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { AutoRefresh } from "@/components/auto-refresh";
+import { Resurfaced } from "@/components/resurfaced";
 import { CaptureBox } from "@/components/capture-box";
 import { ItemGrid } from "@/components/item-grid";
 import { requireSession } from "@/lib/auth/user";
@@ -80,6 +81,8 @@ export default async function VaultPage({ searchParams }: { searchParams: Promis
     <div className="flex flex-col gap-6">
       <AutoRefresh active={busy} />
       <CaptureBox />
+      {/* 只是打开收藏库的时候才翻：在搜、在筛、翻到后面几页时不打扰 */}
+      {!filtered && page === 1 && <Resurfaced />}
 
       <section aria-label="搜索和筛选" className="flex flex-col gap-3">
         <form action="/" className="flex gap-2">
