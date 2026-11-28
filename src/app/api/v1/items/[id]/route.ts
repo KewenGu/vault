@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { entitiesOfItem } from "@/lib/graph/data";
-import { markOwn, removeItem, VaultError } from "@/lib/vault/service";
+import { markOwn, removeItem, traceCostOf, VaultError } from "@/lib/vault/service";
 import { getItem, updateItemMeta } from "@/lib/vault/store";
 import { parseTagInput } from "@/lib/vault/taxonomy";
 import { jsonBody, str, withSession } from "../../respond";
@@ -14,7 +14,7 @@ export async function GET(request: Request, { params }: Ctx) {
     const { id } = await params;
     const item = UUID.test(id) ? await getItem(session.db, session.user.id, id) : null;
     if (!item) throw new VaultError("这条内容不在了", 404);
-    return NextResponse.json({ ...itemDetail(item), entities: await entitiesOfItem(session.db, session.user.id, id) });
+    return NextResponse.json({ ...itemDetail(item, await traceCostOf(session, id)), entities: await entitiesOfItem(session.db, session.user.id, id) });
   });
 }
 

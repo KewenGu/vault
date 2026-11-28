@@ -28,6 +28,15 @@ export type ItemTrace = {
   updatedAt: string;
 };
 
+/**
+ * 一条内容一共花了多少：处理（读取、理解、建索引，还有批注）记在 items.cost_usd，溯源记在这张表里，这里加起来。
+ * 溯源的不直接写进 items.cost_usd：那个数还被拿来估「存一条内容大概多少钱」（creator-service 的 costHint），
+ * 溯源一次可能比处理贵一个数量级，混进去那个估计就不准了。
+ */
+export function itemTotalCost(item: { costUsd: number }, trace: Pick<ItemTrace, "costUsd"> | null): number {
+  return Math.round((item.costUsd + (trace?.costUsd ?? 0)) * 1e6) / 1e6;
+}
+
 /** 还在查（没卡住）。 */
 export function traceRunning(trace: Pick<ItemTrace, "status" | "startedAt">, now = Date.now()): boolean {
   return trace.status === "running" && now - new Date(trace.startedAt).getTime() < TRACE_STUCK_MS;
